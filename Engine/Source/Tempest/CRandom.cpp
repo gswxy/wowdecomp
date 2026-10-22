@@ -71,7 +71,7 @@ void CRndSeed::SetSeed(uint32_t seed) {
 // VERIFY: cab91f8f manual
 // OFFSET: 0x004C1590
 float CRandom::ufloat_(CRndSeed& seed) {
-    uint32_t bits = (CRandom::uint32_(seed) & 0x7FFFFF) | 0x3F800000;
+    uint32_t bits = (CRandom::uint32_(seed) & rmant) | rexp;
 
     return *reinterpret_cast<float*>(&bits) - 1.0f;
 }
@@ -80,7 +80,7 @@ float CRandom::ufloat_(CRndSeed& seed) {
 // OFFSET: 0x004C15C0
 float CRandom::sfloat_(CRndSeed& seed) {
     uint32_t value = CRandom::uint32_(seed);
-    uint32_t bits = (value & 0x7FFFFF) | 0x3F800000;
+    uint32_t bits = (value & rmant) | rexp;
     float f = *reinterpret_cast<float*>(&bits);
 
     if (static_cast<int32_t>(value) >= 0) {

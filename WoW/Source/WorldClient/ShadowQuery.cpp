@@ -48,6 +48,7 @@ static CVar* s_cvShadowSlopeBias;
 static CVar* s_cvShadowMapSize;
 static CVar* s_cvShadowSoftness;
 static CVar* s_cvShadowCascadeReuse;
+static CVar* s_cvShadowTerrainCast;
 
 #if defined(_WIN64)
 static const char* const kShadowMapSizeDefault = "4096";   // ~600 MB of maps at extShadowQuality 3-4
@@ -110,6 +111,7 @@ void CShadowQuery::Initialize() {
     s_cvShadowSlopeBias = CVar::Register("gfxShadowSlopeBias", "Extra shadow depth bias at a low sun, in band texels times cot(elevation) up to 3 (0 = stock)", 1, "1.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSoftness = CVar::Register("shadowSoftness", "Scales the shadow PCF filter, 0.25 to 4 (1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowTerrainCast = CVar::Register("shadowTerrainCast", "ADT terrain casts into the sun shadow maps (0 = stock: models and WMOs only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCascadeReuse = CVar::Register("shadowCascadeReuse", "extShadowQuality 5: redraw the 320 yd cascade every 2nd frame and the 1280 yd one every 4th (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // (before CShadowCache::Initialize creates the maps, so a saved size needs no second Init)
@@ -598,12 +600,185 @@ int32_t CShadowQuery::QueryCallback(CShadowCacheQueryData& data, uint32_t frame)
     return 1;
 }
 
+// Not stock (shadowTerrainCast): ADT chunks cast into the band, depth only through the WMO untextured shadow path.
+// Only the triangles facing away from the light are drawn: their depth is where a ray leaves the land, so a hill
+// still shades what lies behind it, while a slope facing the light never shades itself (no acne there) and flat
+// ground costs nothing. Away-facing slopes are unlit by N.L anyway. Band 2 uses the 9x9 corner grid (2 tris a quad).
+// Positions go in camera-relative (the band's view is camera-relative), pushed back along the light by two texels:
+// that is depth bias only, the shadow does not move.
+static void GetChunkRect(const CAaBox& box, CiRect& rect);
+static const uint32_t kTerrainBatchChunks = 64;    // 64 * 145 * 36 B = 334 KB of the 2.8 MB vertex stream pool
+static uint32_t s_terrainTris[3];
+static uint32_t s_terrainDraws[3];
+
+static bool TerrainCastWanted(const CShadowCacheQueryData& data, int32_t band) {
+    return s_cvShadowTerrainCast && s_cvShadowTerrainCast->m_intValue && band >= 0 && band < 3 && (data.m_queryFlags[band] & 0x8);
+}
+
+static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const C3Vector& camera) {
+    s_terrainTris[band] = 0;
+    s_terrainDraws[band] = 0;
+
+    const C3Vector& sun = CShadowCache::s_sunDir;    // light travel direction
+    const bool coarse = band >= 2;
+    const float texel = CShadowCache::s_textureSize[0] > 0.0f ? 2.0f * data.m_radius[band] / CShadowCache::s_textureSize[0] : 0.5f;
+    const float push = 2.0f * texel + (coarse ? 1.0f : 0.0f);
+    const C3Vector shift(sun.x * push - camera.x, sun.y * push - camera.y, sun.z * push - camera.z);
+
+    CAaBox& extents = data.m_extents[band];
+    CiRect rect;
+    rect.minY = rect.minX = rect.maxY = rect.maxX = 0;
+    GetChunkRect(extents, rect);
+
+    g_theGxDevicePtr->RsPush();
+    GxXformSet(GxXform_World, C44Matrix());
+    CShaderEffect::UpdateWorldViewMatrix();
+    CShaderEffect::SetAlphaRef(0.0f);
+    CShaderEffect::SetDefaultShaders(0);
+    GxRsSet(GxRs_Texture0, 0);
+    float constants[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 2, constants, 1);
+
+    CGxVertexPNCT* verts = nullptr;
+    uint16_t* indices = nullptr;
+    CGxBuf* vbuf = nullptr;
+    CGxBuf* ibuf = nullptr;
+    uint32_t vcount = 0, icount = 0, chunks = 0;
+
+    auto flush = [&]() {
+        if (!vbuf) {
+            return;
+        }
+
+        g_theGxDevicePtr->BufUnlock(vbuf, 0);
+        g_theGxDevicePtr->BufUnlock(ibuf, 0);
+        vbuf->m_hasData = 1;
+        ibuf->m_hasData = 1;
+
+        if (icount) {
+            GxPrimVertexPtr(vbuf, GxVBF_PNCT);
+            g_theGxDevicePtr->PrimIndexPtr(ibuf);
+            CGxBatch batch;
+            batch.m_primType = GxPrim_Triangles;
+            batch.m_start = 0;
+            batch.m_count = icount;
+            batch.m_minIndex = 0;
+            batch.m_maxIndex = static_cast<uint16_t>(vcount - 1);
+            g_theGxDevicePtr->Draw(&batch, 1);
+            s_terrainTris[band] += icount / 3;
+            s_terrainDraws[band]++;
+        }
+
+        vbuf = ibuf = nullptr;
+        vcount = icount = chunks = 0;
+    };
+
+    // keeps triangle (a, b, c) of the chunk's 145 vertices when it faces away from the light
+    auto tri = [&](const C3Vector* p, uint32_t base, int32_t a, int32_t b, int32_t c) {
+        C3Vector e1 = p[b] - p[a];
+        C3Vector e2 = p[c] - p[a];
+        C3Vector n(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x);
+
+        if (n.z < 0.0f) {
+            n = C3Vector(-n.x, -n.y, -n.z);
+        }
+
+        if (n.x * sun.x + n.y * sun.y + n.z * sun.z < 0.0f) {
+            return;
+        }
+
+        indices[icount++] = static_cast<uint16_t>(base + a);
+        indices[icount++] = static_cast<uint16_t>(base + b);
+        indices[icount++] = static_cast<uint16_t>(base + c);
+    };
+
+    for (int32_t row = rect.minY; row <= rect.maxY; row++) {
+        for (int32_t col = rect.minX; col <= rect.maxX; col++) {
+            CMapArea* area = CMap::m_areaTable[(((row >> 4) & 0x3F) << 6) + ((col >> 4) & 0x3F)];
+
+            if (!area || area->m_asyncObject) {
+                continue;
+            }
+
+            CMapChunk* chunk = area->m_mapChunks[(col & 0xF) + 16 * (row & 0xF)];
+
+            if (!chunk || !chunk->m_height || !chunk->m_header || chunk->m_header->m_holes == 0xFFFF || !extents.Intersects(chunk->m_bbox)) {
+                continue;
+            }
+
+            if (!data.m_bandFrustums[band].Cull(chunk->m_bbox) || (data.m_useCullFrustum[band] && data.m_cullFrustums[band].CullInv(chunk->m_bbox) == WorldCull_notOutside)) {
+                continue;
+            }
+
+            if (!vbuf) {
+                vbuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, sizeof(CGxVertexPNCT), kTerrainBatchChunks * 145);
+                ibuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Index, 2, kTerrainBatchChunks * 768);
+                verts = reinterpret_cast<CGxVertexPNCT*>(g_theGxDevicePtr->BufLock(vbuf));
+                indices = reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(ibuf));
+            }
+
+            C3Vector p[145];
+
+            for (int32_t i = 0; i < 145; i++) {
+                chunk->GetVertexPosition(i, &p[i]);
+            }
+
+            const uint32_t holes = chunk->m_header->m_holes;
+            const uint32_t firstIndex = icount;
+
+            for (int32_t r = 0; r < 8; r++) {
+                for (int32_t c = 0; c < 8; c++) {
+                    if (holes & CMap::s_holeMask[(r / 2) * 4 + (c / 2)]) {
+                        continue;
+                    }
+
+                    const int32_t tl = r * 17 + c, tr = tl + 1, ctr = tl + 9, bl = tl + 17, br = tl + 18;
+
+                    if (coarse) {
+                        tri(p, vcount, tl, bl, br);
+                        tri(p, vcount, tl, br, tr);
+                    } else {
+                        tri(p, vcount, ctr, tl, bl);
+                        tri(p, vcount, ctr, tr, tl);
+                        tri(p, vcount, ctr, br, tr);
+                        tri(p, vcount, ctr, bl, br);
+                    }
+                }
+            }
+
+            if (icount == firstIndex) {
+                continue;   // all of it faces the light: casts nothing
+            }
+
+            CGxVertexPNCT* v = verts + vcount;
+
+            for (int32_t i = 0; i < 145; i++) {
+                v[i].m_position = p[i] + shift;
+                v[i].m_normal = C3Vector(0.0f, 0.0f, 1.0f);
+                v[i].m_color = CImVector(0xFF, 0xFF, 0xFF, 0xFF);
+                v[i].m_texture = C2Vector(0.0f, 0.0f);
+            }
+
+            vcount += 145;
+
+            if (++chunks == kTerrainBatchChunks) {
+                flush();
+            }
+        }
+    }
+
+    flush();
+    g_theGxDevicePtr->RsPop();
+}
+
 // VERIFY: 2abab737 manual
 // OFFSET: 0x007BBC50
 int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, CGxTex* target, CGxTex* colorTarget, C3Vector& direction) {
     ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
 
-    if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count) {
+    const bool terrain = TerrainCastWanted(data, band);
+
+    if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count && !terrain) {
         CShadowQuery::Clear(target, colorTarget, data.m_texBounds[band]);
         return 1;
     }
@@ -704,6 +879,10 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
         }
 
         CM2Model::RenderModelBatchesShadowMap(buffers.m_untextured, buffers.m_textured);
+    }
+
+    if (terrain) {
+        RenderTerrainShadow(data, band, camera);
     }
 
     g_theGxDevicePtr->RsPop();

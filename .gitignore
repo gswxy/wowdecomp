@@ -417,3 +417,5 @@ Tools/CustomMpq/Shaders/Pixel/ps_3_0/terrain*.bls
 Tools/CustomMpq/Shaders/Pixel/ps_4_0/terrain*.bls
 # gxNormalBuffer's D3D9/D3D11 pack: generated from the client's (Tools/CustomMpq/ShaderSrc/normal_pack.py)
 /Tools/CustomMpq/Normals
+# farLand's per-map bake (Tools/FarLand/bake_farland.py), generated from the client's ADTs, not versioned
+/Tools/CustomMpq/FarLand

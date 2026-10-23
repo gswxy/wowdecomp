@@ -1,4 +1,5 @@
 #include "World.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "Engine/Source/Base/FrameProfile.h"
 #include "WoW/Source/WorldClient/TreeLeaves.h"   // TREELEAVES
 #include "WoW/Source/WorldClient/WorldConstants.h"
@@ -5016,6 +5017,7 @@ void CWorldScene::RenderHorizon() {
     C44Matrix world;
     world.Translate(C3Vector(-CWorldScene::s_activeWorldView.x, -CWorldScene::s_activeWorldView.y, -CWorldScene::s_activeWorldView.z));
     g_theGxDevicePtr->XformPushAndSet(GxXform_World, world);
+    FarLand::BeginPass();   // FARLAND: not in 12340
 
     CMapAreaLow* nextArea;
 

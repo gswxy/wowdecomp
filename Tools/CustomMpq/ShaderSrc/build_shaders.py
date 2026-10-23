@@ -27,6 +27,7 @@ Fading models (wxl-vfog 0.6.3): VFogDepthCopy. Legion FFX post: LegionPost{0,1,2
 Soft particles (wxl-light Soft.cpp): SoftParticle{0,1}.
 Caustics (wxl-water): VFogCausticsAbove / VFogCausticsUnder.
 Sky and clouds under the sun arc (wxl-light Clouds.cpp, WorldClient/SkyClouds.cpp): SkyClouds.
+Far land (farLand, WorldClient/FarLand.cpp): FarLandVS / FarLandPS.
 """
 import argparse
 import concurrent.futures
@@ -77,6 +78,9 @@ SHADERS = {
     # Falling leaves (wxl-treewind Leaves.cpp, docs/BACKLOG_PORT.md): a vertex shader over a static PNCT2 buffer + its pixel shader
     'TreeLeavesVS': ('vs_3_0', 0, 0, 0, 0, 'TreeLeavesVS', {}),
     'TreeLeavesPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'TreeLeavesPS', {}),
+    # far land (farLand, WorldClient/FarLand.cpp): the WDL horizon with the baked ground colour and normals
+    'FarLandVS': ('vs_3_0', 0, 0, 0, 0, 'FarLandVS', {}),
+    'FarLandPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'FarLandPS', {}),
     # Soft particles (wxl-light Soft.cpp, docs/BACKLOG_PORT.md): Combiners_Mod 0 / 8 (texkill) + the fade; s12 scene depth
     'SoftParticle0': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 0}),
     'SoftParticle1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 1}),

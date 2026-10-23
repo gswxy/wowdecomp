@@ -12,6 +12,7 @@
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapObj.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 
 // STATIC: 0x00ADFC4C
@@ -26,6 +27,13 @@ void CMapObj::CreateMaterials() {
     for (uint32_t i = 0; i < static_cast<uint32_t>(this->m_materialsCount); i++) {
         this->m_materialList[i].Textures()[0] = nullptr;
         this->m_materialList[i].Textures()[1] = nullptr;
+    }
+
+    // CUSTOM (WMONORMALS): the normal-map slots, only where the lit shader pack can use them (D3D11 / Vulkan)
+    if (g_gxLighting && !this->m_normalTextures && this->m_materialsCount > 0) {
+        size_t size = sizeof(CTexture*) * static_cast<uint32_t>(this->m_materialsCount);
+        this->m_normalTextures = static_cast<CTexture**>(SMemAlloc(size, __FILE__, __LINE__, 0));
+        memset(this->m_normalTextures, 0, size);
     }
 }
 
@@ -193,6 +201,21 @@ void CMapObj::CreateMaterial(uint8_t texture) {
     }
 
     material.Textures()[0] = CMap::LoadTexture(texture1);
+
+    // CUSTOM (WMONORMALS): `<diffuse>_n.blp` beside the diffuse (Tools/WmoNormals, Data\\wmonormals.MPQ)
+    if (this->m_normalTextures && !this->m_normalTextures[texture]) {
+        char normal[260];
+        SStrCopy(normal, texture1, sizeof(normal) - 6);
+        size_t length = SStrLen(normal);
+
+        if (length > 4 && !SStrCmpI(normal + length - 4, ".blp", STORM_MAX_STR)) {
+            SStrCopy(normal + length - 4, "_n.blp", 7);
+
+            if (SFile::FileExistsInArchives(normal)) {
+                this->m_normalTextures[texture] = CMap::LoadTexture(normal);
+            }
+        }
+    }
 
     if (texture2) {
         material.Textures()[1] = CMap::LoadTexture(texture2);

@@ -652,6 +652,8 @@ class Emitter(object):
                 if s not in self.reads:
                     self.reads.append(s)
             self.litpix = lighting.pixel_colors(self)
+            if self.litpix and self.litpix[2]:
+                self.samplers[lighting.WMO_NORMAL_SLOT] = '2d'   # WMONORMALS: the material's normal map
             self.vconst = VCONST_SMALL
             # terrain height blend and parallax (terrainpom.py): the layer / blend reads, the height maps' samplers
             self.tp = terrainpom.layers(getattr(self.rec, 'names', None) or [], self.samplers)

@@ -1878,6 +1878,7 @@ void CGWorldFrame::OnWorldRender() {
 
     if (upscaled) {
         GxXformSetViewport(worldMinX, worldMaxX, worldMinY, worldMaxY, minZ, CWorld::s_unk_ADEEE4);
+        VolumetricFog::OnWorldUpscaled();   // FSR: not in 12340 (the grade and post take the full viewport)
         CGChatBubbleFrame::OnWorldRender(this);
         GxXformSetViewport(minX, maxX, minY, maxY, minZ, maxZ);
     }

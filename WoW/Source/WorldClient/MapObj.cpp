@@ -18,6 +18,7 @@
 #include "Engine/Source/Gx/CGxLight.h"
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "Engine/Source/Gx/Types.h"
 #include "Engine/Source/Gxu/GxuLight.h"
 #include "Engine/Source/Model2/M2Light.h"
@@ -998,6 +999,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
         CShaderEffect* effect = CMapObj::s_unifiedShaders[shader];
         g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex0);
         g_theGxDevicePtr->RsSet(GxRs_Texture1, gxTex1);
+        this->BindNormalMap(batch.m_texture);
         effect->SetCurrent();
 
         if (i >= group->m_transparencyBatchesCount) {
@@ -1441,6 +1443,7 @@ void CMapObj::ExteriorRender(CMapObjGroup* group, uint32_t index) {
         CShaderEffect* effect = CMapObj::s_classicShaders[shader];
         g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex0);
         g_theGxDevicePtr->RsSet(GxRs_Texture1, gxTex1);
+        this->BindNormalMap(batch.m_texture);
         effect->SetCurrent();
         CMapObj::SelectWorldShaders();
         CGxBatch draw;
@@ -1541,6 +1544,7 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
         CShaderEffect* effect = CMapObj::s_classicShaders[shader];
         g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex0);
         g_theGxDevicePtr->RsSet(GxRs_Texture1, gxTex1);
+        this->BindNormalMap(batch.m_texture);
         effect->SetCurrent();
 
         if (i >= group->m_transparencyBatchesCount) {
@@ -1862,6 +1866,7 @@ void CMapObj::Init() {
     this->m_materialList = nullptr;
     this->m_materialsCount = 0;
     this->m_mapObjGroupCount = 0;
+    this->m_normalTextures = nullptr;
     this->InitPtrs();
 }
 
@@ -1882,6 +1887,15 @@ void CMapObj::Clear() {
                 this->m_materialList[i].Textures()[j] = nullptr;
             }
         }
+
+        if (this->m_normalTextures && this->m_normalTextures[i]) {
+            HandleClose(reinterpret_cast<HOBJECT>(this->m_normalTextures[i]));
+        }
+    }
+
+    if (this->m_normalTextures) {
+        SMemFree(this->m_normalTextures, __FILE__, __LINE__, 0);
+        this->m_normalTextures = nullptr;
     }
 
     for (uint32_t i = 0; i < static_cast<uint32_t>(this->m_mapObjGroupCount); i++) {
@@ -4169,4 +4183,17 @@ void CMapObj::ProcessAsyncLoadQueue() {
 
         AsyncFile::LeaveQueueLock();
     }
+}
+
+// CUSTOM (WMONORMALS): the material's normal map on stage kWmoNormalStage for the translated MapObj pixel
+// shaders (Tools/VulkanShaders/bls/lighting.py GxWmoNormal, shader-xlate sm3hlsl.py), null when it has none.
+// They take it only under shader lighting with wmoNormalMaps on, and reject a null / white stage by its
+// length, so a stage left at null is the stock surface. The callers' RsPush / RsPop restore the stage.
+void CMapObj::BindNormalMap(uint32_t material) {
+    if (!this->m_normalTextures) {
+        return;
+    }
+
+    CTexture* texture = this->m_normalTextures[material];
+    g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + kWmoNormalStage), texture ? TextureGetGxTex(texture, 0, nullptr) : nullptr);
 }

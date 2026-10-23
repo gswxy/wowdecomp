@@ -36,7 +36,9 @@ Needs StormLib (libstorm.so, Debian package libstorm9). Python 3.8+, standard li
 """
 import argparse
 import ctypes
+import hashlib
 import os
+import struct
 import sys
 
 MPQ_CREATE_LISTFILE = 0x00100000
@@ -109,6 +111,28 @@ def folder_files(prefix, folder):
             rel = os.path.relpath(p, folder).replace('/', '\\')
             with open(p, 'rb') as fh:
                 out[prefix + '\\' + rel] = fh.read()
+    return out
+
+
+def untranslated(files):
+    """'<bls>:<perm> <md5>' of every vs_3_0 / ps_3_0 permutation packed here with no record in the packed
+    Vulkan manifest (the device looks records up by the md5 of the bytes it loads, so such a shader draws
+    fixed-function). Catches a manifest translated from other shader files than the ones packed beside it."""
+    man = files.get('VulkanShaders\\manifest.txt', b'').decode('utf-8', 'replace')
+    known = {(t[1], t[2]) for t in (l.split() for l in man.splitlines()) if len(t) > 2 and t[0] == 'record'}
+    out = []
+    for name, data in sorted(files.items()):
+        low = name.lower()
+        if not low.endswith('.bls') or not ('\\ps_3_0\\' in low or '\\vs_3_0\\' in low) or data[:4] != b'HSXG':
+            continue
+        kind = 'pixel' if '\\pixel\\' in low else 'vertex'
+        off = 12
+        for i in range(struct.unpack_from('<I', data, 8)[0]):
+            size = struct.unpack_from('<I', data, off + 12)[0]
+            md5 = hashlib.md5(data[off + 16:off + 16 + size]).hexdigest()
+            off = (off + 16 + size + 3) & ~3
+            if size and (md5, kind) not in known:
+                out.append('%s:%d %s' % (name, i, md5))
     return out
 
 
@@ -193,6 +217,11 @@ def main(argv):
     ui = folder_files('Interface', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Interface'))
     files.update(ui)
 
+    missing = untranslated(files)
+    if missing:
+        sys.exit('%d packed shader permutation(s) have no Vulkan manifest record, first %s: translate '
+                 '(Tools/VulkanShaders/translate_shaders.py) from this tree\'s Tools/CustomMpq/Shaders and Normals'
+                 % (len(missing), missing[0]))
     write_mpq(lib, a.out, files)
     back = mpq_files(lib, a.out)
     bad = [n for n in files if back.get(n) != files[n]]

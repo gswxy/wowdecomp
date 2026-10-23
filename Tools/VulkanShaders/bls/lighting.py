@@ -62,7 +62,7 @@ layout(std140, set = 1, binding = 1) uniform GxLighting {
     layout(row_major) mat4 gxView;   // render-relative world to view (row vector * matrix), for the terrain
     layout(row_major) mat4 gxViewInv;
     vec4 gxSkyTint;                  // rgb sky colour (luminance 1), a hemisphere strength
-    vec4 gxGroundTint;               // rgb ground colour (luminance 1)
+    vec4 gxGroundTint;               // rgb ground colour (luminance 1), a WMO normal map strength (0 = off)
     vec4 gxUpView;                   // xyz world up in view space, w time in seconds
     vec4 gxLightParams;              // x wrap, y dynamic light intensity, z M2 specular, w WMO specular
     GxLight gxLights[32];
@@ -219,9 +219,30 @@ vec3 GxSpecFinal(vec4 o) {
     return gxSpecular * mix(vec3(1.0), tint, gxMetal * m) * mix(0.25, 1.0, m);
 }
 
+// WMONORMALS: a MapObj pixel's normal bent by its material's normal map (stage 10, CMapObj::BindNormalMap), the
+// tangent frame from the screen derivatives of the view position and the uv (Schuler's cotangent frame, its sign
+// taken from the screen's handedness). t is the texel: rg the slope along +u / +v (rows down), b up, *0.5+0.5.
+// A null (0) or white (1) stage, a material without one, is no valid normal: w 0, the surface's own normal stays
+vec4 GxWmoNormal(vec3 nv, vec3 dp1, vec3 dp2, vec2 du1, vec2 du2, vec4 t, float strength) {
+    vec3 tn = t.xyz * 2.0 - 1.0;
+    float len = dot(tn, tn);
+    vec3 nn = normalize(nv);
+    vec3 a = cross(dp2, nn);
+    vec3 b = cross(nn, dp1);
+    vec3 tu = a * du1.x + b * du2.x;
+    vec3 tv = a * du1.y + b * du2.y;
+    float m = max(dot(tu, tu), dot(tv, tv));
+    if (tn.z <= 0.0 || len < 0.56 || len > 1.56 || m < 1e-30 || dot(nv, nv) < 1e-12) {
+        return vec4(0.0);
+    }
+    float k = inversesqrt(m) * strength * (dot(cross(dp1, dp2), nn) < 0.0 ? -1.0 : 1.0);
+    return vec4(normalize(tu * (k * tn.x) + tv * (k * tn.y) + nn * tn.z), 1.0);
+}
+
 // a lit family's pixel: COLOR0 (and a WMO's specular COLOR1) lit again per pixel, with the dynamic lights added in
-// linear space. flatN is the face's normal, for a surface that has none
-vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN) {
+// linear space. flatN is the face's normal, for a surface that has none; nmap.w 1: nmap.xyz the normal-mapped WMO
+// normal (GxWmoNormal)
+vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
     uint f = uint(gxF.x + 0.5);
     uint family = f & 7u;
     uint lights = (f >> 3) & 7u;
@@ -242,7 +263,7 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN) {
     }
 
     vec3 p = gxP.xyz;
-    vec3 n = hasNormal ? normalize(gxN.xyz) : flatN;
+    vec3 n = hasNormal ? (nmap.w > 0.5 && family == GX_SURF_WMO ? nmap.xyz : normalize(gxN.xyz)) : flatN;
     uint features = gxLightFlags.x;
     bool hemi = (features & GX_LIGHT_HEMISPHERE) != 0u;
     vec4 c = c0;
@@ -473,25 +494,48 @@ def _surface(em, fam):
     return s
 
 
+# WMONORMALS: the stage a MapObj pixel module reads its material's normal map from (GxLighting.h kWmoNormalStage)
+WMO_NORMAL_SLOT = 10
+
+
 def pixel_colors(em):
-    """His Writer::LitPixel: the COLOR0 / COLOR1 input registers of a lit pixel record (rgb read), or None."""
+    """His Writer::LitPixel: the COLOR0 / COLOR1 input registers of a lit pixel record (rgb read), and the TEXCOORD0
+    input of a MapObj one (its normal map's uv, WMONORMALS; None otherwise), or None."""
     if em.vs or em.families != {FAMILY_LITPIXEL}:
         return None
     c = {}
     for nm, sem in em.inputs.items():
         if sem in ('color0', 'color1') and (em.in_masks.get(nm, 0xF) & 7) == 7:
             c.setdefault(sem, nm)
-    return (c['color0'], c.get('color1')) if 'color0' in c else None
+        if sem == 'texcoord0':
+            c.setdefault(sem, nm)
+    names = getattr(em.rec, 'names', None) or []
+    wmo = bool(names) and all(n.lower().startswith('mapobj') for n in names) and WMO_NORMAL_SLOT not in em.samplers
+    return (c['color0'], c.get('color1'), c.get('texcoord0') if wmo else None) if 'color0' in c else None
 
 
-def pixel_splice(c0, c1):
-    """The lines after the pixel module's prologue: COLOR0 (and COLOR1) lit per pixel; the face normal is taken
-    here, outside any branch."""
-    return ['    // the colour lit per pixel (bls/lighting.py)',
-            '    vec3 gxFlatN = cross(dFdy(gxP.xyz), dFdx(gxP.xyz));',
-            '    gxFlatN = dot(gxFlatN, gxFlatN) > 1e-24 ? normalize(gxFlatN) : vec3(0.0, 0.0, -1.0);',
-            '    gxFlatN = dot(gxFlatN, gxP.xyz) > 0.0 ? -gxFlatN : gxFlatN;',
-            '    if (gxLightFlags.x != 0u && regs.misc.y > 0.5 && gxF.x > 0.5 && gxP.w > 0.999) {',
-            '        vec4 gxC1 = %s;' % (c1 or 'vec4(0.0)'),
-            '        %s = GxLightPixel(%s, gxC1, gxFlatN);' % (c0, c0)] + \
-           (['        %s = gxC1;' % c1] if c1 else []) + ['    }', '']
+def pixel_splice(c0, c1, uv=None):
+    """The lines after the pixel module's prologue: COLOR0 (and COLOR1) lit per pixel; the face normal, and a
+    MapObj module's normal-map frame (uv: its TEXCOORD0 input), are taken here, outside any branch."""
+    s = ['    // the colour lit per pixel (bls/lighting.py)',
+         '    vec3 gxFlatN = cross(dFdy(gxP.xyz), dFdx(gxP.xyz));',
+         '    gxFlatN = dot(gxFlatN, gxFlatN) > 1e-24 ? normalize(gxFlatN) : vec3(0.0, 0.0, -1.0);',
+         '    gxFlatN = dot(gxFlatN, gxP.xyz) > 0.0 ? -gxFlatN : gxFlatN;',
+         '    vec4 gxNMap = vec4(0.0);']
+    if uv:
+        s += ['    // WMONORMALS: the normal map (wmoNormalStrength in gxGroundTint.w, 0 = off)',
+              '    vec3 gxDp1 = dFdx(gxP.xyz);',
+              '    vec3 gxDp2 = dFdy(gxP.xyz);',
+              '    vec2 gxDu1 = dFdx(%s.xy);' % uv,
+              '    vec2 gxDu2 = dFdy(%s.xy);' % uv,
+              '    float gxNStrength = gxGroundTint.w;']
+    s += ['    if (gxLightFlags.x != 0u && regs.misc.y > 0.5 && gxF.x > 0.5 && gxP.w > 0.999) {']
+    if uv:
+        s += ['        if (gxNStrength > 0.0) {',
+              '            gxNMap = GxWmoNormal(gxN.xyz, gxDp1, gxDp2, gxDu1, gxDu2, textureGrad(s%d, %s.xy, gxDu1, gxDu2), gxNStrength);'
+              % (WMO_NORMAL_SLOT, uv),
+              '        }']
+    s += ['        vec4 gxC1 = %s;' % (c1 or 'vec4(0.0)'),
+          '        %s = GxLightPixel(%s, gxC1, gxFlatN, gxNMap);' % (c0, c0)]
+    s += (['        %s = gxC1;' % c1] if c1 else []) + ['    }', '']
+    return s

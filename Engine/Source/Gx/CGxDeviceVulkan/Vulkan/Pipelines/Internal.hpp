@@ -72,7 +72,7 @@ namespace gxvk::vk::pipelines::detail
     constexpr uint32_t kWhiteSamplerKey = 0;
 
     /// Distinct sampler-slot sets (set-0 layouts) kept at once.
-    constexpr uint32_t kMaxLayouts = 32;
+    constexpr uint32_t kMaxLayouts = 64;   // TERRAINPOM: 47 distinct sets in the 2026-10-24 manifest (was 32)
 
     /// Set-0 descriptor sets one frame may allocate, and the combined image samplers behind them.
     constexpr uint32_t kSetsPerSlot        = 4096;

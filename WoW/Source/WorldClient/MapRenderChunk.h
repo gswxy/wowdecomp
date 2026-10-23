@@ -56,6 +56,7 @@ class CMapRenderChunkLayer {
     /* 0008 */ int32_t m_textureId;
     /* 000C */ CTexture* m_layerTexture;
     /* 0010 */ CMapRenderChunk* m_owner;
+    CTexture* m_heightTexture;   // TERRAINPOM: the tileset's _h.blp, nullptr when it has none (not in 12340)
 
     CMapRenderChunkLayer();
 };
@@ -68,6 +69,10 @@ class CMapRenderChunk {
 
     static int32_t s_bPoolsDirty;
     static uint32_t s_poolMaxMB;   // BACKLOG F3: CVar terrainPoolMaxMB, 0 = uncapped
+    // TERRAINPOM (not in 12340): CVars terrainHeightBlend, terrainParallax, terrainParallaxScale (D3D11/Vulkan)
+    static float s_heightBlend;
+    static int32_t s_parallax;
+    static float s_parallaxScale;
     static EGxVertexBufferFormat s_gxBufVertexFormat;
     static uint32_t s_pnEstimateVertex;
     static uint32_t s_pnEstimateIndex;

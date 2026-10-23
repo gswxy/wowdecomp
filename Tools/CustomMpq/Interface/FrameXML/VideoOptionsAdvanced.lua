@@ -270,6 +270,13 @@ table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", titl
 	{ "wmoNormalMaps", "check", "Building relief", "Stone, brick and wood on buildings catch the light with surface relief (normal maps). D3D11/Vulkan only." },
 	{ "wmoNormalStrength", "slider", "Building relief strength", "How deep the stone and wood relief looks. D3D11/Vulkan only.", 0, 2, 0.05 },
 })
+-- Terrain height blend and parallax (MapRenderChunk.cpp TerrainPomBind, Tools/VulkanShaders/bls/terrainpom.py).
+-- Independent of shaderLighting.
+table.insert(PAGES, #PAGES, { name = "Terrain", parent = "Advanced", title = "Terrain",
+	{ "terrainHeightBlend", "slider", "Height blending", "Ground textures blend by their height: sand and dirt settle between cobbles and stones instead of fading evenly. 0 is the stock blend. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "terrainParallax", "check", "Parallax ground", "Ground textures get a little depth that shifts with the view angle. D3D11/Vulkan only." },
+	{ "terrainParallaxScale", "slider", "Parallax depth (yards)", "How deep the parallax ground looks. Small values keep it subtle. D3D11/Vulkan only.", 0, 0.3, 0.01 },
+})
 -- Sky and clouds (SkyClouds.cpp, DayNight.cpp).
 table.insert(PAGES, #PAGES, { name = "Sky", parent = "Advanced", title = "Sky & Clouds",
 	{ "skyClouds", "check", "Volumetric clouds", "Clouds with depth replace the flat stock cloud layer; with the sun crossing the sky it also uses the modern sky colours. All renderers." },

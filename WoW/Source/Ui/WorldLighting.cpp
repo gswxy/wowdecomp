@@ -130,7 +130,7 @@ uint32_t Features() {
     }
 
     if (s_cv.pbr->m_intValue > 0) {
-        features |= GxLighting_Pbr | GxLighting_Hemisphere;
+        features |= GxLighting_Pbr;   // ARMORMETAL: no forced sky ambient (its blue-grey cast); lightSkyAmbient alone
     }
 
     if (Positive(s_cv.skyAmbient) > 0.0f) {
@@ -154,8 +154,7 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
     p.m_dynamicIntensity = std::min(Positive(s_cv.dynamicIntensity), 8.0f);
     p.m_specularM2 = std::min(Positive(s_cv.specularM2), 4.0f);
     p.m_specularWmo = std::min(Positive(s_cv.specularWmo), 4.0f);
-    // lightPbr takes its ambient from the sky: half strength unless lightSkyAmbient says otherwise
-    p.m_hemisphere = Positive(s_cv.skyAmbient) > 0.0f ? std::min(Positive(s_cv.skyAmbient), 1.0f) : ((features & GxLighting_Pbr) ? 0.5f : 0.0f);
+    p.m_hemisphere = std::min(Positive(s_cv.skyAmbient), 1.0f);
     p.m_roughnessBias = std::clamp(s_cv.roughnessBias->m_floatValue, -1.0f, 1.0f);
     p.m_metalPlate = std::clamp(s_cv.metalPlate->m_floatValue, 0.0f, 1.0f);
     p.m_metalMail = std::clamp(s_cv.metalMail->m_floatValue, 0.0f, 1.0f);
@@ -698,8 +697,8 @@ void WorldLightingRegisterCVars() {
     s_cv.specular = Reg("lightSpecular", "Specular on WMO specular shaders and shiny models (D3D11/Vulkan)", "0");
     s_cv.specularM2 = Reg("lightSpecularM2", "Model specular strength (0-4)", "0.3");
     s_cv.specularWmo = Reg("lightSpecularWmo", "WMO specular strength (0-4)", "1");
-    s_cv.skyAmbient = Reg("lightSkyAmbient", "Ambient tinted by the sky above and the ground below, 0 = off (0.5 under lightPbr) (0-1)", "0");
-    s_cv.pbr = Reg("lightPbr", "PBR-lite: GGX specular from the sun and dynamic lights, the sky's reflection, roughness and metalness guessed per surface (D3D11/Vulkan)", "1");
+    s_cv.skyAmbient = Reg("lightSkyAmbient", "Ambient tinted by the sky above and the ground below, 0 = off (0-1)", "0");
+    s_cv.pbr = Reg("lightPbr", "PBR-lite: GGX specular from the sun and dynamic lights, metal on armour and metal parts (D3D11/Vulkan; opt-in until signed off)", "0");
     s_cv.roughnessBias = Reg("lightRoughnessBias", "PBR-lite: added to every surface's roughness, negative = shinier (-1 to 1)", "0");
     s_cv.metalPlate = Reg("lightMetalPlate", "PBR-lite: metalness of equipped plate armour (0-1)", "0.65");
     s_cv.metalMail = Reg("lightMetalMail", "PBR-lite: metalness of equipped mail armour (0-1)", "0.4");

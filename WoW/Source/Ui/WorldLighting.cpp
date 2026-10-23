@@ -60,6 +60,8 @@ struct LightingCVars {
     CVar* specularM2;
     CVar* specularWmo;
     CVar* skyAmbient;
+    CVar* wmoNormalMaps;
+    CVar* wmoNormalStrength;
 };
 
 LightingCVars s_cv;
@@ -144,6 +146,7 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
     p.m_dynamicIntensity = std::min(Positive(s_cv.dynamicIntensity), 8.0f);
     p.m_specularM2 = std::min(Positive(s_cv.specularM2), 4.0f);
     p.m_specularWmo = std::min(Positive(s_cv.specularWmo), 4.0f);
+    p.m_wmoNormal = s_cv.wmoNormalMaps->m_intValue > 0 ? std::min(Positive(s_cv.wmoNormalStrength), 2.0f) : 0.0f;
     p.m_hemisphere = std::min(Positive(s_cv.skyAmbient), 1.0f);
     p.m_cameraPosition = camera;
     p.m_time = static_cast<float>(OsGetAsyncTimeMs() % 3600000u) * 0.001f;
@@ -609,6 +612,7 @@ void WriteGpu(const GxLightingParams& p) {
         std::memcpy(g.m_viewInv, &viewInv, sizeof(g.m_viewInv));
         g.m_flags[0] = features;
         g.m_flags[1] = (features & GxLighting_Dynamic) ? static_cast<uint32_t>(s_lights.size()) : 0u;
+        std::memcpy(&g.m_flags[2], &p.m_wmoNormal, sizeof(float));   // WMONORMALS: the strength as float bits, 0 = off
         g.m_flags[3] = p.m_debug;
         Tint(p.m_skyColor, g.m_skyTint);
         Tint(p.m_groundColor, g.m_groundTint);
@@ -676,6 +680,8 @@ void WorldLightingRegisterCVars() {
     s_cv.specular = Reg("lightSpecular", "Specular on WMO specular shaders and shiny models (D3D11/Vulkan)", "0");
     s_cv.specularM2 = Reg("lightSpecularM2", "Model specular strength (0-4)", "0.3");
     s_cv.specularWmo = Reg("lightSpecularWmo", "WMO specular strength (0-4)", "1");
+    s_cv.wmoNormalMaps = Reg("wmoNormalMaps", "WMO stone and wood relief from the _n normal maps, shader lighting only (D3D11/Vulkan)", "1");
+    s_cv.wmoNormalStrength = Reg("wmoNormalStrength", "WMO normal map strength (0-2)", "1");
     s_cv.skyAmbient = Reg("lightSkyAmbient", "Ambient tinted by the sky above and the ground below, 0 = off (0-1)", "0");
     // last: Features() takes a registered hdr to mean they all are
     s_cv.hdr = Reg("hdr", "HDR world target with a tonemap (D3D11; Vulkan tonemaps the 8-bit scene)", "0");

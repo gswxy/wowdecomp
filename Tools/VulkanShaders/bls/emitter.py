@@ -646,6 +646,8 @@ class Emitter(object):
                 if s not in self.reads:
                     self.reads.append(s)
             self.litpix = lighting.pixel_colors(self)
+            if self.litpix and self.litpix[2]:
+                self.samplers[lighting.WMO_NORMAL_SLOT] = '2d'   # WMONORMALS: the material's normal map
             self.vconst = VCONST_SMALL
         self.pconst = PCONST
         if not self.vs and self.cmax >= PCONST:

@@ -158,11 +158,15 @@ class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> 
     /* 01E8 */ TSExplicitList<CMapObjGroup, offsetof(CMapObjGroup, m_asyncLoadLink)> m_mapObjGroupList;
     /* 01F4 */ int32_t m_mapObjGroupCount;
     /* 01F8 */ CMapObjGroup* m_mapObjGroupArray [512];
+    // CUSTOM (WMONORMALS): each material's `<diffuse>_n.blp` normal map, or null; m_materialsCount entries,
+    // made by CreateMaterials only while a D3D11 / Vulkan device lights the world (g_gxLighting), freed by Clear
+    CTexture** m_normalTextures;
 
     CMapObj();
     ~CMapObj();
     void Clear();
     void UpdateMaterials();
+    void BindNormalMap(uint32_t material);   // CUSTOM (WMONORMALS)
     float DistFromClosestExtPortal(CMapObjGroup* group, const C3Vector& pos, int32_t exteriorLit);
     void DistFromClosestExtPortal(uint32_t depth, uint32_t flags, CMapObjGroup* group, CMapObjGroup* fromGroup, const C3Vector& pos, float* dist);
     void ExteriorRender(CMapObjGroup* group, uint32_t index);

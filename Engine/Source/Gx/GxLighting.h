@@ -45,6 +45,7 @@ struct GxLightingParams {
     float m_dynamicIntensity = 1.0f;
     float m_specularM2 = 0.3f;
     float m_specularWmo = 1.0f;
+    float m_wmoNormal = 0.0f;        // WMO normal map strength, 0 = off (GxLightingGpu m_flags[2] as float bits)
     C3Vector m_skyColor;             // 0 to 1, gamma as the engine stores them
     C3Vector m_groundColor;
     float m_hemisphere = 0.0f;
@@ -79,6 +80,10 @@ struct GxLightingParams {
 // m_litSurface): D3D11 cb1 dev_alphaRef.y, Vulkan regs.misc.y, 1 or 0. A lit pixel shader relights only when it is 1.
 constexpr uint32_t kGxLightingMaxLights = 32;
 
+// WMONORMALS: the texture stage a WMO batch's normal map rides (CMapObj::BindNormalMap); the translated MapObj
+// pixel shaders declare sampler s10. Stages 4-7 are the ShadowCache maps'.
+constexpr uint32_t kWmoNormalStage = 10;
+
 struct GxLightingLight {
     C3Vector m_position;  // world, render-relative (as the view matrix)
     float m_radius;       // no light from here on
@@ -100,7 +105,7 @@ struct GxLightingGpuLight {
 };
 
 struct GxLightingGpu {
-    uint32_t m_flags[4];      // x GxLighting_PerPixel..Hemisphere (0 = off), y lights, z 0, w lightingDebug (2, 3)
+    uint32_t m_flags[4];      // x GxLighting_PerPixel..Hemisphere (0 = off), y lights, z WMO normal map strength (float bits, 0 = off), w lightingDebug (2, 3)
     float m_view[16];         // row-major (row vector * matrix): render-relative world -> view, for the terrain
     float m_viewInv[16];
     float m_skyTint[4];       // rgb sky colour at luminance 1, a hemisphere strength

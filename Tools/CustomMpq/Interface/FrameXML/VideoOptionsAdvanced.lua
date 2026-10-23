@@ -262,6 +262,8 @@ table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", titl
 	{ "lightSpecular", "check", "Specular highlights", "Shiny buildings and models catch highlights from the sun and dynamic lights. D3D11/Vulkan only." },
 	{ "lightSpecularM2", "slider", "Model highlights", "Strength of the highlights on shiny models. D3D11/Vulkan only.", 0, 4, 0.05 },
 	{ "lightSpecularWmo", "slider", "Building highlights", "Strength of the highlights on shiny buildings. D3D11/Vulkan only.", 0, 4, 0.05 },
+	{ "wmoNormalMaps", "check", "Building relief", "Stone, brick and wood on buildings catch the light with surface relief (normal maps). D3D11/Vulkan only." },
+	{ "wmoNormalStrength", "slider", "Building relief strength", "How deep the stone and wood relief looks. D3D11/Vulkan only.", 0, 2, 0.05 },
 	{ "lightSkyAmbient", "slider", "Sky ambient", "Shadowed sides take the sky's colour from above and the ground's from below. 0 turns it off. D3D11/Vulkan only.", 0, 1, 0.05 },
 })
 -- Sky and clouds (SkyClouds.cpp, DayNight.cpp).

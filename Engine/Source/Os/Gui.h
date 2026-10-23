@@ -34,6 +34,16 @@ enum : int32_t {
     NUM_OSGUI_WINDOW_TYPES = 3,
 };
 
+enum : uint32_t {
+    OSGUI_FILTER_LETTERS = 0x1,
+    OSGUI_FILTER_DIGITS = 0x2,
+    OSGUI_FILTER_SIGN = 0x4,
+    OSGUI_FILTER_DECIMAL_POINT = 0x8,
+    OSGUI_FILTER_SPACE = 0x10,
+    OSGUI_FILTER_UNDERSCORE = 0x20,
+    OSGUI_FILTER_PRINTABLE_ASCII = 0x40,
+};
+
 typedef void* OsGuiHandle;
 typedef void* OsGuiTreeItem;
 

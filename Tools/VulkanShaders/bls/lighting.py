@@ -280,7 +280,7 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
             } else if (family == GX_SURF_WMO) {
                 c.rgb = clamp(gxM.rgb * GxStockWmo(n, p, lights, hemi) + GXK(29).rgb, 0.0, 1.0);
             } else {
-                vec3 pw = (vec4(p, 1.0) * gxViewInv).xyz;
+                vec3 pw = p;   // the terrain's C0-C3 is world * view: its gxW is already view space
                 c.rgb = GxStockTerrain(normalize(gxM.xyz), pw, n, lights, hemi) * gxF.yzw;
             }
 
@@ -334,7 +334,7 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         vec3 v = normalize(-p);
         vec3 sunCol = family == GX_SURF_M2 ? GXK(10).rgb : (family == GX_SURF_WMO ? GXK(11).rgb : GXK(26).rgb);
         vec3 amb = family == GX_SURF_M2 ? GXK(11).rgb : (family == GX_SURF_WMO ? GXK(10).rgb : GXK(25).rgb);
-        vec3 l = family == GX_SURF_TERRAIN ? normalize((vec4(GXK(24).xyz, 0.0) * gxView).xyz) : -GXK(12).xyz;
+        vec3 l = family == GX_SURF_TERRAIN ? normalize(GXK(24).xyz) : -GXK(12).xyz;
         // the sky's reflection: Karis' analytic split-sum, the sky tint above and the ground's below the reflected ray
         float nv = max(dot(n, v), 1e-4);
         vec4 rr = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
@@ -424,8 +424,9 @@ def _surface(em, fam):
             # the layers that blend mod2x get half the lighting
             A('        vec3 gxK = vec3(dot(abs({0}.rgb - gxL * 0.5), vec3(1.0)) < dot(abs({0}.rgb - gxL), vec3(1.0)) ? 0.5 : 1.0);'.format(oc0))
         A('        float gxOk = all(lessThan(abs(%s.rgb - gxL * gxK), vec3(0.004))) ? 1.0 : 0.0;' % oc0)
-        A('        gxP = vec4((vec4(gxW.xyz, 1.0) * gxView).xyz, %s);' % clip_ok)
-        A('        gxN = vec4(normalize(gxNw * mat3(gxView)), gxOk);')
+        # C0-C3 is world * view (CWorldScene::RenderChunks): gxW and gxNw are view space already, not world
+        A('        gxP = vec4(gxW.xyz, %s);' % clip_ok)
+        A('        gxN = vec4(normalize(gxNw), gxOk);')
         A('        gxM = vec4(gxNw, 0.0);')
         A('        gxF = vec4(%d.0, gxK);' % (3 | 64 | (lights << 3)))
         A('    }')

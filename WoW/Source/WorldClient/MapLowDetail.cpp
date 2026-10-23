@@ -16,6 +16,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "Engine/Source/Gx/CGxVertexPC.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 
 // VERIFY: 3763adce auto
 // OFFSET: 0x007C06E0
@@ -268,6 +269,7 @@ void CMap::RenderLowDetail(CMapAreaLow* area) {
     CImVector color = info->m_fog.m_color;
     GxRsSet(GxRs_FogColor, *reinterpret_cast<int32_t*>(&color));
     GxRsSet(GxRs_Lighting, 0);
+    FarLand::Apply(area);   // FARLAND: not in 12340 (farLand: baked ground colour + normals; else the stock fogged tile)
 
     if (!area->m_block) {
         CMap::s_vbbList.AcquireBlock(&area->m_block);

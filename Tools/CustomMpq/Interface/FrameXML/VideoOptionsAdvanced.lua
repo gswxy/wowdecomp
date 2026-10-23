@@ -240,8 +240,13 @@ table.insert(PAGES, #PAGES, { name = "Lighting", parent = "Advanced", title = "H
 -- FSR 4 world upscaler (Vulkan/Upscale.cpp). Turning it off is live; turning it on builds the Vulkan device with the
 -- FSR 4 provider, so it waits for a restart.
 table.insert(PAGES, #PAGES, { name = "FSR", parent = "Advanced", title = "FSR Upscaling",
-	{ "fsrMode", "check", "FSR 4 upscaling", "Draws the world at a lower resolution and upscales it with AMD FSR 4. Vulkan only.", on = "fsr4", off = "off", restart = true },
-	{ "fsrScale", "slider", "Render scale", "Resolution the world is drawn at before FSR 4 upscales it. 100% turns upscaling off. Vulkan only.", 0.5, 1, 0.01, pct = true },
+	{ "fsrMode", "check", "FSR 4 upscaling", "Draws the world at a lower resolution and upscales it with AMD FSR 4. Turns multisampling off while it is on: FSR 4 smooths edges itself. Vulkan only.", on = "fsr4", off = "off", restart = true },
+	{ "fsrScale", "drop", "Quality", "Resolution the world is drawn at before FSR 4 upscales it. Lower is faster and softer. Vulkan only.",
+	  { { "0.77", "Ultra Quality (77%)" }, { "0.67", "Quality (67%)" }, { "0.59", "Balanced (59%)" }, { "0.5", "Performance (50%)" }, { "1", "Off (100%, no upscaling)" } } },
+	{ "fsr4Shaders", "drop", "FSR 4 version", "FSR 4 Fast uses faster shaders with nearly the same picture; FSR 4 is AMD's own shaders. Vulkan only.",
+	  { { "fast", "FSR 4 Fast" }, { "stock", "FSR 4" } }, restart = true },
+	{ "fsr4Version", "drop", "FSR 4 model", "Which FSR 4 model upscales the world. 4.1.1 is the newest; 4.0.2 is the first release. Vulkan only.",
+	  { { "4.1.1", "4.1.1" }, { "4.0.2", "4.0.2" } }, restart = true },
 })
 -- Shader lighting (WorldLighting.cpp, the lit shader pack): shaderLighting gates every light* feature.
 table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", title = "Shader Lighting",

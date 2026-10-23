@@ -191,7 +191,11 @@ int32_t CGxDeviceVulkan::ICreateVulkan(const CGxFormat& format) {
 
     // Before the swapchain is built: the format's vsync picks its present mode.
     context::SetVsync(format.m_vsync != 0);
-    frame::SetSamples(format.m_multisampleCount);   // MSAA: the scene made with the new swapchain picks it up
+    // MSAA: the scene made with the new swapchain picks it up. FSR: single-sampled while fsrMode is fsr4 -- the
+    // upscaler skips a multisampled scene (Upscale.cpp BeginWorld), and FSR 4 does its own anti-aliasing.
+    const bool fsr = gxvk::vk::upscale::Wanted() && format.m_multisampleCount > 1;
+    if (fsr) CGxDevice::Log("CGxDeviceVulkan::ICreateVulkan(): fsrMode fsr4: gxMultisample %u ignored, the scene is single-sampled", static_cast<unsigned>(format.m_multisampleCount));
+    frame::SetSamples(fsr ? 1 : format.m_multisampleCount);
 
     this->m_vulkanPending = 0;
 

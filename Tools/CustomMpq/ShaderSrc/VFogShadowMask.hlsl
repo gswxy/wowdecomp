@@ -9,9 +9,9 @@
 // a tree's shadow inside a mountain's merges into it (A either way) instead of staying at 0.7 of lit. Never above 1.
 // ndl from a normal rebuilt from the depth (the smaller-step neighbour per axis, so silhouettes keep their own side),
 // against the receivers' own light (m_light1 after PickLightBody; the land texture keeps the true sun).
-// TEXCOORD0 = world-viewport uv. s0 scene depth, s5/s6 bands 1/2, s7 the land, s8 band 0, s9 the unit map.
+// TEXCOORD0 = world-viewport uv. s0 scene depth, s5/s6 bands 1/2, s7 the land, s8 band 0, s9 the unit map, s10 the land's fine level.
 // c10 (shading toLight world, strength), c11 (ambient rgb, surface bias yd), c12 (diffuse rgb, k), c13 (stock fog
-// start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on).
+// start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on), c72 the fine level.
 #include "vf_common.hlsli"
 #include "vf_shadow.hlsli"
 #include "vf_gbuffer.hlsli"
@@ -22,6 +22,10 @@ float4 cMaskDiffuse : register(c12);
 float4 cMaskFog : register(c13);
 float4 cMaskRows[6] : register(c65);
 float4 cMaskMaps : register(c71);
+// shadowMaskFine (TerrainSunShadow::Fine): the nested ADT level of the lit heights (4.2 yd texels, +-1067 yd),
+// (u0, v0, k, 1 / blend uv) as c63; it fades into s7's over its outer 1 / w of uv. w = 0: off.
+float4 cTerrainFine : register(c72);
+sampler2D sTerrainFine : register(s10);
 
 sampler2D sDepth : register(s0);
 sampler2D sBand0 : register(s8);
@@ -68,6 +72,14 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     float3 p = ViewRayAtUnitDepth(pixel) * LinearDepth(depth);
     float3 world = mul(float4(p, 1), cViewToWorld).xyz;
     float lit = tex2Dlod(sTerrainShadow, float4(cTerrainShadow.xy - cTerrainShadow.z * world.yx, 0, 0)).x;
+    [branch] if (cTerrainFine.w > 0)
+    {
+        float2 uv = cTerrainFine.xy - cTerrainFine.z * world.yx;
+        float2 edge = abs(uv - 0.5);
+        float w = saturate((0.5 - max(edge.x, edge.y)) * cTerrainFine.w);
+        [branch] if (w > 0)
+            lit = lerp(lit, tex2Dlod(sTerrainFine, float4(uv, 0, 0)).x, w);
+    }
     float land = saturate(1 - (lit - world.z - cMaskAmbient.w) * cTerrainShadow.w);
     [branch] if (land >= 1)
         return 1;

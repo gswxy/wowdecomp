@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
@@ -10,16 +11,26 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "WoW/Source/WorldClient/Map.h"
+#include "WoW/Source/WorldClient/MapArea.h"
+#include "WoW/Source/WorldClient/MapChunk.h"
 #include "WoW/Source/WorldClient/MapLowDetail.h"
 
 namespace TerrainSunShadow {
 
 namespace {
 
-constexpr int kSize = 256;                  // texels per side, one per WDL outer vertex
+constexpr int kSize = 256;                  // coarse texels per side, one per WDL outer vertex
 constexpr float kCell = 33.333332f;         // WDL outer vertex spacing (MapLowDetail.cpp)
 constexpr float kGridOrigin = 512.0f;       // 17066.666 / kCell: world x/y 0 in WDL vertices
-constexpr float kNone = -30000.0f;          // no land (no WDL tile), and "nothing blocks the light"
+// shadowMaskFine: the ADT level, one texel per MCVT outer vertex (SMOLTILE_SIZE, 8 per WDL cell), +-1067 yd.
+constexpr int kFineSize = 512;
+constexpr float kFineCell = 4.1666665f;      // SMOLTILE_SIZE (WorldConstants.h, not constexpr)
+constexpr float kFineOrigin = 4096.0f;       // HALF_WORLD_SIZE / SMOLTILE_SIZE
+constexpr int kFinePerCoarse = 8;
+constexpr int kFineRecentre = 32;           // fine texels (133 yd) of drift before a rebuild
+constexpr float kFineBlendUv = 0.05f;       // the fine level fades into the coarse over its outer 5% (107 yd)
+constexpr uint32_t kChunkPollMs = 1000;     // how often the window's loaded ADT chunks are recounted
+constexpr float kNone = -30000.0f;          // no land (no WDL tile, an ADT hole), and "nothing blocks the light"
 constexpr float kSoftYards = 16.0f;         // fully dark this far under the lit height
 constexpr int kRecentre = 16;               // texels the camera may drift before a rebuild
 constexpr float kTurnCos = 0.99999f;        // ~0.26 degrees of light turn before a rebuild
@@ -28,23 +39,40 @@ constexpr float kTopOfWorld = 4000.0f;      // no land above this
 constexpr uint32_t kFadeMs = 1000;          // vfog38 (audit M2): a rebuild cross-fades from the shown heights this long
 constexpr uint32_t kFadeStepMs = 33;        // re-upload at most this often while fading
 constexpr float kSnapCos = 0.99f;           // ~8 degrees of turn at once (debugHour, a time jump): no fade
-constexpr float kUnset = -1e30f;            // s_from: not in the old window
+constexpr float kUnset = -1e30f;            // from: not in the old window
+
+// One nested level (clipmap ring): a square window of lit heights on a grid of `cell` yards, r/c down world x/y.
+struct Level {
+    int size;
+    float cell, origin;
+    bool clampBorder;           // the coarse level: border texels "nothing blocks", so the clamp past it is lit
+    std::vector<float> lit;     // the last build
+    std::vector<float> from;    // the shown heights when it was built (same window), the fade's start
+    std::vector<float> shown;   // lerp(from, lit, fade): what the texture holds
+    std::vector<uint32_t> texels;
+    CGxTex* tex = nullptr;
+    int r0 = 0, c0 = 0;
+    uint32_t fadeStart = 0, lastUpload = 0;
+    bool fading = false, built = false;
+
+    Level(int n, float cellYards, float gridOrigin, bool clamp)
+        : size(n), cell(cellYards), origin(gridOrigin), clampBorder(clamp), lit(n * n), from(n * n), shown(n * n), texels(n * n) {}
+};
 
 CVar* s_cvar;
 CVar* s_maskCvar;       // shadowMask (Legion survey 2.7)
 CVar* s_softCvar;       // shadowSoft
-CGxTex* s_tex;
-float s_lit[kSize * kSize];       // the last build
-float s_from[kSize * kSize];      // the shown heights when it was built (same window), the fade's start
-float s_shown[kSize * kSize];     // lerp(s_from, s_lit, fade): what the texture holds
-uint32_t s_fadeStart, s_lastUpload;
-bool s_fading;
-uint32_t s_texels[kSize * kSize];
+CVar* s_fineCvar;       // shadowMaskFine
+Level s_coarse(kSize, kCell, kGridOrigin, true);
+Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
+// The fine level's land, (kFineSize + 2)^2 from (r0 - 1, c0 - 1): ADT heights where loaded, WDL beyond, kNone in holes.
+std::vector<float> s_fineLand((kFineSize + 2) * (kFineSize + 2));
+int s_fineChunks;       // loaded ADT chunks over the fine window at its build
+uint32_t s_finePoll;
+bool s_fineOn;          // the fine level is current (Visibility uses it)
 float s_light[3];
-int s_r0 = 0, s_c0 = 0;
 const void* s_wdl;
 uint32_t s_loads;       // g_lowDetailLoads at the build (audit L10: a new WDL can reuse the freed one's address)
-bool s_built;
 
 float Vertex(int r, int c) {
     if (r < 0 || c < 0 || r > 1024 || c > 1024) {
@@ -70,6 +98,80 @@ float HeightAt(float r, float c) {
     return (h00 * (1 - tc) + h01 * tc) * (1 - tr) + (h10 * (1 - tc) + h11 * tc) * tr;
 }
 
+// The loaded ADT chunk holding fine (MCVT outer) vertex (r, c), r down world x; nullptr if none.
+const CMapChunk* ChunkAt(int r, int c) {
+    if (r < 0 || c < 0 || r >= 8192 || c >= 8192) {
+        return nullptr;
+    }
+    const int cy = r >> 3, cx = c >> 3;     // CMap::GetChunkAtPosition's chunkY (from x) and chunkX (from y)
+    const CMapArea* area = CMap::m_areaTable[64 * (cy >> 4) + (cx >> 4)];
+    const CMapChunk* chunk = area ? area->m_mapChunks[(cx & 15) + 16 * (cy & 15)] : nullptr;
+    return chunk && chunk->m_height && chunk->m_header ? chunk : nullptr;
+}
+
+// Fine vertex (r, c): its MCVT outer height (row r & 7, col c & 7: index row * 17 + col), kNone when the cell it
+// starts is a hole (CMap::GetHeightTerrain's low-res mask), the WDL where no ADT is loaded.
+float FineVertex(int r, int c) {
+    const CMapChunk* chunk = ChunkAt(r, c);
+    if (!chunk) {
+        return HeightAt(static_cast<float>(r) / kFinePerCoarse, static_cast<float>(c) / kFinePerCoarse);
+    }
+    const int row = r & 7, col = c & 7;
+    if (chunk->m_header->m_holes & CMap::s_holeMask[4 * (row >> 1) + (col >> 1)]) {
+        return kNone;
+    }
+    return chunk->m_height[row * 17 + col] + chunk->m_topLeftCoords.z;
+}
+
+// Bilinear over s_fineLand at absolute fine grid (r, c), which must lie in the window +-1. A corner in a hole: the
+// nearest corner, so a hole lets the light through about where it is.
+float FineHeightAt(float r, float c) {
+    const float fr = std::floor(r), fc = std::floor(c);
+    const int ir = static_cast<int>(fr) - s_fine.r0 + 1, ic = static_cast<int>(fc) - s_fine.c0 + 1;
+    constexpr int n = kFineSize + 2;
+    if (ir < 0 || ic < 0 || ir + 1 >= n || ic + 1 >= n) {
+        return HeightAt(r / kFinePerCoarse, c / kFinePerCoarse);
+    }
+    const float* h = &s_fineLand[ir * n + ic];
+    const float tr = r - fr, tc = c - fc;
+    if (h[0] == kNone || h[1] == kNone || h[n] == kNone || h[n + 1] == kNone) {
+        return h[(tr >= 0.5f ? n : 0) + (tc >= 0.5f ? 1 : 0)];
+    }
+    return (h[0] * (1 - tc) + h[1] * tc) * (1 - tr) + (h[n] * (1 - tc) + h[n + 1] * tc) * tr;
+}
+
+// The coarse level's built lit height at absolute coarse grid (r, c), kNone outside its window.
+float CoarseLitAt(float r, float c) {
+    const float fr = r - s_coarse.r0, fc = c - s_coarse.c0;
+    const int ir = static_cast<int>(std::floor(fr)), ic = static_cast<int>(std::floor(fc));
+    if (ir < 0 || ic < 0 || ir + 1 >= kSize || ic + 1 >= kSize) {
+        return kNone;
+    }
+    const float* h = &s_coarse.lit[ir * kSize + ic];
+    const float tr = fr - ir, tc = fc - ic;
+    return (h[0] * (1 - tc) + h[1] * tc) * (1 - tr) + (h[kSize] * (1 - tc) + h[kSize + 1] * tc) * tr;
+}
+
+int CountFineChunks() {
+    int n = 0;
+    for (int r = s_fine.r0 - 1; r <= s_fine.r0 + kFineSize; r += 8) {
+        for (int c = s_fine.c0 - 1; c <= s_fine.c0 + kFineSize; c += 8) {
+            n += ChunkAt(r, c) != nullptr;
+        }
+    }
+    return n;
+}
+
+void FillFineLand() {
+    constexpr int n = kFineSize + 2;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            s_fineLand[i * n + j] = FineVertex(s_fine.r0 - 1 + i, s_fine.c0 - 1 + j);
+        }
+    }
+    s_fineChunks = CountFineChunks();
+}
+
 uint16_t Half(float f) {    // normal range only (|f| <= 30000, rounded to nearest)
     uint32_t x;
     std::memcpy(&x, &f, 4);
@@ -82,17 +184,20 @@ uint16_t Half(float f) {    // normal range only (|f| <= 30000, rounded to neare
     return static_cast<uint16_t>(sign | std::min(bits, 0x7BFFu));
 }
 
-void Callback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_t, void*, uint32_t& stride, const void*& texels) {
+void Callback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_t, void* user, uint32_t& stride, const void*& texels) {
     if (command == GxTex_Latch) {
-        texels = s_texels;
+        texels = static_cast<Level*>(user)->texels.data();
         stride = width * 4;
     }
 }
 
 // lit(p) = max over the land toward the light of (height - rise along the way): the lowest z the light reaches.
 // Swept one texel line at a time from the light's side: lit(p) = max(H(q), lit(q)) - drop, q = p one step toward the
-// light along the major axis (the minor offset |off| <= 1 keeps q in the previous line, already done).
-void Build(const float L[3]) {
+// light along the major axis (the minor offset |off| <= 1 keeps q in the previous line, already done). land(r, c) is
+// the height at absolute grid (r, c); outside(r, c) the lit height where q leaves the window (kNone: nothing blocks).
+template <class Land, class Outside>
+void Build(Level& lv, const float L[3], Land land, Outside outside) {
+    const int n = lv.size;
     const float h = std::sqrt(L[0] * L[0] + L[1] * L[1]);
     const float rise = std::max(L[2], 0.005f) / std::max(h, 1e-4f);    // tan(elevation)
     const float dR = h > 1e-4f ? -L[0] / h : 0.0f;    // grid r/c grow as world x/y fall
@@ -101,36 +206,106 @@ void Build(const float L[3]) {
     const float m = std::max(std::fabs(dR), std::fabs(dC));
     const int step = (rowsMajor ? dR : dC) > 0 ? 1 : -1;
     const float off = (rowsMajor ? dC : dR) / m;
-    const float drop = kCell / m * rise;
-    auto at = [&](int a, int b) -> float& { return rowsMajor ? s_lit[a * kSize + b] : s_lit[b * kSize + a]; };
+    const float drop = lv.cell / m * rise;
+    float* lit = lv.lit.data();
+    auto at = [&](int a, int b) -> float& { return rowsMajor ? lit[a * n + b] : lit[b * n + a]; };
 
-    for (int n = 0; n < kSize; n++) {
-        const int a = step > 0 ? kSize - 1 - n : n;
+    for (int k = 0; k < n; k++) {
+        const int a = step > 0 ? n - 1 - k : k;
         const int na = a + step;
-        for (int b = 0; b < kSize; b++) {
+        for (int b = 0; b < n; b++) {
             const float nb = b + off;
-            const float land = rowsMajor ? HeightAt(static_cast<float>(s_r0 + na), s_c0 + nb) : HeightAt(s_r0 + nb, static_cast<float>(s_c0 + na));
-            float past = kNone;
+            const float qr = rowsMajor ? static_cast<float>(lv.r0 + na) : lv.r0 + nb;
+            const float qc = rowsMajor ? lv.c0 + nb : static_cast<float>(lv.c0 + na);
+            float past;
             const int b0 = static_cast<int>(std::floor(nb));
-            if (na >= 0 && na < kSize && b0 >= 0 && b0 + 1 < kSize) {
+            if (na >= 0 && na < n && b0 >= 0 && b0 + 1 < n) {
                 const float t = nb - b0;
                 past = at(na, b0) * (1 - t) + at(na, b0 + 1) * t;
-            } else if (na >= 0 && na < kSize && b0 >= 0 && b0 < kSize) {
+            } else if (na >= 0 && na < n && b0 >= 0 && b0 < n) {
                 past = at(na, b0);
+            } else {
+                past = outside(qr, qc);
             }
-            at(a, b) = std::max(std::max(land, past) - drop, kNone);
+            at(a, b) = std::max(std::max(land(qr, qc), past) - drop, kNone);
         }
     }
 }
 
 // The shown heights at fade weight w into the texels.
-void Blend(float w) {
-    for (int i = 0; i < kSize * kSize; i++) {
-        const int r = i / kSize, c = i % kSize;
-        const bool border = r == 0 || c == 0 || r == kSize - 1 || c == kSize - 1;     // the clamp past the grid: lit
-        s_shown[i] = s_from[i] + (s_lit[i] - s_from[i]) * w;
-        s_texels[i] = Half(border ? kNone : s_shown[i]);   // R = lit height, G unused
+void Blend(Level& lv, float w) {
+    const int n = lv.size;
+    for (int i = 0; i < n * n; i++) {
+        const int r = i / n, c = i % n;
+        const bool border = lv.clampBorder && (r == 0 || c == 0 || r == n - 1 || c == n - 1);
+        lv.shown[i] = lv.from[i] + (lv.lit[i] - lv.from[i]) * w;
+        lv.texels[i] = Half(border ? kNone : lv.shown[i]);   // R = lit height, G unused
     }
+}
+
+// Moves the level's window to (r, c) keeping what it showed for the fade (snap: no fade), then builds it.
+template <class BuildFn>
+void Rebuild(Level& lv, int r, int c, bool fade, uint32_t now, BuildFn build) {
+    const int n = lv.size;
+    fade = fade && lv.built && lv.tex;
+    const int dr = r - lv.r0, dc = c - lv.c0;
+    for (int i = 0; i < n * n; i++) {
+        const int a = i / n + dr, b = i % n + dc;
+        lv.from[i] = fade && a >= 0 && a < n && b >= 0 && b < n ? lv.shown[a * n + b] : kUnset;
+    }
+    lv.r0 = r;
+    lv.c0 = c;
+    build();
+    for (int i = 0; i < n * n; i++) {
+        if (lv.from[i] == kUnset) {
+            lv.from[i] = lv.lit[i];
+        }
+    }
+    lv.fading = fade;
+    lv.fadeStart = now;
+    Blend(lv, fade ? 0.0f : 1.0f);
+}
+
+// Steps the level's fade and uploads it when it changed (rebuilt or fading). False: no texture.
+bool Upload(Level& lv, bool rebuilt, uint32_t now, const char* name) {
+    bool upload = rebuilt;
+    if (!rebuilt && lv.fading && now - lv.lastUpload >= kFadeStepMs) {
+        const float w = std::min(static_cast<float>(now - lv.fadeStart) / kFadeMs, 1.0f);
+        lv.fading = w < 1.0f;
+        Blend(lv, w);
+        upload = true;
+    }
+    if (upload) {
+        lv.lastUpload = now;
+        if (!lv.tex) {
+            CGxTexFlags flags(GxTex_Linear, 0, 0, 0, 0, 0, 1, 0, 0, 0);
+            g_theGxDevicePtr->TexCreate(GxTex_2d, lv.size, lv.size, 0, GxTex_Gr1616F, GxTex_Gr1616F, flags, &lv, Callback, name, lv.tex);
+        }
+        if (lv.tex) {
+            GxTexUpdate(lv.tex, 0, 0, lv.size, lv.size, 1);
+        }
+        lv.built = lv.tex != nullptr;
+    }
+    return lv.tex != nullptr;
+}
+
+void Row(const Level& lv, float row[4], float w) {
+    row[0] = (lv.origin - lv.c0 + 0.5f) / lv.size;
+    row[1] = (lv.origin - lv.r0 + 0.5f) / lv.size;
+    row[2] = 1.0f / (lv.cell * lv.size);
+    row[3] = w;
+}
+
+bool FineWanted() {
+    return (!s_fineCvar || s_fineCvar->m_intValue != 0) && MaskWanted();
+}
+
+void ReleaseLevel(Level& lv) {
+    if (lv.tex) {
+        GxTexDestroy(lv.tex);
+        lv.tex = nullptr;
+    }
+    lv.built = false;
 }
 
 }  // namespace
@@ -139,6 +314,7 @@ void RegisterCVars() {
     s_cvar = CVar::Register("gfxTerrainShadow", "The land (near terrain and the far WDL horizon) blocks the sun for the volumetric fog's sun shafts and glow and for the sun glare: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_maskCvar = CVar::Register("shadowMask", "Mountains (near terrain and the far WDL horizon) cast the sun's shadow onto the world: terrain, buildings and models (needs gfxTerrainShadow): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_softCvar = CVar::Register("shadowSoft", "Softness of the mountains' shadow edge (shadowMask), 0 = hard .. 4 = very soft, default 1", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_fineCvar = CVar::Register("shadowMaskFine", "The mountains' shadow (shadowMask) from the loaded terrain's own heights (4 yd) within 1 km of the camera, the far WDL (33 yd) beyond: 1 = on (default), 0 = WDL only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
 bool MaskWanted() {
@@ -158,62 +334,65 @@ bool Enabled() {
 bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float row[4]) {
     tex = nullptr;
     if (!Enabled() || toLight[2] <= 0.0f || !g_theGxDevicePtr) {
+        s_fineOn = false;
         return false;
     }
     const int r = static_cast<int>(std::floor(kGridOrigin - camPos[0] / kCell)) - kSize / 2;
     const int c = static_cast<int>(std::floor(kGridOrigin - camPos[1] / kCell)) - kSize / 2;
     const float turn = toLight[0] * s_light[0] + toLight[1] * s_light[1] + toLight[2] * s_light[2];
     const uint32_t now = OsGetAsyncTimeMs();
-    bool upload = false;
-    if (!s_built || !s_tex || s_wdl != CMap::s_lowDetail.m_data || g_lowDetailLoads != s_loads || turn < kTurnCos || std::abs(r - s_r0) > kRecentre || std::abs(c - s_c0) > kRecentre) {
-        // vfog38 (audit M2): fade from the heights shown now, moved into the new window; a new map, the first build
-        // or a big turn snaps. Texels the old window did not cover start at the new heights.
-        const bool fade = s_built && s_tex && s_wdl == CMap::s_lowDetail.m_data && g_lowDetailLoads == s_loads && turn >= kSnapCos;
-        const int dr = r - s_r0, dc = c - s_c0;
-        for (int i = 0; i < kSize * kSize; i++) {
-            const int a = i / kSize + dr, b = i % kSize + dc;
-            s_from[i] = fade && a >= 0 && a < kSize && b >= 0 && b < kSize ? s_shown[a * kSize + b] : kUnset;
-        }
-        s_r0 = r;
-        s_c0 = c;
+    const bool sameMap = s_wdl == CMap::s_lowDetail.m_data && g_lowDetailLoads == s_loads;
+    const bool coarse = !s_coarse.built || !s_coarse.tex || !sameMap || turn < kTurnCos || std::abs(r - s_coarse.r0) > kRecentre || std::abs(c - s_coarse.c0) > kRecentre;
+    // vfog38 (audit M2): fade from the heights shown now, moved into the new window; a new map, the first build
+    // or a big turn snaps. Texels the old window did not cover start at the new heights.
+    const bool fade = sameMap && turn >= kSnapCos;
+    if (coarse) {
         std::memcpy(s_light, toLight, sizeof(s_light));
         s_wdl = CMap::s_lowDetail.m_data;
         s_loads = g_lowDetailLoads;
-        Build(toLight);
-        for (int i = 0; i < kSize * kSize; i++) {
-            if (s_from[i] == kUnset) {
-                s_from[i] = s_lit[i];
-            }
-        }
-        s_fading = fade;
-        s_fadeStart = now;
-        Blend(fade ? 0.0f : 1.0f);
-        upload = true;
-    } else if (s_fading && now - s_lastUpload >= kFadeStepMs) {
-        const float w = std::min(static_cast<float>(now - s_fadeStart) / kFadeMs, 1.0f);
-        s_fading = w < 1.0f;
-        Blend(w);
-        upload = true;
+        Rebuild(s_coarse, r, c, fade, now, [&] {
+            Build(s_coarse, toLight, HeightAt, [](float, float) { return kNone; });
+        });
     }
-    if (upload) {
-        s_lastUpload = now;
-        if (!s_tex) {
-            CGxTexFlags flags(GxTex_Linear, 0, 0, 0, 0, 0, 1, 0, 0, 0);
-            g_theGxDevicePtr->TexCreate(GxTex_2d, kSize, kSize, 0, GxTex_Gr1616F, GxTex_Gr1616F, flags, nullptr, Callback, "TerrainSunShadow", s_tex);
-        }
-        if (s_tex) {
-            GxTexUpdate(s_tex, 0, 0, kSize, kSize, 1);
-        }
-        s_built = s_tex != nullptr;
-    }
-    if (!s_tex) {
+    if (!Upload(s_coarse, coarse, now, "TerrainSunShadow")) {
+        s_fineOn = false;
         return false;
     }
-    tex = s_tex;
-    row[0] = (kGridOrigin - s_c0 + 0.5f) / kSize;
-    row[1] = (kGridOrigin - s_r0 + 0.5f) / kSize;
-    row[2] = 1.0f / (kCell * kSize);
-    row[3] = 1.0f / MaskSoftYards();    // vfog38 (audit L6): fog, water and caustics soften as the mask does (shadowSoft)
+
+    // shadowMaskFine: the ADT level, rebuilt with the coarse (its light-side edge reads the coarse lit heights), on
+    // its own drift, or when the window's loaded chunks changed (polled; ADTs stream in after a teleport).
+    if (FineWanted()) {
+        const int fr = static_cast<int>(std::floor(kFineOrigin - camPos[0] / kFineCell)) - kFineSize / 2;
+        const int fc = static_cast<int>(std::floor(kFineOrigin - camPos[1] / kFineCell)) - kFineSize / 2;
+        bool fine = coarse || !s_fine.built || !s_fineOn || std::abs(fr - s_fine.r0) > kFineRecentre || std::abs(fc - s_fine.c0) > kFineRecentre;
+        if (!fine && now - s_finePoll >= kChunkPollMs) {
+            s_finePoll = now;
+            fine = CountFineChunks() != s_fineChunks;
+        }
+        if (fine) {
+            Rebuild(s_fine, fr, fc, fade && s_fineOn, now, [&] {
+                FillFineLand();
+                Build(s_fine, s_light, FineHeightAt, [](float qr, float qc) { return CoarseLitAt(qr / kFinePerCoarse, qc / kFinePerCoarse); });
+            });
+        }
+        s_fineOn = Upload(s_fine, fine, now, "TerrainSunShadowFine");
+    } else {
+        s_fineOn = false;
+    }
+
+    tex = s_coarse.tex;
+    Row(s_coarse, row, 1.0f / MaskSoftYards());     // vfog38 (audit L6): fog, water and caustics soften as the mask does
+    return true;
+}
+
+bool Fine(CGxTex*& tex, float row[4]) {
+    if (!s_fineOn || !FineWanted() || !s_fine.tex) {
+        tex = nullptr;
+        std::memset(row, 0, 4 * sizeof(float));
+        return false;
+    }
+    tex = s_fine.tex;
+    Row(s_fine, row, 1.0f / kFineBlendUv);
     return true;
 }
 
@@ -226,25 +405,30 @@ float Visibility(const float pos[3], const float toward[3]) {
         return 1.0f;
     }
     const float rise = toward[2] / h;
-    for (float s = kCell * 0.5f; s < kMarchYards; s += kCell * 0.5f) {
+    const bool fine = s_fineOn && FineWanted();
+    float s = kFineCell * 0.5f;
+    while (s < kMarchYards) {
         const float z = pos[2] + s * rise;
         if (z > kTopOfWorld) {
             break;
         }
         const float x = pos[0] + toward[0] / h * s, y = pos[1] + toward[1] / h * s;
-        if (HeightAt(kGridOrigin - x / kCell, kGridOrigin - y / kCell) > z + 2.0f) {
+        // The fine level's heights (as the mask's texture) inside its window, the WDL beyond.
+        const float fr = kFineOrigin - x / kFineCell - s_fine.r0, fc = kFineOrigin - y / kFineCell - s_fine.c0;
+        const bool inFine = fine && fr >= 0.0f && fc >= 0.0f && fr < kFineSize && fc < kFineSize;
+        const float land = inFine ? FineHeightAt(fr + s_fine.r0, fc + s_fine.c0) : HeightAt(kGridOrigin - x / kCell, kGridOrigin - y / kCell);
+        if (land > z + 2.0f) {
             return 0.0f;
         }
+        s += (inFine ? kFineCell : kCell) * 0.5f;
     }
     return 1.0f;
 }
 
 void Release() {
-    if (s_tex) {
-        GxTexDestroy(s_tex);
-        s_tex = nullptr;
-    }
-    s_built = false;
+    ReleaseLevel(s_coarse);
+    ReleaseLevel(s_fine);
+    s_fineOn = false;
 }
 
 }  // namespace TerrainSunShadow

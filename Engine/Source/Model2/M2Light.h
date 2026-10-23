@@ -83,4 +83,9 @@ class CM2Lighting {
     void SetupSunlight();
 };
 
+// LIGHTING (not in 12340): the scene whose point lights the shader lighting draws instead (WoW/Source/Ui/
+// WorldLighting.cpp sets it on D3D11/Vulkan with shaderLighting, lightDynamic and lightReplaceStock on; else null).
+// CM2Lighting::AddLight skips that scene's point lights; the sun, moon and ambient still pass.
+extern CM2Scene* g_m2ShaderOwnedLightScene;
+
 #endif

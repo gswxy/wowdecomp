@@ -3,10 +3,13 @@
 #include <cmath>
 #include <cstring>
 #include <vector>
+#include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/GxLighting.h"
+#include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2ModelLight.h"
 #include "Engine/Source/Model2/M2Scene.h"
@@ -18,6 +21,8 @@
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
+#include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
 
 // CUSTOM (Badgermilk0 port of AwesomeLighting.cpp): the CVars and what the passes need of the zone, and the shader
@@ -47,6 +52,8 @@ struct LightingCVars {
     CVar* dynamicM2;
     CVar* dynamicWmo;
     CVar* dynamicDistance;
+    CVar* dynamicMinRadius;
+    CVar* replaceStock;
     CVar* flicker;
     CVar* wrap;
     CVar* specular;
@@ -164,7 +171,22 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
 
 // ---- the shader half: lights (Badgermilk0 AwesomeLighting.cpp, fires-as-lights left out) ----
 
+// a gathered light and where it came from (the name only lives this frame: the dump reads it before the model can go)
+struct Gathered {
+    GxLightingLight m_light;
+    bool m_m2;
+    bool m_static;        // a model never animated: its light read from the file, not the animation
+    const char* m_name;
+    int32_t m_index;
+    float m_distance;
+    float m_score;
+    int32_t m_rank;       // -1: the cap dropped it
+};
+
+std::vector<Gathered> s_gathered;
 std::vector<GxLightingLight> s_lights;
+uint32_t s_wmoDeduped = 0;
+bool s_dumpPending = false;
 
 float Decode(float c) {
     return c > 0.0f ? powf(c, 2.2f) : 0.0f;
@@ -181,15 +203,19 @@ float DistanceSquared(const C3Vector& a, const C3Vector& b) {
     return dx * dx + dy * dy + dz * dz;
 }
 
+float Luminance(const C3Vector& c) {
+    return c.x * 0.2126f + c.y * 0.7152f + c.z * 0.0722f;
+}
+
 // a warm light (a flame) flickers; a cold or white one (magic, a lamp) does not
 float FlickerFor(const C3Vector& linear) {
     return linear.x > linear.y * 1.1f && linear.y > linear.z ? std::min(Positive(s_cv.flicker), 1.0f) : 0.0f;
 }
 
 // flame: a model's light (a torch), which may flicker; a WMO's lights are its rooms' steady light
-void AddLight(const C3Vector& position, const C3Vector& gamma, float scale, float start, float radius, const C3Vector& camera, float reach, bool flame) {
+Gathered* AddLight(const C3Vector& position, const C3Vector& gamma, float scale, float start, float radius, const C3Vector& camera, float reach, bool flame) {
     if (radius <= 0.1f || scale <= 0.0f || DistanceSquared(position, camera) > (reach + radius) * (reach + radius)) {
-        return;
+        return nullptr;
     }
 
     GxLightingLight light;
@@ -202,17 +228,35 @@ void AddLight(const C3Vector& position, const C3Vector& gamma, float scale, floa
     light.m_flicker = flame ? FlickerFor(light.m_color) * fminf(1.0f, 8.0f / radius) : 0.0f;
     light.m_specular = 1.0f;
 
-    if (light.m_color.x + light.m_color.y + light.m_color.z >= 0.003f) {
-        s_lights.push_back(light);
+    if (light.m_color.x + light.m_color.y + light.m_color.z < 0.003f) {
+        return nullptr;
     }
+
+    // what it gives the camera's surroundings: all of it when the camera is inside its reach, none at the gather's edge
+    float d = sqrtf(DistanceSquared(position, camera));
+    float falloff = std::clamp(1.0f - std::max(d - radius, 0.0f) / reach, 0.0f, 1.0f);
+    s_gathered.push_back(Gathered { light, flame, false, nullptr, -1, d, Luminance(light.m_color) * falloff, -1 });
+    return &s_gathered.back();
+}
+
+template <class T>
+bool FirstKey(const M2Track<T>& track, T& out) {
+    if (!track.m_sequenceKeys.m_count || !track.m_sequenceKeys[0].m_count) {
+        return false;
+    }
+
+    out = track.m_sequenceKeys[0][0];
+    return true;
 }
 
 // the point lights of the models in the scene. Not CM2Scene's light grid: a model off screen is not animated, and the
 // stock CM2Scene::SelectLights unlinks the lights of a model not animated this frame, so a torch behind the camera would
 // drop out although it still lights what is on screen. Every loaded model is in m_modelList; one off screen keeps the
-// place, colour and attenuation its lights had when it was last animated (never animated: colour 0, so not added)
+// place, colour and attenuation its lights had when it was last animated. A model never animated (loaded off screen)
+// has none yet: its light is read from the file (first key, bone at rest) instead of animating the model
 void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
     float scale = Positive(s_cv.dynamicM2);
+    float minRadius = std::clamp(s_cv.dynamicMinRadius->m_floatValue, 0.0f, 40.0f);
 
     if (!scene || scale <= 0.0f) {
         return;
@@ -225,30 +269,67 @@ void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
             continue;
         }
 
-        for (uint32_t i = 0; i < model->m_shared->m_data->m_lights.m_count; i++) {
+        M2Data* data = model->m_shared->m_data;
+
+        for (uint32_t i = 0; i < data->m_lights.m_count; i++) {
             const M2ModelLight& owner = model->m_lights[i];
             const CM2Light& light = owner.m_light;
 
-            if (!owner.m_enabled || !owner.m_visibilityTrack.m_currentValue || light.m_type != M2LIGHT_POINT || !light.m_scene) {
+            if (!owner.m_enabled || light.m_type != M2LIGHT_POINT || !light.m_scene) {
                 continue;
             }
 
+            C3Vector position = light.m_pos;
+            C3Vector color = light.m_dirColor;
             float end = owner.m_attenuationEndTrack.m_currentValue;
             float start = owner.m_attenuationStartTrack.m_currentValue;
+            bool fromFile = light.m_stamp == 0;
+
+            if (fromFile) {
+                // never animated: an attached model's transform is its parent's to give, so it waits for its first frame
+                const M2Light& file = data->m_lights[i];
+                uint8_t visible = 1;
+                float intensity = 1.0f;
+                color = C3Vector(0.0f, 0.0f, 0.0f);
+                FirstKey(file.m_visibility, visible);
+                FirstKey(file.m_diffuseIntensity, intensity);
+
+                if (model->m_attachParent || !visible || !FirstKey(file.m_diffuseColor, color)) {
+                    continue;
+                }
+
+                color = color * intensity;
+                position = Transform(file.m_position, model->m_worldTransform);
+                end = start = 0.0f;
+                FirstKey(file.m_attenuationEnd, end);
+                FirstKey(file.m_attenuationStart, start);
+            } else if (!owner.m_visibilityTrack.m_currentValue) {
+                continue;
+            }
 
             if (!(end > 0.25f && end < 80.0f)) {
                 end = 8.0f;
                 start = 1.0f;
             }
 
-            AddLight(light.m_pos, light.m_dirColor, scale, start, end, camera, reach, true);
+            // the stock falloff 1/(0.7d + 0.03d²) still gives a tenth at 10 yd: a 1-3 yd end would barely reach a wall
+            end = std::max(end, minRadius);
+
+            if (Gathered* g = AddLight(position, color, scale, start, end, camera, reach, true)) {
+                g->m_static = fromFile;
+                g->m_name = model->m_shared->m_fileNameWithoutPath ? model->m_shared->m_fileNameWithoutPath : model->m_shared->m_fileName;
+                g->m_index = static_cast<int32_t>(i);
+            }
         }
     }
 }
 
-// the MOLT lights of the placed WMOs, which the stock client only baked into vertex colours
+// the MOLT lights of the loaded groups of the placed WMOs, which the stock client only baked into vertex colours. A
+// light within 1.5 yd of a model's light is that model's (the torch the WMO baked): the model's, animated, is kept
 void GatherWmoLights(const C3Vector& camera, float reach) {
     float scale = Positive(s_cv.dynamicWmo);
+    size_t m2End = s_gathered.size();
+    std::vector<uint8_t> done;
 
     if (scale <= 0.0f) {
         return;
@@ -261,26 +342,153 @@ void GatherWmoLights(const C3Vector& camera, float reach) {
             continue;
         }
 
-        // the placement's bounds within reach of the camera
-        const CAaBox& box = def->m_bbox;
-        C3Vector nearest(std::clamp(camera.x, box.b.x, box.t.x), std::clamp(camera.y, box.b.y, box.t.y), std::clamp(camera.z, box.b.z, box.t.z));
+        done.assign(owner->m_ligtsCount, 0);
 
-        if (DistanceSquared(nearest, camera) > (reach + 30.0f) * (reach + 30.0f)) {
-            continue;
-        }
+        for (CMapBaseObjLink* link = def->m_mapObjDefGroupLinkList.Head(); link; link = def->m_mapObjDefGroupLinkList.Next(link)) {
+            CMapObjDefGroup* defGroup = static_cast<CMapObjDefGroup*>(link->m_owner);
+            CMapObjGroup* group = owner->GetGroup(defGroup->m_groupNum, 0);
 
-        for (int32_t i = 0; i < owner->m_ligtsCount; i++) {
-            const SMOLight& molt = owner->m_lightList[i];
-
-            // omni and spot lights (a spot lights all round here); directional and ambient ones are the stock lighting
-            if (molt.m_type > 1 || molt.m_attenEnd <= 0.25f) {
+            if (!group || !group->m_lightRefList) {
                 continue;
             }
 
-            float intensity = molt.m_intensity > 0.0f ? molt.m_intensity : 1.0f;
-            AddLight(Transform(molt.m_position, def->m_mat), ColorOf(molt.m_color), scale * intensity, molt.m_attenStart, molt.m_attenEnd, camera, reach, false);
+            // the group within reach; an interior one only with the camera inside it: without shadows its lights
+            // would shine through its walls
+            // ponytail: inside = in its bounding box, not the portal walk's current group; switch if rooms leak
+            const CAaBox& box = defGroup->m_bbox;
+            C3Vector nearest(std::clamp(camera.x, box.b.x, box.t.x), std::clamp(camera.y, box.b.y, box.t.y), std::clamp(camera.z, box.b.z, box.t.z));
+            float d2 = DistanceSquared(nearest, camera);
+
+            if (d2 > reach * reach || ((defGroup->m_flags & MAPOBJ_FLAG_INTERIOR) && d2 > 0.0f)) {
+                continue;
+            }
+
+            for (int32_t r = 0; r < group->m_lightRefListCount; r++) {
+                uint16_t i = group->m_lightRefList[r];
+
+                if (i >= owner->m_ligtsCount || done[i]) {
+                    continue;
+                }
+
+                done[i] = 1;
+                const SMOLight& molt = owner->m_lightList[i];
+
+                // omni and spot lights (a spot lights all round here); directional and ambient ones are the stock lighting
+                if (molt.m_type > 1 || molt.m_attenEnd <= 0.25f) {
+                    continue;
+                }
+
+                C3Vector position = Transform(molt.m_position, def->m_mat);
+                bool twin = false;
+
+                for (size_t m = 0; m < m2End && !twin; m++) {
+                    twin = DistanceSquared(s_gathered[m].m_light.m_position, position) < 1.5f * 1.5f;
+                }
+
+                if (twin) {
+                    s_wmoDeduped++;
+                    continue;
+                }
+
+                float intensity = molt.m_intensity > 0.0f ? molt.m_intensity : 1.0f;
+
+                if (Gathered* g = AddLight(position, ColorOf(molt.m_color), scale * intensity, molt.m_attenStart, molt.m_attenEnd, camera, reach, false)) {
+                    g->m_name = owner->m_wmoName;
+                    g->m_index = i;
+                }
+            }
         }
     }
+}
+
+// the lights the GPU gets: the brightest by what they give the camera's surroundings, a model's (a torch) first; the
+// WMOs keep up to a quarter of the places, so a city's hundreds of room lights cannot crowd out the torches
+void SelectLights() {
+    std::vector<Gathered*> m2;
+    std::vector<Gathered*> wmo;
+
+    for (Gathered& g : s_gathered) {
+        (g.m_m2 ? m2 : wmo).push_back(&g);
+    }
+
+    auto brighter = [](const Gathered* a, const Gathered* b) { return a->m_score > b->m_score; };
+    std::sort(m2.begin(), m2.end(), brighter);
+    std::sort(wmo.begin(), wmo.end(), brighter);
+    size_t wmoReserve = std::min<size_t>(wmo.size(), kGxLightingMaxLights / 4);
+    size_t m2Take = std::min(m2.size(), kGxLightingMaxLights - wmoReserve);
+    size_t wmoTake = std::min(wmo.size(), kGxLightingMaxLights - m2Take);
+    int32_t rank = 0;
+
+    for (size_t i = 0; i < m2Take; i++) {
+        m2[i]->m_rank = rank++;
+    }
+
+    for (size_t i = 0; i < wmoTake; i++) {
+        wmo[i]->m_rank = rank++;
+    }
+
+    s_lights.clear();
+
+    for (const Gathered& g : s_gathered) {
+        if (g.m_rank >= 0) {
+            s_lights.push_back(g.m_light);
+        }
+    }
+}
+
+void DumpLights(CM2Scene* scene, const C3Vector& camera) {
+    uint32_t kept = 0;
+
+    for (const Gathered& g : s_gathered) {
+        kept += g.m_rank >= 0;
+    }
+
+    ConsoleWriteA("lightingDump: %u gathered, %u kept (cap %u), %u WMO lights deduped against model lights", DEFAULT_COLOR, static_cast<uint32_t>(s_gathered.size()), kept, kGxLightingMaxLights, s_wmoDeduped);
+
+    for (const Gathered& g : s_gathered) {
+        const GxLightingLight& l = g.m_light;
+        ConsoleWriteA("%s %s %s#%d at (%.1f %.1f %.1f) r %.1f col (%.2f %.2f %.2f) dist %.1f score %.3f %s", g.m_rank >= 0 ? DEFAULT_COLOR : WARNING_COLOR,
+            g.m_m2 ? "M2 " : "WMO", g.m_static ? "(file)" : "", g.m_name ? g.m_name : "?", g.m_index, l.m_position.x, l.m_position.y, l.m_position.z,
+            l.m_radius, l.m_color.x, l.m_color.y, l.m_color.z, g.m_distance, g.m_score, g.m_rank >= 0 ? "kept" : "DROPPED by cap");
+    }
+
+    // the stock side: every model light within 30 yd, whether the stock grid has it (visible) and how stale it is
+    if (!scene) {
+        return;
+    }
+
+    ConsoleWriteA("stock model lights within 30 yd (frame %u):", DEFAULT_COLOR, scene->m_frameStamp);
+
+    for (CM2Model* model = scene->m_modelList; model; model = model->m_sceneNext) {
+        if (!model->m_lights || !model->m_shared || !model->m_shared->m_data) {
+            continue;
+        }
+
+        for (uint32_t i = 0; i < model->m_shared->m_data->m_lights.m_count; i++) {
+            const CM2Light& light = model->m_lights[i].m_light;
+
+            if (light.m_type != M2LIGHT_POINT || !light.m_stamp || DistanceSquared(light.m_pos, camera) > 30.0f * 30.0f) {
+                continue;
+            }
+
+            ConsoleWriteA("  %s#%u at (%.1f %.1f %.1f) col (%.2f %.2f %.2f) %s, stamp age %u", light.m_visible ? DEFAULT_COLOR : WARNING_COLOR,
+                model->m_shared->m_fileNameWithoutPath ? model->m_shared->m_fileNameWithoutPath : model->m_shared->m_fileName, i,
+                light.m_pos.x, light.m_pos.y, light.m_pos.z, light.m_dirColor.x, light.m_dirColor.y, light.m_dirColor.z,
+                light.m_visible ? "in grid" : "NOT in grid", scene->m_frameStamp - light.m_stamp);
+        }
+    }
+}
+
+int32_t CCommand_LightingDump(const char* command, const char* arguments) {
+    if (!g_gxLighting) {
+        ConsoleWrite("lightingDump: no shader lighting on this device (D3D11/Vulkan only)", WARNING_COLOR);
+    } else if (s_cv.master->m_intValue <= 0 || s_cv.dynamic->m_intValue <= 0) {
+        ConsoleWrite("lightingDump: shaderLighting and lightDynamic must be on", WARNING_COLOR);
+    } else {
+        s_dumpPending = true;
+    }
+
+    return 1;
 }
 
 // a light kept from frame to frame, matched by position (world space): each fades in over 0.3 s and out over 0.6 s
@@ -360,10 +568,6 @@ void SmoothLights() {
     }
 }
 
-float Luminance(const C3Vector& c) {
-    return c.x * 0.2126f + c.y * 0.7152f + c.z * 0.0722f;
-}
-
 // a colour scaled to luminance 1 (a tint), white when it is too dark to say
 void Tint(const C3Vector& c, float* out) {
     float lum = Luminance(c);
@@ -384,12 +588,11 @@ void WriteGpu(const GxLightingParams& p) {
     std::memset(&g, 0, sizeof(g));
     uint32_t features = p.m_features & (GxLighting_PerPixel | GxLighting_Dynamic | GxLighting_Specular | GxLighting_Hemisphere);
 
-    // ponytail: the nearest kGxLightingMaxLights lights, looped per pixel; Badgermilk bins up to 256 into view
-    // clusters with a compute pass, add that if 32 shows its limit
+    // ponytail: SelectLights picks kGxLightingMaxLights, looped per pixel; only lights still fading out can pass the cap
+    // here, and the dimmest go. Badgermilk bins up to 256 into view clusters with a compute pass (plan step 4)
     if (s_lights.size() > kGxLightingMaxLights) {
-        const C3Vector& camera = p.m_cameraPosition;
-        std::partial_sort(s_lights.begin(), s_lights.begin() + kGxLightingMaxLights, s_lights.end(), [&camera](const GxLightingLight& a, const GxLightingLight& b) {
-            return DistanceSquared(a.m_position, camera) - a.m_radius * a.m_radius < DistanceSquared(b.m_position, camera) - b.m_radius * b.m_radius;
+        std::partial_sort(s_lights.begin(), s_lights.begin() + kGxLightingMaxLights, s_lights.end(), [](const GxLightingLight& a, const GxLightingLight& b) {
+            return Luminance(a.m_color) > Luminance(b.m_color);
         });
         s_lights.resize(kGxLightingMaxLights);
     }
@@ -466,6 +669,8 @@ void WorldLightingRegisterCVars() {
     s_cv.dynamicM2 = Reg("lightDynamicM2", "Model (torch, brazier) light strength (0-8)", "0.6");
     s_cv.dynamicWmo = Reg("lightDynamicWmo", "WMO (building) light strength (0-8)", "0.5");
     s_cv.dynamicDistance = Reg("lightDynamicDistance", "Dynamic lights reach this far from the camera, yards (20-500)", "100");
+    s_cv.dynamicMinRadius = Reg("lightDynamicMinRadius", "A model light reaches at least this far, yards (the stock falloff has no end)", "6");
+    s_cv.replaceStock = Reg("lightReplaceStock", "With lightDynamic on, the stock per-object point lights are off: the dynamic lights replace them", "1");
     s_cv.flicker = Reg("lightFlicker", "Flame lights flicker this much (0-1)", "0");
     s_cv.wrap = Reg("lightWrap", "Dynamic light wraps round the terminator (0-1)", "0.25");
     s_cv.specular = Reg("lightSpecular", "Specular on WMO specular shaders and shiny models (D3D11/Vulkan)", "0");
@@ -474,11 +679,16 @@ void WorldLightingRegisterCVars() {
     s_cv.skyAmbient = Reg("lightSkyAmbient", "Ambient tinted by the sky above and the ground below, 0 = off (0-1)", "0");
     // last: Features() takes a registered hdr to mean they all are
     s_cv.hdr = Reg("hdr", "HDR world target with a tonemap (D3D11; Vulkan tonemaps the 8-bit scene)", "0");
+    ConsoleCommandRegister("lightingDump", CCommand_LightingDump, CATEGORY_GRAPHICS, "Prints the dynamic lights gathered next frame and the stock model lights within 30 yd");
 }
 
 void WorldLightingBeginWorld() {
     s_inWorld = false;
     uint32_t features = g_gxLighting ? Features() : 0;
+
+    // the stock per-object point lights give way to ours (M2Light.cpp CM2Lighting::AddLight); D3D9 (no g_gxLighting)
+    // and lightDynamic off keep them
+    g_m2ShaderOwnedLightScene = (features & GxLighting_Dynamic) && s_cv.replaceStock->m_intValue > 0 ? World::s_m2Scene : nullptr;
 
     // all off: the device is never called, the frame is the stock one
     if (!features) {
@@ -507,8 +717,17 @@ void WorldLightingSetupView(const C3Vector& camera) {
 
     if (s_params.m_features & GxLighting_Dynamic) {
         float reach = std::clamp(s_cv.dynamicDistance->m_floatValue, 20.0f, 500.0f);
+        s_gathered.clear();
+        s_wmoDeduped = 0;
         GatherM2Lights(World::s_m2Scene, camera, reach);
         GatherWmoLights(camera, reach);
+        SelectLights();
+
+        if (s_dumpPending) {
+            s_dumpPending = false;
+            DumpLights(World::s_m2Scene, camera);
+        }
+
         SmoothLights();
 
         for (GxLightingLight& light : s_lights) {

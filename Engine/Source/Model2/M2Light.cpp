@@ -211,6 +211,8 @@ void CM2Lighting::AddDiffuse(const C3Vector& color, const C3Vector& dir) {
     this->m_sunDiffuse = color;
 }
 
+CM2Scene* g_m2ShaderOwnedLightScene = nullptr;
+
 // VERIFY: 7d1db3b8 manual
 // OFFSET: 0x00834F60
 void CM2Lighting::AddLight(CM2Light* light) {
@@ -222,6 +224,11 @@ void CM2Lighting::AddLight(CM2Light* light) {
         this->AddAmbient(light->m_ambColor);
         this->AddDiffuse(light->m_dirColor, light->m_dir);
         this->m_sunSpecular += light->m_specColor;
+        return;
+    }
+
+    // LIGHTING (not in 12340): the shader lighting lights this scene's point lights per pixel instead
+    if (g_m2ShaderOwnedLightScene && light->m_scene == g_m2ShaderOwnedLightScene) {
         return;
     }
 

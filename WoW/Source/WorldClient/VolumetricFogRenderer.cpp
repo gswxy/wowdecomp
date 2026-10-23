@@ -64,6 +64,7 @@ constexpr uint32_t kMinTargetSize = 8;              // GxTexCreate's minimum
 constexpr uint32_t kRayScale = 4;                   // coa renderer.cpp:68-83, 244
 constexpr float kRayFalloff = 8.0f;
 constexpr float kRayThreshold = 0.12f;
+constexpr float kSunDiscRadius = 0.02f;            // VFogRayMask disc test spacing, a fraction of the viewport height
 constexpr float kRayStep = 0.075f;
 constexpr float kRayDecay = 0.9f;
 constexpr int kRayTaps = 8;
@@ -984,11 +985,12 @@ void GodRayPass(const FogFrame& f) {
         GxRsSet(GxRs_ScissorTest, 0);
         GxRsSet(GxRs_ColorWrite, 15);
         GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
-        const float mask[2][4] = {
+        const float mask[3][4] = {
             { f.toLightInView[0], f.toLightInView[1], f.toLightInView[2], kRayFalloff },
             { 0.0f, kRayThreshold, 1.0f / f.rayW, 1.0f / f.rayH },
+            { f.sunPx[0], f.sunPx[1], kSunDiscRadius * f.vpH, 1.0f },   // VFogRayMask cSunDisc: the disc's open sky
         };
-        SetPs(9, &mask[0][0], 2);
+        SetPs(9, &mask[0][0], 3);
         for (int stage = 1; stage <= 4; stage++) {
             Bind(stage, nullptr);
         }

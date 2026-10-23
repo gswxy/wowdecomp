@@ -34,6 +34,10 @@ static const float kSameSurfaceAbsoluteDepth = 0.5;
 static const float kSameSurfaceRelativeDepth = 0.02;
 static const float kTapPlaneRelativeDepth = 0.005;
 static const float kWholeBilinearWeight = 0.999;
+// Nearest-depth fallback: a pixel no tap matches within kSameSurfaceRelativeDepth takes the closest-depth tap of its
+// own class within this, before the full-res re-march (whose sun shadow is one tap or none, ps_3_0 temps: lit specks
+// in shadowed foliage and stair-stepped silhouettes, 2026-10-24).
+static const float kNearestDepthRelative = 0.15;
 static const float kMaxDisplayedMarchCurvature = 2.0 / 255;
 
 float Exposure()
@@ -263,6 +267,8 @@ float4 DepthAwareUpsample(float2 pixel, float depth, float viewZ)
 
     float4 weightedFog = 0;
     float weightSum = 0;
+    float nearestDifference = kNearestDepthRelative;
+    float nearestTap = -1;
     [loop] for (int j = 0; j < 4; j++)
     {
         float2 tapOffset = float2(frac(j * 0.5) * 2, floor(j * 0.5));
@@ -277,9 +283,19 @@ float4 DepthAwareUpsample(float2 pixel, float depth, float viewZ)
             bilinearWeight.x * bilinearWeight.y / (1e-3 + relativeDepthDifference) : 0;
         weightedFog += tex2Dlod(sFog, float4(LowResTexelToUv(tapTexel), 0, 0)) * weight;
         weightSum += weight;
+        [flatten] if (sameClass && relativeDepthDifference < nearestDifference)
+        {
+            nearestDifference = relativeDepthDifference;
+            nearestTap = j;
+        }
     }
     [branch] if (weightSum > 1e-6)
         return weightedFog / weightSum;
+    [branch] if (nearestTap >= 0)
+    {
+        float2 tapTexel = clamp(baseTexel + float2(frac(nearestTap * 0.5) * 2, floor(nearestTap * 0.5)), 0, LowResSize() - 1);
+        return tex2Dlod(sFog, float4(LowResTexelToUv(tapTexel), 0, 0));
+    }
     return FogWithoutMatchingTap(pixel, depth, viewZ);
 }
 

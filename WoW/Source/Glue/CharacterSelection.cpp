@@ -36,7 +36,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 
 // STATIC: 0x009F3CD0
-const int32_t g_scriptSexIndex[3] = { 2, 3, 1 };
+const int32_t g_scriptSexIndex[3] = { GENDER_MALE, GENDER_FEMALE, GENDER_NONE };
 
 // STATIC: 0x00AC441C
 static float s_characterGlow = 0.4f;

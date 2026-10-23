@@ -116,6 +116,15 @@ namespace
         return r;
     }
 
+    /// A fallback, logged the first time it happens (bit: which one).
+    uint32_t s_warned = 0;
+    void WarnOnce(uint32_t bit, const char* what)
+    {
+        if (s_warned & (1u << bit)) return;
+        s_warned |= 1u << bit;
+        Write(Warn, "vulkan: fsr4 skipped: %s -- the world draws at full size (logged once)", what);
+    }
+
     void ProviderMsg(uint32_t type, const wchar_t* m)
     {
         if (m) Write(type == FFX_API_MESSAGE_TYPE_ERROR ? Warn : Info, "vulkan: fsr4 provider: %ls", m);
@@ -455,8 +464,10 @@ namespace
 
         ffxCreateContextDescUpscale cd = {};
         cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-        // the 8-bit gamma frame as it is; exposure left to the provider's own pass
-        cd.flags = FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+        // the 8-bit gamma frame as it is; exposure left to the provider's own pass. No DEPTH_INFINITE: the fsr4vk
+        // provider accepts exactly DEPTH_INVERTED among the depth/motion bits (ffx_vk_provider.cpp required_flags) and
+        // rejects the context otherwise; it never reads the far plane, so our near / w depth goes in as plain inverted.
+        cd.flags = FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
         cd.maxRenderSize = { this->m_native.extent.width, this->m_native.extent.height };
         cd.maxUpscaleSize = { this->m_native.extent.width, this->m_native.extent.height };
         cd.fpMessage = &ProviderMsg;
@@ -668,7 +679,10 @@ namespace
         this->IGeneral(cmd, this->m_motion);
         texture::Image* ins[3] = { &this->m_color, &this->m_fsrDepth, &this->m_motion };
         if (!this->IDispatch(cmd, Prog_In, c, this->m_depth.view, scene->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, ins, this->m_render.width, this->m_render.height))
+        {
+            WarnOnce(3, "the input pass could not be recorded; this frame is stretched, not upscaled");
             return false;
+        }
 
         for (texture::Image* img : ins) this->IToRead(cmd, *img);
         this->IGeneral(cmd, this->m_out);
@@ -699,7 +713,7 @@ namespace
         di.preExposure = 1.0f;
         di.reset = reset;
         di.cameraNear = c.m_depthRange[3];
-        di.cameraFar = 100000.0f;   // unused: FFX_UPSCALE_ENABLE_DEPTH_INFINITE (the depth is near / w)
+        di.cameraFar = 100000.0f;   // unused by the fsr4vk provider (the depth is near / w, inverted)
         di.cameraFovAngleVertical = this->m_proj.b1 != 0.0f ? 2.0f * atanf(1.0f / fabsf(this->m_proj.b1)) : 1.0f;
         di.viewSpaceToMetersFactor = 0.9144f;
         di.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
@@ -726,7 +740,8 @@ namespace
         if (!this->m_loggedFirst)
         {
             this->m_loggedFirst = true;
-            Write(Info, "vulkan: fsr4: first frame recorded (%ux%u -> %ux%u, jitter %.3f, %.3f px)", rw, rh, nw, nh, this->m_jitterPx[0], this->m_jitterPx[1]);
+            Write(Info, "vulkan: fsr4: RUNNING in the world: %ux%u -> %ux%u (fsrScale %.2f), mode fsr4, FSR %s, provider %s", rw, rh, nw, nh,
+                  static_cast<double>(rw) / nw, this->m_versionName, s_provider.path);
         }
 
         return true;
@@ -761,6 +776,7 @@ namespace
 
         if (this->m_failed || !ModeFsr4() || scale >= 0.999f || !dev || !dev->m_context || !dev->m_drawPath)
         {
+            if (!this->m_failed && ModeFsr4() && scale >= 0.999f) WarnOnce(0, "fsrScale is 1 (no upscale); pick a Quality below 100%");
             this->m_havePrev = false;
             constexpr uint32_t kReleaseAfter = 300;
             if (this->m_madeObjects && dev && dev->m_context && ++this->m_offFrames == kReleaseAfter) this->IDropResources();
@@ -771,6 +787,8 @@ namespace
 
         if (frame::Target() || frame::QueryActive() || !frame::Scene() || frame::Failed() || !this->ICreate())
         {
+            WarnOnce(1, frame::Target() ? "a render target is open when the world starts" : frame::QueryActive() ? "a query is open when the world starts"
+                      : !frame::Scene() || frame::Failed() ? "no scene image this frame" : "the upscale passes are not ready");
             this->m_havePrev = false;
             return;
         }
@@ -788,7 +806,7 @@ namespace
 
         VkViewport vp;
         VkRect2D scissor;
-        if (!dev->IPlaceD3d(vp, scissor)) { this->m_havePrev = false; return; }
+        if (!dev->IPlaceD3d(vp, scissor)) { WarnOnce(2, "the world viewport could not be placed"); this->m_havePrev = false; return; }
 
         const uint32_t nw = static_cast<uint32_t>(vp.width), nh = static_cast<uint32_t>(vp.height);
         const uint32_t rw = static_cast<uint32_t>(nw * scale + 0.5f), rh = static_cast<uint32_t>(nh * scale + 0.5f);
@@ -898,6 +916,9 @@ namespace
             if (frame::Serial() != this->m_prevSerial + 1 || dx * dx + dy * dy + dz * dz > 50.0f * 50.0f || facing < 0.5f) this->m_havePrev = false;
         }
 
+        if (!fsr && !this->m_failed) WarnOnce(4, this->m_viewSet ? "an FSR image or the depth copy could not be made; this frame is stretched, not upscaled"
+                                                                 : "the world set no camera (SetupView); this frame is stretched, not upscaled");
+
         this->m_lastUsed = frame::Serial();
         fsr = fsr && this->IFsr(cmd, !this->m_havePrev);
 
@@ -986,7 +1007,11 @@ namespace gxvk::vk::upscale
         const loader::Global& api = loader::Api();
         auto features2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(api.GetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"));
         auto extensions = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(api.GetInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
-        if (!features2 || !extensions) return nullptr;
+        if (!features2 || !extensions)
+        {
+            Write(Warn, "vulkan: fsr4: no vkGetPhysicalDeviceFeatures2 / vkEnumerateDeviceExtensionProperties. No upscaler");
+            return nullptr;
+        }
 
         PrepareDeviceDesc prep = {};
         prep.header.type = kPrepareDeviceType;
@@ -1022,6 +1047,7 @@ namespace gxvk::vk::upscale
     {
         s_upscale.m_device = device;
         if (s_provider.deviceReady) g_gxUpscale = &s_upscale;
+        else if (Wanted()) Write(Warn, "vulkan: fsr4: fsrMode is fsr4 but the device was made without the provider (the lines above say why); no upscaler");
     }
 
     void Shutdown()

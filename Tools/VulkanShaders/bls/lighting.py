@@ -58,7 +58,7 @@ struct GxLight {
 };
 
 layout(std140, set = 1, binding = 1) uniform GxLighting {
-    uvec4 gxLightFlags;              // x GX_LIGHT_* (0 = off), y lights, z 0, w lightingDebug
+    uvec4 gxLightFlags;              // x GX_LIGHT_* (0 = off), y lights, z lightRoughnessBias (float bits), w lightingDebug
     layout(row_major) mat4 gxView;   // render-relative world to view (row vector * matrix), for the terrain
     layout(row_major) mat4 gxViewInv;
     vec4 gxSkyTint;                  // rgb sky colour (luminance 1), a hemisphere strength
@@ -73,6 +73,7 @@ layout(std140, set = 1, binding = 1) uniform GxLighting {
 #define GX_LIGHT_DYNAMIC 2u
 #define GX_LIGHT_SPECULAR 4u
 #define GX_LIGHT_HEMISPHERE 8u
+#define GX_LIGHT_PBR 0x200u
 
 // gxF.x: the family in bits 0-2, the stock point lights in 3-5, 64 a normal, 128 WMO specular, 256 sphere-mapped
 // M2, 512 a WMO that adds its vertex colour to the lit material (MapObjUDiffuse_Comp). gxF.yzw: the terrain's
@@ -145,8 +146,33 @@ vec3 GxStockTerrain(vec3 nw, vec3 pw, vec3 n, uint lights, bool hemi) {
 '''
 
 PIXEL_LIB = '''
-// the point lights at view position p (all gxLightFlags.y of them): diffuse returned, specular (power > 0) in spec
-vec3 GxDynamic(vec3 p, vec3 n, float power, out vec3 spec) {
+// PBR-lite (lightPbr): GGX / Cook-Torrance, Smith-Schlick visibility, Schlick Fresnel. a = roughness^2, f0 grey;
+// returns BRDF * N.L for a light from unit direction l
+float GxGgx(vec3 n, vec3 v, vec3 l, float a, float f0) {
+    float nl = clamp(dot(n, l), 0.0, 1.0);
+    if (nl <= 0.0) {
+        return 0.0;
+    }
+    vec3 h = normalize(l + v);
+    float nh = clamp(dot(n, h), 0.0, 1.0);
+    float vh = clamp(dot(v, h), 0.0, 1.0);
+    float nv = max(dot(n, v), 1e-4);
+    float a2 = a * a;
+    float d = nh * nh * (a2 - 1.0) + 1.0;
+    float k = a * 0.5;
+    float vis = 0.25 / ((nl * (1.0 - k) + k) * (nv * (1.0 - k) + k));
+    float fr = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    return a2 / (3.14159265 * d * d) * vis * fr * nl;
+}
+
+// the PBR-lite material of this pixel, for the end of the pixel module: gxMetal tints the specular by the textured
+// colour, gxMask takes the texture alpha as the specular mask (M2 items and sphere-mapped parts)
+float gxMetal = 0.0;
+float gxMask = 0.0;
+
+// the point lights at view position p (all gxLightFlags.y of them): diffuse returned, specular (power > 0, or GGX
+// when a > 0) in spec
+vec3 GxDynamic(vec3 p, vec3 n, float power, out vec3 spec, float a, float f0) {
     spec = vec3(0.0);
     vec3 sum = vec3(0.0);
     if ((gxLightFlags.x & GX_LIGHT_DYNAMIC) == 0u) {
@@ -170,7 +196,9 @@ vec3 GxDynamic(vec3 p, vec3 n, float power, out vec3 spec) {
         vec3 dir = d / max(dist, 0.0001);
         float ndl = dot(n, dir);
         sum += c * clamp((ndl + wrap) / (1.0 + wrap), 0.0, 1.0);
-        if (power > 0.0 && ndl > 0.0) {
+        if (a > 0.0) {
+            spec += c * (GxGgx(n, v, dir, a, f0) * l.specular);
+        } else if (power > 0.0 && ndl > 0.0) {
             vec3 h = normalize(dir + v);
             spec += c * (pow(clamp(dot(n, h), 0.0, 1.0), power) * l.specular * clamp(ndl * 4.0, 0.0, 1.0));
         }
@@ -178,8 +206,18 @@ vec3 GxDynamic(vec3 p, vec3 n, float power, out vec3 spec) {
     return sum;
 }
 
-// the specular a sphere-mapped M2 adds to the pixel shader's colour
+// the specular a sphere-mapped M2 (or any PBR-lite surface) adds to the pixel shader's colour
 vec3 gxSpecular = vec3(0.0);
+
+// gxSpecular at the end of the pixel module: a metal's tinted by the textured colour; under gxMask the texture
+// alpha is the specular mask (unmasked texels keep a quarter, a dielectric's)
+vec3 GxSpecFinal(vec4 o) {
+    float m = mix(1.0, clamp(o.a, 0.0, 1.0), gxMask);
+    vec3 albedo = GxDec(o.rgb);
+    float lum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    vec3 tint = lum > 0.001 ? min(albedo / lum, vec3(3.0)) : vec3(1.0);
+    return gxSpecular * mix(vec3(1.0), tint, gxMetal * m) * mix(0.25, 1.0, m);
+}
 
 // a lit family's pixel: COLOR0 (and a WMO's specular COLOR1) lit again per pixel, with the dynamic lights added in
 // linear space. flatN is the face's normal, for a surface that has none
@@ -237,12 +275,68 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN) {
         power = wmoSpecular ? max(GXK(13).w, 1.0) : (env && valid ? 24.0 : 0.0);
     }
 
-    vec3 spec;
-    vec3 dyn = GxDynamic(p, n, power, spec) * gxLightParams.y;
-    // lightingDebug 3: the dynamic light alone
-    c.rgb = gxLightFlags.w == 3u ? GxEnc(dyn) : GxEnc(GxDec(c.rgb) + GxDec(mat) * dyn);
+    // PBR-lite: a roughness and metalness guessed per draw category (no PBR maps); misc.y - 1 is the engine's
+    // category (GxLighting.h GxLightingMaterial)
+    bool pbr = (features & GX_LIGHT_PBR) != 0u && valid;
+    float rough = 1.0;
+    float a = 0.0;
+    float f0 = 0.04;
+    if (pbr) {
+        uint cat = uint(max(regs.misc.y - 0.5, 0.0));
+        float metal = 0.0;
+        if (family == GX_SURF_TERRAIN) {
+            rough = 0.9;
+        } else if (family == GX_SURF_WMO) {
+            rough = wmoSpecular ? 0.5 : 0.8;
+        } else if (env) {
+            rough = 0.35; metal = 0.8; gxMask = 1.0;
+        } else if (cat == 2u) {
+            rough = 0.45; metal = 0.6; gxMask = 1.0;
+        } else if (cat == 1u) {
+            rough = 0.65;
+        } else {
+            rough = 0.85;
+        }
+        rough = clamp(rough + uintBitsToFloat(gxLightFlags.z), 0.05, 1.0);
+        a = rough * rough;
+        f0 = mix(0.04, 0.5, metal);
+        gxMetal = metal;
+        power = 0.0;
+    }
 
-    if (power > 0.0) {
+    vec3 spec;
+    vec3 dyn = GxDynamic(p, n, power, spec, a, f0) * gxLightParams.y;
+    float kd = 1.0;
+    vec3 pbrSpec = vec3(0.0);
+
+    if (pbr) {
+        vec3 v = normalize(-p);
+        vec3 sunCol = family == GX_SURF_M2 ? GXK(10).rgb : (family == GX_SURF_WMO ? GXK(11).rgb : GXK(26).rgb);
+        vec3 amb = family == GX_SURF_M2 ? GXK(11).rgb : (family == GX_SURF_WMO ? GXK(10).rgb : GXK(25).rgb);
+        vec3 l = family == GX_SURF_TERRAIN ? normalize((vec4(GXK(24).xyz, 0.0) * gxView).xyz) : -GXK(12).xyz;
+        // the sky's reflection: Karis' analytic split-sum, the sky tint above and the ground's below the reflected ray
+        float nv = max(dot(n, v), 1e-4);
+        vec4 rr = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+        vec2 ab = vec2(-1.04, 1.04) * (min(rr.x * rr.x, exp2(-9.28 * nv)) * rr.x + rr.y) + rr.zw;
+        float specAlbedo = f0 * ab.x + ab.y;
+        float up = clamp(dot(reflect(-v, n), gxUpView.xyz) * 0.5 + 0.5, 0.0, 1.0);
+        float k = family == GX_SURF_M2 ? gxLightParams.z : gxLightParams.w;
+        pbrSpec = (GxDec(sunCol) * GxGgx(n, v, l, a, f0) + GxDec(amb) * mix(gxGroundTint.rgb, gxSkyTint.rgb, up) * specAlbedo
+                   + spec * gxLightParams.y) * k;
+        // energy conservation: what the specular reflects the diffuse gives up
+        kd = clamp(1.0 - specAlbedo * k, 0.0, 1.0);
+    }
+
+    // lightingDebug 3: the dynamic light alone
+    c.rgb = gxLightFlags.w == 3u ? GxEnc(dyn) : GxEnc((GxDec(c.rgb) + GxDec(mat) * dyn) * kd);
+
+    if (pbr) {
+        if (wmoSpecular) {
+            c1.rgb = GxEnc(pbrSpec);    // the stock MapObjSpecular pixel shader masks COLOR1 by the texture alpha
+        } else {
+            gxSpecular = pbrSpec;
+        }
+    } else if (power > 0.0) {
         if (wmoSpecular) {
             c1.rgb = GxEnc(GxDec(c1.rgb) + spec * (gxLightParams.y * gxLightParams.w));
         } else {
@@ -255,7 +349,7 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN) {
 }
 '''
 
-SPEC_ADD = '    oC0.rgb = any(greaterThan(gxSpecular, vec3(0.0))) ? GxEnc(GxDec(oC0.rgb) + gxSpecular) : oC0.rgb;'
+SPEC_ADD = '    oC0.rgb = any(greaterThan(gxSpecular, vec3(0.0))) ? GxEnc(GxDec(oC0.rgb) + GxSpecFinal(oC0)) : oC0.rgb;'
 
 
 def surface_outputs(em):

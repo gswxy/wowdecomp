@@ -10,6 +10,7 @@
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Base/FrameProfile.h"
 #include "Engine/Source/Gx/CGxDeviceVulkan/CGxDeviceVulkan.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "Engine/Source/Gx/CGxDeviceVulkan/Vulkan/Frame.hpp"
 #include "Engine/Source/Gx/CGxDeviceVulkan/Vulkan/ParticleQuads.hpp"
 #include "Engine/Source/Gx/CGxDeviceVulkan/Vulkan/Manifest.hpp"
@@ -274,7 +275,8 @@ void CGxDeviceVulkan::Draw(CGxBatch* batch, int32_t count) {
     d.params[3] = static_cast<float>(alphaOp0 | (alphaOp1 << 3));
     d.misc[0] = d.params[0] / 255.0f;
     // LIGHTING (GxLighting.h): the bound vertex module writes the surface a lit pixel module relights
-    d.misc[1] = d.vertexRecord && d.vertexRecord->litSurface ? 1.0f : 0.0f;
+    // (1 + the PBR-lite material category)
+    d.misc[1] = d.vertexRecord && d.vertexRecord->litSurface ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
     d.misc[2] = static_cast<float>(colourOp0);
     d.misc[3] = static_cast<float>(alphaOp0);
     this->ITexTransforms(d);

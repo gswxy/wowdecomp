@@ -10,6 +10,7 @@
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2ModelLight.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "Engine/Source/Model2/M2Shared.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/CImVector.h"
@@ -206,39 +207,41 @@ void AddLight(const C3Vector& position, const C3Vector& gamma, float scale, floa
     }
 }
 
-// the point lights of the animated models: CM2Scene's light grid (20-yard cells, 64 x 64, wrapping)
+// the point lights of the models in the scene. Not CM2Scene's light grid: a model off screen is not animated, and the
+// stock CM2Scene::SelectLights unlinks the lights of a model not animated this frame, so a torch behind the camera would
+// drop out although it still lights what is on screen. Every loaded model is in m_modelList; one off screen keeps the
+// place, colour and attenuation its lights had when it was last animated (never animated: colour 0, so not added)
 void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
     float scale = Positive(s_cv.dynamicM2);
 
-    if (!scene || !scene->m_lightGrid || scale <= 0.0f) {
+    if (!scene || scale <= 0.0f) {
         return;
     }
 
-    const float cellScale = 0.05f;
-    int32_t cells = std::min(static_cast<int32_t>(ceilf(reach * cellScale)) + 1, 30);
-    int32_t cx = static_cast<int32_t>(floorf(camera.x * cellScale));
-    int32_t cy = static_cast<int32_t>(floorf(camera.y * cellScale));
+    // ponytail: walks every loaded model (a pointer test each, most have no lights; AddLight tests the reach), not by its
+    // world transform, which an attached model (a held torch) keeps relative to its parent; a grid of lit models if it shows
+    for (CM2Model* model = scene->m_modelList; model; model = model->m_sceneNext) {
+        if (!model->m_lights || !model->m_shared || !model->m_shared->m_data) {
+            continue;
+        }
 
-    for (int32_t dy = -cells; dy <= cells; dy++) {
-        for (int32_t dx = -cells; dx <= cells; dx++) {
-            for (CM2Light* light = scene->m_lightGrid[((cy + dy) & 63) * 64 + ((cx + dx) & 63)]; light; light = light->m_lightNext) {
-                // CM2Scene::SelectLights' test: a light its model did not animate this frame is gone
-                if (!light->m_visible || light->m_type != M2LIGHT_POINT || (light->m_scene && light->m_stamp != scene->m_frameStamp)) {
-                    continue;
-                }
+        for (uint32_t i = 0; i < model->m_shared->m_data->m_lights.m_count; i++) {
+            const M2ModelLight& owner = model->m_lights[i];
+            const CM2Light& light = owner.m_light;
 
-                // every light in the grid is a model's (M2ModelLight), so its attenuation tracks (M2Model AnimateMT) are beside it
-                const M2ModelLight* owner = reinterpret_cast<const M2ModelLight*>(reinterpret_cast<const char*>(light) - offsetof(M2ModelLight, m_light));
-                float end = owner->m_attenuationEndTrack.m_currentValue;
-                float start = owner->m_attenuationStartTrack.m_currentValue;
-
-                if (!(end > 0.25f && end < 80.0f)) {
-                    end = 8.0f;
-                    start = 1.0f;
-                }
-
-                AddLight(light->m_pos, light->m_dirColor, scale, start, end, camera, reach, true);
+            if (!owner.m_enabled || !owner.m_visibilityTrack.m_currentValue || light.m_type != M2LIGHT_POINT || !light.m_scene) {
+                continue;
             }
+
+            float end = owner.m_attenuationEndTrack.m_currentValue;
+            float start = owner.m_attenuationStartTrack.m_currentValue;
+
+            if (!(end > 0.25f && end < 80.0f)) {
+                end = 8.0f;
+                start = 1.0f;
+            }
+
+            AddLight(light.m_pos, light.m_dirColor, scale, start, end, camera, reach, true);
         }
     }
 }
@@ -280,33 +283,18 @@ void GatherWmoLights(const C3Vector& camera, float reach) {
     }
 }
 
-// a light kept from frame to frame: the client animates a model (and so places its lights) only on the frames it
-// draws or updates it, so a light found one frame may be missing the next. Matched by position (world space), each
-// fades in over 0.3 s and out over 0.6 s instead of switching
+// a light kept from frame to frame, matched by position (world space): each fades in over 0.3 s and out over 0.6 s
+// instead of switching
 struct TrackedLight {
     GxLightingLight m_light;
     float m_weight;
-    float m_unseen;       // seconds held off screen
     bool m_seen;
 };
 
 std::vector<TrackedLight> s_tracked;
 uint32_t s_trackedTime = 0;
 
-// true when a world position (relative to the render origin) is inside the view: a model there is drawn and animated,
-// so a light of it that was not found this frame is really gone
-bool OnScreen(const C3Vector& relative) {
-    CGxMatrixStack& viewStack = g_theGxDevicePtr->m_xforms[GxXform_View];
-    const C44Matrix& view = viewStack.m_mtx[viewStack.m_level];
-    const C44Matrix& proj = g_theGxDevicePtr->m_projNative;
-    C3Vector v = Transform(relative, view);
-    float x = v.x * proj.a0 + v.y * proj.b0 + v.z * proj.c0 + proj.d0;
-    float y = v.x * proj.a1 + v.y * proj.b1 + v.z * proj.c1 + proj.d1;
-    float w = v.x * proj.a3 + v.y * proj.b3 + v.z * proj.c3 + proj.d3;
-    return w > 0.5f && fabsf(x) < w * 0.9f && fabsf(y) < w * 0.9f;
-}
-
-void SmoothLights(const C3Vector& origin) {
+void SmoothLights() {
     uint32_t now = OsGetAsyncTimeMs();
     float dt = s_trackedTime ? std::min(static_cast<float>(now - s_trackedTime) * 0.001f, 0.25f) : 0.0f;
     s_trackedTime = now;
@@ -341,7 +329,7 @@ void SmoothLights(const C3Vector& origin) {
             kept.m_specular = light.m_specular;
             match->m_seen = true;
         } else {
-            s_tracked.push_back(TrackedLight { light, 0.0f, 0.0f, true });
+            s_tracked.push_back(TrackedLight { light, 0.0f, true });
         }
     }
 
@@ -352,10 +340,6 @@ void SmoothLights(const C3Vector& origin) {
 
         if (tracked.m_seen) {
             tracked.m_weight += dt / 0.3f;
-            tracked.m_unseen = 0.0f;
-        } else if (!OnScreen(tracked.m_light.m_position - origin) && tracked.m_unseen < 20.0f) {
-            // off screen its model is not animated, so it is not found: it still lights what is on screen (20 s)
-            tracked.m_unseen += dt;
         } else {
             tracked.m_weight -= dt / 0.6f;
         }
@@ -525,7 +509,7 @@ void WorldLightingSetupView(const C3Vector& camera) {
         float reach = std::clamp(s_cv.dynamicDistance->m_floatValue, 20.0f, 500.0f);
         GatherM2Lights(World::s_m2Scene, camera, reach);
         GatherWmoLights(camera, reach);
-        SmoothLights(origin);
+        SmoothLights();
 
         for (GxLightingLight& light : s_lights) {
             light.m_position = light.m_position - origin;

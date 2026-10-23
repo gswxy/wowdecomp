@@ -47,6 +47,7 @@ constexpr uint32_t kShadowRegister = 56;           // vf_shadow.hlsli c56-c61 ba
 constexpr uint32_t kShadowMaskRegister = 10;      // VFogShadowMask c10-c13 (light, ambient + bias, diffuse, stock fog)
 constexpr float kShadowMaskSurfaceBias = 4.0f;     // yd: the ADT surface between WDL vertices may sit this far under them
 constexpr uint32_t kShadowMaskBandRegister = 65;   // VFogShadowMask c65-c67 band 0, c68-c70 unit map, c71 (band 0 on, unit on)
+constexpr uint32_t kShadowMaskFineRegister = 72;   // VFogShadowMask c72: TerrainSunShadow::Fine row (shadowMaskFine), s10 its texture
 constexpr float kReceiverShadowStrength = 0.3f;    // stock receivers: lit colour x (0.7 + 0.3 x cascade lit)
 constexpr uint32_t kSsaoRegister = 10;             // LegionSsao c10 (radius, fade start, 1 / fade length, strength), c11 stock fog
 constexpr int kShadowStage = 5;                     // vf_shadow.hlsli s5 band 1, s6 band 2, s7 terrain
@@ -1487,18 +1488,23 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     SetPs(kShadowRegister, &shadow[0][0], 8);
     SetPs(kShadowMaskBandRegister, &extra[0][0], 7);
     SetPs(kHorizonBandRegister, in.horizonBand, 1);
+    float fineRow[4];
+    CGxTex* fine = nullptr;
+    TerrainSunShadow::Fine(fine, fineRow);    // shadowMaskFine: c72 (w = 0 off), s10
+    SetPs(kShadowMaskFineRegister, fineRow, 1);
     Bind(0, depth);
     Bind(kShadowStage, maps[0]);
     Bind(kShadowStage + 1, maps[1]);
     Bind(kShadowStage + 2, land);
     Bind(kShadowStage + 3, band0);
     Bind(kShadowStage + 4, unit);
+    Bind(kShadowStage + 5, fine);
     BindNormalBuffer();
     device->RsSet(GxRs_PixelShader, s_shaders.shadowMask);
     device->DeviceSceneDepthBound(false);   // D3D9: s0 is the INTZ depth-stencil the back buffer uses
     DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);
     device->DeviceSceneDepthBound(true);
-    for (int stage = kShadowStage; stage < kShadowStage + 5; stage++) {
+    for (int stage = kShadowStage; stage < kShadowStage + 6; stage++) {
         Bind(stage, nullptr);
     }
     EndPasses(s_saved, vp);

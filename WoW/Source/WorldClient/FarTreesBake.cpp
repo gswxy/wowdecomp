@@ -51,7 +51,7 @@ uint64_t Fnv(const void* p, size_t n, uint64_t h = 0xcbf29ce484222325ull) {
 
 template <class T> T Get(const std::vector<uint8_t>& d, size_t o) {
     T v{};
-    if (o + sizeof(T) <= d.size()) std::memcpy(&v, d.data() + o, sizeof(T));
+    if (o <= d.size() && sizeof(T) <= d.size() - o) std::memcpy(&v, d.data() + o, sizeof(T));
     return v;
 }
 
@@ -83,6 +83,7 @@ void ScanTile(const std::string& map, int32_t tx, int32_t ty, TileResult& r) {
     size_t mmdx = 0, mmdxN = 0, mmid = 0, mmidN = 0, mddf = 0, mddfN = 0;
     for (size_t o = 0; o + 8 <= d.size();) {
         const uint32_t tag = Get<uint32_t>(d, o), size = Get<uint32_t>(d, o + 4);
+        if (size > d.size() - o - 8) break;   // broken chunk: also no endless loop on a size that wraps o
         if (tag == 'MMDX') { mmdx = o + 8; mmdxN = size; }
         else if (tag == 'MMID') { mmid = o + 8; mmidN = size / 4; }
         else if (tag == 'MDDF') { mddf = o + 8; mddfN = size / 36; }
@@ -94,7 +95,8 @@ void ScanTile(const std::string& map, int32_t tx, int32_t ty, TileResult& r) {
         if (nid >= mmidN) continue;
         const uint32_t off = Get<uint32_t>(d, mmid + 4 * nid);
         if (off >= mmdxN) continue;
-        std::string model = Lower(reinterpret_cast<const char*>(d.data() + mmdx + off));
+        const char* str = reinterpret_cast<const char*>(d.data() + mmdx + off);
+        std::string model = Lower(std::string(str, strnlen(str, mmdxN - off)));
         const size_t dot = model.rfind('.');
         if (dot != std::string::npos) model = model.substr(0, dot) + ".m2";
         if (!IsTree(model)) continue;
@@ -107,6 +109,7 @@ void ScanTile(const std::string& map, int32_t tx, int32_t ty, TileResult& r) {
         float yaw = (Get<float>(d, e + 24) + 180.0f) / 360.0f;   // RotateAroundZ(rot.y + pi)
         p.yaw = yaw - std::floor(yaw);
         p.scale = Get<uint16_t>(d, e + 32) / 1024.0f;
+        p.rot[0] = Get<float>(d, e + 20); p.rot[1] = Get<float>(d, e + 24); p.rot[2] = Get<float>(d, e + 28);
         r.places.push_back(p);
     }
 }
@@ -151,7 +154,7 @@ bool DecodeBlp(const std::vector<uint8_t>& d, Image& img) {
     uint32_t w = Get<uint32_t>(d, 12), h = Get<uint32_t>(d, 16), level = 0;
     while (w > 256 && level < 15 && Get<uint32_t>(d, 20 + 4 * (level + 1)) && Get<uint32_t>(d, 84 + 4 * (level + 1))) { w = std::max(w >> 1, 1u); h = std::max(h >> 1, 1u); ++level; }
     const uint32_t off = Get<uint32_t>(d, 20 + 4 * level), size = Get<uint32_t>(d, 84 + 4 * level);
-    if (!off || off + size > d.size()) return false;
+    if (!off || uint64_t(off) + size > d.size() || !w || !h || w > 8192 || h > 8192) return false;
     const uint8_t* p = d.data() + off;
     img.w = w; img.h = h;
     img.rgba.assign(size_t(w) * h * 4, 255);
@@ -172,12 +175,12 @@ bool DecodeBlp(const std::vector<uint8_t>& d, Image& img) {
     }
     if (enc == 1) {   // palette (BGRA) + alpha of alphaDepth bits
         const size_t n = size_t(w) * h;
-        if (n > size) return false;
+        if (n + (alphaDepth == 1 || alphaDepth == 4 || alphaDepth == 8 ? (n * alphaDepth + 7) / 8 : 0) > size) return false;
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* c = d.data() + 148 + 4 * p[i];
             uint8_t* o = &img.rgba[i * 4];
             o[0] = c[2]; o[1] = c[1]; o[2] = c[0];
-            if (alphaDepth == 8 && n + i < size) o[3] = p[n + i];
+            if (alphaDepth == 8) o[3] = p[n + i];
             else if (alphaDepth == 1) o[3] = (p[n + i / 8] >> (i & 7)) & 1 ? 255 : 0;
             else if (alphaDepth == 4) o[3] = uint8_t(((p[n + i / 2] >> (4 * (i & 1))) & 15) * 17);
         }
@@ -259,13 +262,15 @@ struct Mesh {
     uint64_t fingerprint = 0;
 };
 
-bool LoadMesh(const std::string& path, Mesh& m) {
+// decode false: only the files the fingerprint covers are read (a cache hit needs no pictures); batches are built
+// as if every readable texture decoded.
+bool LoadMesh(const std::string& path, Mesh& m, bool decode) {
     std::vector<uint8_t> d, s;
     if (!ReadFile(path, d) || d.size() < 0x108 || std::memcmp(d.data(), "MD20", 4)) return false;
     if (!ReadFile(path.substr(0, path.size() - 3) + "00.skin", s) || s.size() < 48 || std::memcmp(s.data(), "SKIN", 4)) return false;
     m.fingerprint = Fnv(s.data(), s.size(), Fnv(d.data(), d.size(), Fnv(&kCacheVersion, 4)));
     const uint32_t nv = Get<uint32_t>(d, 0x3C), ov = Get<uint32_t>(d, 0x40);
-    if (size_t(ov) + size_t(nv) * 48 > d.size()) return false;
+    if (uint64_t(ov) + uint64_t(nv) * 48 > d.size()) return false;
     m.pos.resize(nv * 3); m.nrm.resize(nv * 3); m.uv.resize(nv * 2);
     for (uint32_t i = 0; i < nv; ++i) {
         std::memcpy(&m.pos[i * 3], &d[ov + i * 48], 12);
@@ -276,11 +281,13 @@ bool LoadMesh(const std::string& path, Mesh& m) {
     const uint32_t nt = Get<uint32_t>(d, 0x50), ot = Get<uint32_t>(d, 0x54);
     const uint32_t nm = Get<uint32_t>(d, 0x70), om = Get<uint32_t>(d, 0x74);
     const uint32_t nl = Get<uint32_t>(d, 0x80), ol = Get<uint32_t>(d, 0x84);
+    const uint32_t nsub = Get<uint32_t>(s, 28), osub = Get<uint32_t>(s, 32), nu = Get<uint32_t>(s, 36), ou = Get<uint32_t>(s, 40);
+    if (uint64_t(ot) + uint64_t(nt) * 16 > d.size() || uint64_t(osub) + uint64_t(nsub) * 48 > s.size() || uint64_t(ou) + uint64_t(nu) * 24 > s.size())
+        return false;
     m.textures.resize(nt);
     std::vector<int> texOk(nt, -1);
     const uint32_t ni = Get<uint32_t>(s, 4), oi = Get<uint32_t>(s, 8), nt3 = Get<uint32_t>(s, 12), ot3 = Get<uint32_t>(s, 16);
-    const uint32_t nsub = Get<uint32_t>(s, 28), osub = Get<uint32_t>(s, 32), nu = Get<uint32_t>(s, 36), ou = Get<uint32_t>(s, 40);
-    for (uint32_t i = 0; i < nu; ++i) {
+    for (uint32_t i = 0; i < nu && !s_stop; ++i) {
         const size_t u = ou + 24 * size_t(i);
         const uint16_t sub = Get<uint16_t>(s, u + 4), mat = Get<uint16_t>(s, u + 10), combo = Get<uint16_t>(s, u + 16);
         if (sub >= nsub || mat >= nm || combo >= nl) continue;
@@ -291,11 +298,11 @@ bool LoadMesh(const std::string& path, Mesh& m) {
             texOk[tl] = 0;
             const size_t te = ot + 16 * size_t(tl);
             const uint32_t len = Get<uint32_t>(d, te + 8), off = Get<uint32_t>(d, te + 12);
-            if (Get<uint32_t>(d, te) == 0 && len > 1 && size_t(off) + len <= d.size()) {
+            if (Get<uint32_t>(d, te) == 0 && len > 1 && uint64_t(off) + len <= d.size()) {
                 std::vector<uint8_t> t;
                 if (ReadFile(std::string(reinterpret_cast<const char*>(&d[off]), strnlen(reinterpret_cast<const char*>(&d[off]), len)), t)) {
                     m.fingerprint = Fnv(t.data(), t.size(), m.fingerprint);
-                    texOk[tl] = DecodeBlp(t, m.textures[tl]) ? 1 : 0;
+                    texOk[tl] = !decode || DecodeBlp(t, m.textures[tl]) ? 1 : 0;
                 }
             }
         }
@@ -351,6 +358,7 @@ void Raster(const Mesh& m, const float c[3], float R, const float d[3], int n, s
     col.assign(size_t(n) * n * 4, 0.0f);
     nd.assign(size_t(n) * n * 4, 0.0f);
     for (const Batch& b : m.batches) {
+        if (s_stop) return;
         const Image& t = *b.tex;
         for (size_t k = 0; k < b.idx.size(); k += 3) {
             const uint32_t a = b.idx[k], bb = b.idx[k + 1], cc = b.idx[k + 2];
@@ -393,7 +401,7 @@ void Raster(const Mesh& m, const float c[3], float R, const float d[3], int n, s
 void Dilate(std::vector<float>& img, const std::vector<float>& cover, uint32_t w, int iters) {
     std::vector<uint8_t> has(cover.size());
     for (size_t i = 0; i < cover.size(); ++i) has[i] = cover[i] > 0;
-    for (int it = 0; it < iters; ++it) {
+    for (int it = 0; it < iters && !s_stop; ++it) {
         std::vector<uint8_t> next = has;
         bool any = false;
         for (uint32_t y = 0; y < w; ++y)
@@ -427,7 +435,7 @@ std::vector<std::vector<uint8_t>> Mips(std::vector<float> img, uint32_t w, bool 
     const float base = float(covered0) / float(size_t(w) * w);
     for (;;) {
         out.push_back(EncodeDxt5(img, w, w));
-        if (w == 1) break;
+        if (w == 1 || s_stop) break;
         const uint32_t h = w / 2;
         std::vector<float> m(size_t(h) * h * 4);
         for (uint32_t y = 0; y < h; ++y)
@@ -496,9 +504,12 @@ void BakeAtlas(const Mesh& m, ModelResult& r) {
                     cover[o] = a[3];
                 }
         }
+    if (s_stop) return;
     Dilate(alb, cover, W, 16);
     Dilate(nrm, cover, W, 16);
+    if (s_stop) return;
     r.albedo = Mips(std::move(alb), W, true);
+    if (s_stop) return;
     r.normal = Mips(std::move(nrm), W, false);
 }
 
@@ -523,12 +534,19 @@ bool ReadCache(const std::string& model, uint64_t fingerprint, ModelResult& r) {
         && std::fread(&fp, 8, 1, f) == 1 && fp == fingerprint && std::fread(r.centre, 4, 3, f) == 3 && std::fread(&r.radius, 4, 1, f) == 1
         && std::fread(&r.extent, 4, 1, f) == 1 && std::fread(&r.framePx, 4, 1, f) == 1 && std::fread(&levels, 4, 1, f) == 1 && levels <= 16
         && (r.framePx == 64 || r.framePx == 128)) {
-        ok = true;
+        // The full chain at exactly EncodeDxt5's sizes: the device latch copies whole levels from these.
+        const uint32_t W = kFrames * r.framePx;
+        uint32_t full = 1;
+        while ((W >> (full - 1)) > 1) ++full;
+        ok = levels == full;
         for (auto* set : { &r.albedo, &r.normal }) {
+            if (!ok) break;
             set->resize(levels);
-            for (auto& l : *set) {
+            for (uint32_t li = 0; li < levels; ++li) {
+                auto& l = (*set)[li];
+                const uint32_t bw = (std::max(W >> li, 1u) + 3) / 4;
                 uint32_t size = 0;
-                if (std::fread(&size, 4, 1, f) != 1 || size > (64u << 20)) { ok = false; break; }
+                if (std::fread(&size, 4, 1, f) != 1 || size != bw * bw * 16) { ok = false; break; }
                 l.resize(size);
                 if (size && std::fread(l.data(), size, 1, f) != 1) { ok = false; break; }
             }
@@ -568,9 +586,16 @@ void WriteCache(const std::string& model, uint64_t fingerprint, const ModelResul
 void BakeModel(const std::string& model, ModelResult& r) {
     r.model = model;
     Mesh m;
-    if (!LoadMesh(model, m)) return;   // also reads the files the fingerprint covers
+    if (!LoadMesh(model, m, false)) return;   // reads the files the fingerprint covers, decodes nothing
+    std::memcpy(r.box, m.box, sizeof(r.box));
+    // Never drawn: a model whose stock size class stays below 2 (<= 4 yd; the rotated box's largest side is at most
+    // sqrt(3) x its largest side) at any scale up to kMaxScale. ponytail: a bush placed bigger than that gets no impostor.
+    constexpr float kMaxScale = 2.0f;
+    if (std::max({ m.box[3] - m.box[0], m.box[4] - m.box[1], m.box[5] - m.box[2] }) * kMaxScale * 1.7321f <= 4.0f) return;
     if (ReadCache(model, m.fingerprint, r)) { r.ok = r.fromCache = true; return; }
     r.albedo.clear(); r.normal.clear();
+    m = Mesh();
+    if (s_stop || !LoadMesh(model, m, true)) return;
     BakeAtlas(m, r);
     if (s_stop) return;
     r.ok = true;
@@ -587,14 +612,15 @@ void Run() {
             job = std::move(s_jobs.front());
             s_jobs.pop_front();
         }
+        // Out of memory (or anything else) fails this tile or model, never the client.
         if (job.tile) {
             TileResult r;
-            ScanTile(job.a, job.x, job.y, r);
+            try { ScanTile(job.a, job.x, job.y, r); } catch (...) { r.places.clear(); }
             std::lock_guard<std::mutex> lock(s_lock);
             s_tiles.push_back(std::move(r));
         } else {
             ModelResult r;
-            BakeModel(job.a, r);
+            try { BakeModel(job.a, r); } catch (...) { r = ModelResult(); r.model = job.a; }
             if (s_stop) return;
             std::lock_guard<std::mutex> lock(s_lock);
             s_models.push_back(std::move(r));
@@ -638,6 +664,11 @@ void RequestTile(const std::string& map, int32_t tx, int32_t ty) {
         s_jobs.insert(it, Job{ true, map, tx, ty });
     }
     s_wake.notify_one();
+}
+
+void CancelTile(const std::string& map, int32_t tx, int32_t ty) {
+    std::lock_guard<std::mutex> lock(s_lock);
+    s_jobs.erase(std::remove_if(s_jobs.begin(), s_jobs.end(), [&](const Job& j) { return j.tile && j.x == tx && j.y == ty && j.a == map; }), s_jobs.end());
 }
 
 void RequestModel(const std::string& model) {

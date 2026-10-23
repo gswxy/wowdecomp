@@ -99,6 +99,7 @@
 #include "WoW/Source/UIUtil/InputControl.h"
 #include "WoW/Source/UIUtil/SmartScreenRect.h"
 #include "WoW/Source/WorldClient/AreaList.h"
+#include "WoW/Source/WorldClient/FarTrees.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapWeather.h"
@@ -1886,6 +1887,7 @@ int32_t CommonMain() {
     if (InitializeGlobal()) {
         EventDoMessageLoop();
         GxTeardownLog("EventDoMessageLoop returned");
+        FarTrees::Shutdown();   // not stock: its worker reads through SFile, so it stops before CloseAllArchives
         BeginCloseGame();
     }
 

@@ -5,11 +5,11 @@
 // give the pixel shader each view's uv of this vertex (ray through the vertex hits that view's plane), so the
 // picture belongs to the model's turn, never to the camera's.
 //   POSITION  = the placement's origin (world)
-//   TEXCOORD0 = x: corner (0..3) + yaw / 2pi, y: scale
+//   TEXCOORD0 = x: corner (0..3) + yaw / 2pi, y: scale, negative for stock size class 3, 0: not drawn (FarTrees.cpp SizeClass)
 float4 gM[4]   : register(c0);   // rows of camera-relative world -> clip (row vectors, native projection)
 float4 gCam    : register(c4);   // xyz camera
 float4 gModel  : register(c5);   // xyz: impostor centre (model space), w: radius R (model space)
-float4 gGrid   : register(c6);   // x: F, y: F - 1, z: model's largest box extent (model space), w: 1 / F
+float4 gGrid   : register(c6);   // x: F, y: F - 1, z: (unused), w: 1 / F
 float4 gFade   : register(c7);   // fade start of levels 2 and 3 (yd), fade range of levels 2 and 3
 float4 gView   : register(c8);   // x: px per (yd / view depth), y: min px, z: fogStart, w: 1 / (fogEnd - fogStart)
 float4 gSun    : register(c9);   // xyz toward the sun (world), w: depth bias (fraction of R) during the hand-over
@@ -44,7 +44,7 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
     VsOut o;
     float corner = floor(t.x);
     float yaw    = frac(t.x) * 6.2831853;
-    float scale  = t.y;
+    float scale  = abs(t.y);
     float cs = cos(yaw), sn = sin(yaw);
 
     // Model space -> world: rotate about z by yaw, scale, add the origin.
@@ -66,14 +66,16 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
     float3 pw = cw + (rw * k.x + uw * k.y) * R;
 
     // Hand-over: the real doodad fades over [start, start + range] (CWorldScene::s_fadeDistMin / s_fadeRangeDefault
-    // of its size class); the impostor is there from start - 2 yd on, opaque, behind it by the bias until the end.
-    float size  = gGrid.z * scale;
-    bool  lvl3  = size > 15.0;
+    // of its size class, the class as stock gives it, from the CPU); the impostor is there from start - 2 yd on,
+    // opaque, behind it by the bias until the end.
+    bool  lvl3  = t.y < 0.0;
     float start = (lvl3 ? gFade.y : gFade.x) - 2.0;
     float range = lvl3 ? gFade.w : gFade.z;
     float4 cc = (pw.x - gCam.x) * gM[0] + (pw.y - gCam.y) * gM[1] + (pw.z - gCam.z) * gM[2] + gM[3];
-    float px  = 2.0 * R * gView.x / max(cc.w, 1.0);
-    bool  off = size <= 4.0 || size > 100.0 || dist < start || px < gView.y;
+    // Size on screen and fog from the centre (all 6 vertices alike: a quad is never split); fog at the front (w - R).
+    float  wc   = dot(cw - gCam.xyz, float3(gM[0].w, gM[1].w, gM[2].w)) + gM[3].w;
+    float px  = 2.0 * R * gView.x / max(wc, 1.0);
+    bool  off = scale == 0.0 || dist < start || px < gView.y || saturate((wc - R - gView.z) * gView.w) >= 0.999;
     o.pos = off ? float4(0.0, 0.0, -2.0, 1.0) : cc;   // outside the clip volume: the quad is dropped
 
     // Each of the 4 views around dm: uv of this corner (model space, R = 1).
@@ -91,8 +93,8 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
     o.uv23.zw = (g0 + float2(1, 1) + ViewUv(Decode(g0 + float2(1, 1)), pm)) * cell;
     o.w = float4((1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y);
 
-    // Baked depth d in [-1, 1] (toward the camera, x R): clip moves by -d R along the view ray.
-    float4 dc = -(dw.x * gM[0] + dw.y * gM[1] + dw.z * gM[2]) * R;
+    // Baked depth d in [-1, 1] (toward the camera, x R): the surface sits d R from the quad toward the camera.
+    float4 dc = (dw.x * gM[0] + dw.y * gM[1] + dw.z * gM[2]) * R;
     o.clip = float4(cc.z, cc.w, dc.z, dc.w);
     float fog = saturate((cc.w - gView.z) * gView.w);
     float bias = dist < start + 2.0 + range ? gSun.w : 0.0;

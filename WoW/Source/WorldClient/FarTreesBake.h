@@ -17,6 +17,7 @@ struct Place {
     std::string model;     // M2 path as the ADT names it (.mdx -> .m2)
     float x, y, z;         // world
     float yaw;             // 0..1 turns
+    float rot[3];          // MDDF rotation as read (degrees), for the stock size class
     float scale;
     uint32_t uniqueId;
 };
@@ -32,6 +33,7 @@ struct ModelResult {
     bool ok = false;
     bool fromCache = false;
     float centre[3] = {}, radius = 0, extent = 0;   // model space; extent = largest header-box side
+    float box[6] = {};                              // the M2 header's bounding box (model space)
     uint32_t framePx = 0;                           // one view's side; the atlas is kFrames x framePx square
     std::vector<std::vector<uint8_t>> albedo, normal;   // DXT5 mip levels, level 0 first, down to 1 x 1
 };
@@ -39,6 +41,7 @@ struct ModelResult {
 void Start();
 void Stop();   // joins the thread, drops queued work
 void RequestTile(const std::string& map, int32_t tx, int32_t ty);
+void CancelTile(const std::string& map, int32_t tx, int32_t ty);   // drops it if still queued
 void RequestModel(const std::string& model);
 bool PopTile(TileResult& out);
 bool PopModel(ModelResult& out);

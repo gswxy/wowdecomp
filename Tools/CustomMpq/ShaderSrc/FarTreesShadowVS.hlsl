@@ -4,11 +4,11 @@
 // FarTreesVS), so its picture is the tree's silhouette as the sun sees it; FarTreesShadowPS cuts it out and writes
 // the stock ShadowMap VS/PS's light view depth.
 //   POSITION  = the placement's origin (world)
-//   TEXCOORD0 = x: corner (0..3) + yaw / 2pi, y: scale
+//   TEXCOORD0 = x: corner (0..3) + yaw / 2pi, y: scale, negative for stock size class 3, 0: not drawn (FarTrees.cpp SizeClass)
 float4 gM[4]   : register(c0);   // rows of camera-relative world -> band clip (row vectors, native projection)
 float4 gCam    : register(c4);   // xyz: the camera the band's view is relative to
 float4 gModel  : register(c5);   // xyz: impostor centre (model space), w: radius R (model space)
-float4 gGrid   : register(c6);   // x: F, y: F - 1, z: model's largest box extent (model space), w: 1 / F
+float4 gGrid   : register(c6);   // x: F, y: F - 1, z: (unused), w: 1 / F
 float4 gFade   : register(c7);   // x, y: fade start of levels 2 and 3 (yd)
 float4 gEye    : register(c8);   // xyz: CWorldScene::s_activeWorldView, the centre of the doodad fade
 float4 gSun    : register(c9);   // xyz toward the light (world)
@@ -32,7 +32,7 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
     VsOut o;
     float corner = floor(t.x);
     float yaw    = frac(t.x) * 6.2831853;
-    float scale  = t.y;
+    float scale  = abs(t.y);
     float cs = cos(yaw), sn = sin(yaw);
 
     float3 c  = gModel.xyz * scale;
@@ -41,9 +41,8 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
 
     // Hand-over: the real doodad casts while it is nearer than its fade start (CWorldScene::IsBeyondFadeDistance,
     // CShadowQuery's queries), the impostor from there on: one of them, never both, no gap.
-    float size = gGrid.z * scale;
-    float start = size > 15.0 ? gFade.y : gFade.x;
-    bool  off = size <= 4.0 || size > 100.0 || length(cw - gEye.xyz) <= start;
+    float start = t.y < 0.0 ? gFade.y : gFade.x;
+    bool  off = scale == 0.0 || length(cw - gEye.xyz) <= start;
 
     // The grid view nearest the light, in the model's frame (the sun is above: the hemisphere holds it).
     float3 lm = float3(gSun.x * cs + gSun.y * sn, -gSun.x * sn + gSun.y * cs, max(gSun.z, 0.0));

@@ -75,6 +75,8 @@ struct CVars {
     CVar* debug;
     CVar* godRays;
     CVar* shadowedSun;
+    CVar* shafts;
+    CVar* shaftIntensity;
     CVar* canopy;
     CVar* grade;
     CVar* gradeStrength;
@@ -185,6 +187,8 @@ Config ReadConfig() {
     cfg.debugView = std::clamp(CVarInt(s_cvars.debug, 0), 0, 3);
     cfg.godRays = std::clamp(CVarFloat(s_cvars.godRays, cfg.godRays), 0.0f, 4.0f);   // coa config.cpp:75
     cfg.shadowedSun = CVarInt(s_cvars.shadowedSun, 1) != 0;
+    cfg.shafts = CVarInt(s_cvars.shafts, 1) != 0;
+    cfg.shaftIntensity = std::clamp(CVarFloat(s_cvars.shaftIntensity, cfg.shaftIntensity), 0.0f, 2.0f);
     cfg.canopy = std::clamp(CVarFloat(s_cvars.canopy, cfg.canopy), 0.0f, 1.0f);
     cfg.grade = CVarInt(s_cvars.grade, cfg.grade) != 0;
     cfg.gradeStrength = std::clamp(CVarFloat(s_cvars.gradeStrength, cfg.gradeStrength), 0.0f, 1.0f);   // coa config.cpp:52
@@ -743,6 +747,8 @@ void RegisterCVars() {
     s_cvars.hdrTargets = CVar::Register("vfogHdrTargets", "Volumetric fog: 1 = half-float fog and god ray targets where the device has them (default), 0 = 8 bit (bands)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.godRays = CVar::Register("vfogGodRays", "Volumetric fog god rays from the bright sky around the sun: 0 = off, 1 = on (default), up to 4 = strength", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shadowedSun = CVar::Register("vfogShadowedSun", "Volumetric fog sun shafts through the scene: the fog's sunlight is shadowed by trees, buildings and terrain casters (needs shadows above low): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.shafts = CVar::Register("vfogShafts", "Volumetric fog sun shafts visible from any view direction, not only toward the sun (needs vfogShadowedSun): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.shaftIntensity = CVar::Register("vfogShaftIntensity", "Volumetric fog sun shaft strength away from the sun while vfogShafts is on, 0..2 (default 0.35)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.canopy = CVar::Register("vfogCanopy", "Volumetric fog darkening of the haze glow in sun shadow (under trees, beside buildings) while vfogShadowedSun is on, 0..1 (default 0.5)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     TerrainSunShadow::RegisterCVars();
 

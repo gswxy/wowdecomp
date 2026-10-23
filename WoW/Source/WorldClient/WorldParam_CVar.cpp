@@ -23,6 +23,7 @@
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2TreeSway.h"
+#include "WoW/Source/WorldClient/FarTrees.h"
 #include "WoW/Source/WorldClient/TreeLeaves.h"
 #include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/SoftParticles.h"
@@ -745,6 +746,12 @@ void CWorldParam::Initialize() {
     CVar::Register("treeLeavesDensity", "Falling leaf slots per tree (1..48, 18 = wxl-treewind)", 1, "18", [](CVar*, const char*, const char* value, void*) -> bool {
         float v = SStrToFloat(value);
         TreeLeaves::s_perTree = v < 1.0f ? 1.0f : (v > 48.0f ? 48.0f : v);
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+
+    // FARTREES: not in 12340. Trees past the doodad fade drawn to farclip as baked impostors (FarTrees.cpp).
+    CVar::Register("farTrees", "Far trees as baked impostors past the doodad fade (needs FarTrees data)", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+        FarTrees::s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
 

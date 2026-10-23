@@ -35,6 +35,7 @@
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "WoW/Source/Ui/WorldLighting.h"   // LIGHTING
+#include "WoW/Source/WorldClient/FarTrees.h"   // FARTREES
 
 // VERIFY: 78b69e1a manual
 // OFFSET: 0x007D5610
@@ -227,6 +228,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CWorldScene::RenderMapObjDefGroups();
     // OCCLUSION: depth now holds terrain and WMO groups; test this frame's candidates against it.
     OcclusionCull::IssueQueries();
+    FarTrees::Draw();   // FARTREES: not in 12340 (far tree impostors, before every M2 pass)
     FrameProfileSwitch(FRAMEPROFILE_TERRAIN);
     CWorldScene::RenderHorizon();
     FrameProfileSwitch(FRAMEPROFILE_WMO);

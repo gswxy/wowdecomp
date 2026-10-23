@@ -111,6 +111,9 @@ SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 10, 11,
 SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 10, 11, 12, 13, 14), 0, 'CataWaterPs', {'PLANAR': 1})
 SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
 SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWaterTint', {})
+# Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).
+SHADERS['FarTreesVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesVS', {})
+SHADERS['FarTreesPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'FarTreesPS', {})
 # VFogWater{1,2,3}: coa ps_vw_shade_low/mid/high (SSR_STEPS 0/16/32, cmake/WaterShaders.cmake)
 for _v, _ssr in ((1, 0), (2, 16), (3, 32)):
     SHADERS['VFogWater%d' % _v] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(*range(0, 16)), 0, 'VFogWater',

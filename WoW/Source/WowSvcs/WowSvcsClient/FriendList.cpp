@@ -1819,7 +1819,7 @@ void FriendList::HandleStatus(FRIEND_RESULT status, WOWGUID guid, CDataStore* ms
             CGGameUI::DisplayError(ERR_VOICE_IGNORE_AMBIGUOUS);
             return;
 
-        case FRIEND_UNKNOWN_25:
+        case FRIEND_NOOP:
             CGGameUI::DisplayError(error);
             return;
 

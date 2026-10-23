@@ -1,5 +1,6 @@
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -80,6 +81,7 @@ Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
 std::vector<float> s_fineLand((kFineSize + 2) * (kFineSize + 2));
 int s_fineChunks;       // loaded ADT chunks over the fine window at its build
 uint32_t s_finePoll;
+float s_fineCam[2];     // the camera at the last Update, for the fine window
 bool s_fineOn;          // the fine level is current (Visibility uses it)
 float s_light[3];
 // The trees' rasters (MakeTrees): crown tops on the fine grid, forest tops on the coarse, kNone where there are none.
@@ -91,6 +93,18 @@ struct Trees {
 };
 Trees s_trees;
 std::future<Trees> s_treeJob;
+// shadow audit P2: the fine level is built on a worker (MakeFine) from a land snapshot taken here, and a rebuild fades
+// in the shader from the previous texture (s_finePrev, its old window's row) instead of re-blending and re-uploading.
+struct FineJob {
+    int r0 = 0, c0 = 0, chunks = 0;
+    bool fade = false;
+    std::vector<float> land, lit;
+    std::vector<uint32_t> texels;
+};
+std::future<FineJob> s_fineJob;
+bool s_fineStale;               // the coarse level or the window's chunks changed since the last snapshot
+CGxTex* s_finePrev;
+float s_finePrevRow[4];
 uint32_t s_treeGen;             // FarTrees::CanopyGeneration at the last snapshot
 float s_treeCam[2], s_treeNear;
 bool s_builtTrees;              // the shown heights hold a tree raster
@@ -146,53 +160,51 @@ float FineVertex(int r, int c) {
     return chunk->m_height[row * 17 + col] + chunk->m_topLeftCoords.z;
 }
 
-// Bilinear over s_fineLand at absolute fine grid (r, c), which must lie in the window +-1. A corner in a hole: the
-// nearest corner, so a hole lets the light through about where it is.
-float FineHeightAt(float r, float c) {
-    const float fr = std::floor(r), fc = std::floor(c);
-    const int ir = static_cast<int>(fr) - s_fine.r0 + 1, ic = static_cast<int>(fc) - s_fine.c0 + 1;
+// Bilinear over a fine land snapshot (FillFineLand's layout from (r0 - 1, c0 - 1)) at absolute fine grid (r, c), which
+// must lie in the window +-1 (clamped to it: the worker may not read the WDL). A corner in a hole: the nearest
+// corner, so a hole lets the light through about where it is.
+float FineHeightAt(const float* land, int r0, int c0, float r, float c) {
     constexpr int n = kFineSize + 2;
-    if (ir < 0 || ic < 0 || ir + 1 >= n || ic + 1 >= n) {
-        return HeightAt(r / kFinePerCoarse, c / kFinePerCoarse);
-    }
-    const float* h = &s_fineLand[ir * n + ic];
-    const float tr = r - fr, tc = c - fc;
+    const float fr = std::clamp(std::floor(r), r0 - 1.0f, r0 + n - 3.0f), fc = std::clamp(std::floor(c), c0 - 1.0f, c0 + n - 3.0f);
+    const int ir = static_cast<int>(fr) - r0 + 1, ic = static_cast<int>(fc) - c0 + 1;
+    const float* h = &land[ir * n + ic];
+    const float tr = std::clamp(r - fr, 0.0f, 1.0f), tc = std::clamp(c - fc, 0.0f, 1.0f);
     if (h[0] == kNone || h[1] == kNone || h[n] == kNone || h[n + 1] == kNone) {
         return h[(tr >= 0.5f ? n : 0) + (tc >= 0.5f ? 1 : 0)];
     }
     return (h[0] * (1 - tc) + h[1] * tc) * (1 - tr) + (h[n] * (1 - tc) + h[n + 1] * tc) * tr;
 }
 
-// The coarse level's built lit height at absolute coarse grid (r, c), kNone outside its window.
-float CoarseLitAt(float r, float c) {
-    const float fr = r - s_coarse.r0, fc = c - s_coarse.c0;
+// A coarse level's built lit heights (window at r0, c0) at absolute coarse grid (r, c), kNone outside the window.
+float CoarseLitAt(const float* lit, int r0, int c0, float r, float c) {
+    const float fr = r - r0, fc = c - c0;
     const int ir = static_cast<int>(std::floor(fr)), ic = static_cast<int>(std::floor(fc));
     if (ir < 0 || ic < 0 || ir + 1 >= kSize || ic + 1 >= kSize) {
         return kNone;
     }
-    const float* h = &s_coarse.lit[ir * kSize + ic];
+    const float* h = &lit[ir * kSize + ic];
     const float tr = fr - ir, tc = fc - ic;
     return (h[0] * (1 - tc) + h[1] * tc) * (1 - tr) + (h[kSize] * (1 - tc) + h[kSize + 1] * tc) * tr;
 }
 
-int CountFineChunks() {
+int CountFineChunks(int r0, int c0) {
     int n = 0;
-    for (int r = s_fine.r0 - 1; r <= s_fine.r0 + kFineSize; r += 8) {
-        for (int c = s_fine.c0 - 1; c <= s_fine.c0 + kFineSize; c += 8) {
+    for (int r = r0 - 1; r <= r0 + kFineSize; r += 8) {
+        for (int c = c0 - 1; c <= c0 + kFineSize; c += 8) {
             n += ChunkAt(r, c) != nullptr;
         }
     }
     return n;
 }
 
-void FillFineLand() {
+void FillFineLand(int r0, int c0, std::vector<float>& land) {
     constexpr int n = kFineSize + 2;
+    land.resize(n * n);
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
-            s_fineLand[i * n + j] = FineVertex(s_fine.r0 - 1 + i, s_fine.c0 - 1 + j);
+            land[i * n + j] = FineVertex(r0 - 1 + i, c0 - 1 + j);
         }
     }
-    s_fineChunks = CountFineChunks();
 }
 
 uint16_t Half(float f) {    // normal range only (|f| <= 30000, rounded to nearest)
@@ -207,6 +219,21 @@ uint16_t Half(float f) {    // normal range only (|f| <= 30000, rounded to neare
     return static_cast<uint16_t>(sign | std::min(bits, 0x7BFFu));
 }
 
+float HalfToFloat(uint16_t h) {    // Half's output: normal or zero
+    const uint32_t exponent = (h >> 10) & 0x1Fu;
+    const uint32_t x = exponent ? (static_cast<uint32_t>(h & 0x8000u) << 16) | ((exponent + 112) << 23) | (static_cast<uint32_t>(h & 0x3FFu) << 13) : 0u;
+    float f;
+    std::memcpy(&f, &x, 4);
+    return f;
+}
+
+// shadow audit V2: R = the lit height in fp16, G = what that rounding lost (fp16 steps 1 yd past z 1024, 2 yd past 2048);
+// the shaders sample R + G, which bilinear filtering keeps exact.
+uint32_t Pack(float v) {
+    const uint16_t hi = Half(v);
+    return hi | static_cast<uint32_t>(Half(v - HalfToFloat(hi))) << 16;
+}
+
 void Callback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_t, void* user, uint32_t& stride, const void*& texels) {
     if (command == GxTex_Latch) {
         texels = static_cast<Level*>(user)->texels.data();
@@ -219,8 +246,7 @@ void Callback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_
 // light along the major axis (the minor offset |off| <= 1 keeps q in the previous line, already done). land(r, c) is
 // the height at absolute grid (r, c); outside(r, c) the lit height where q leaves the window (kNone: nothing blocks).
 template <class Land, class Outside>
-void Build(Level& lv, const float L[3], Land land, Outside outside) {
-    const int n = lv.size;
+void Build(float* lit, int n, float cell, int r0, int c0, const float L[3], Land land, Outside outside) {
     const float h = std::sqrt(L[0] * L[0] + L[1] * L[1]);
     const float rise = std::max(L[2], 0.005f) / std::max(h, 1e-4f);    // tan(elevation)
     const float dR = h > 1e-4f ? -L[0] / h : 0.0f;    // grid r/c grow as world x/y fall
@@ -229,8 +255,7 @@ void Build(Level& lv, const float L[3], Land land, Outside outside) {
     const float m = std::max(std::fabs(dR), std::fabs(dC));
     const int step = (rowsMajor ? dR : dC) > 0 ? 1 : -1;
     const float off = (rowsMajor ? dC : dR) / m;
-    const float drop = lv.cell / m * rise;
-    float* lit = lv.lit.data();
+    const float drop = cell / m * rise;
     auto at = [&](int a, int b) -> float& { return rowsMajor ? lit[a * n + b] : lit[b * n + a]; };
 
     for (int k = 0; k < n; k++) {
@@ -238,8 +263,8 @@ void Build(Level& lv, const float L[3], Land land, Outside outside) {
         const int na = a + step;
         for (int b = 0; b < n; b++) {
             const float nb = b + off;
-            const float qr = rowsMajor ? static_cast<float>(lv.r0 + na) : lv.r0 + nb;
-            const float qc = rowsMajor ? lv.c0 + nb : static_cast<float>(lv.c0 + na);
+            const float qr = rowsMajor ? static_cast<float>(r0 + na) : r0 + nb;
+            const float qc = rowsMajor ? c0 + nb : static_cast<float>(c0 + na);
             float past;
             const int b0 = static_cast<int>(std::floor(nb));
             if (na >= 0 && na < n && b0 >= 0 && b0 + 1 < n) {
@@ -262,7 +287,7 @@ void Blend(Level& lv, float w) {
         const int r = i / n, c = i % n;
         const bool border = lv.clampBorder && (r == 0 || c == 0 || r == n - 1 || c == n - 1);
         lv.shown[i] = lv.from[i] + (lv.lit[i] - lv.from[i]) * w;
-        lv.texels[i] = Half(border ? kNone : lv.shown[i]);   // R = lit height, G unused
+        lv.texels[i] = Pack(border ? kNone : lv.shown[i]);
     }
 }
 
@@ -404,7 +429,11 @@ bool TreesValid() {
 bool PollTrees(const float camPos[3]) {
     bool first = false;
     if (s_treeJob.valid() && s_treeJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        s_trees = s_treeJob.get();
+        try {
+            s_trees = s_treeJob.get();
+        } catch (...) {     // shadow audit C1: e.g. bad_alloc on Wow32; no trees rather than a rethrow into the frame
+            s_trees = Trees();
+        }
         first = !s_builtTrees && TreesValid();
     }
     if (s_treeJob.valid()) {
@@ -440,21 +469,78 @@ float CoarseLandAt(float r, float c) {
     return ir < 0 || ic < 0 || ir >= kTreeCoarse || ic >= kTreeCoarse ? h : std::max(h, s_trees.coarse[ir * kTreeCoarse + ic]);
 }
 
-// The crowns over s_fineLand (FillFineLand's window): one max a texel, about 0.1 ms, on the fine level's builds only.
-void ApplyFineTrees() {
+// The crowns over a fine land snapshot (FillFineLand's window): one max a texel, about 0.1 ms, on the fine level's builds only.
+void ApplyFineTrees(int r0, int c0, std::vector<float>& fineLand) {
     if (!TreesValid()) {
         return;
     }
     constexpr int n = kFineSize + 2;
-    const int di = s_fine.r0 - 1 - s_trees.fr0, dj = s_fine.c0 - 1 - s_trees.fc0;
+    const int di = r0 - 1 - s_trees.fr0, dj = c0 - 1 - s_trees.fc0;
     const int i0 = std::max(0, -di), i1 = std::min(n, kTreeFine - di), j0 = std::max(0, -dj), j1 = std::min(n, kTreeFine - dj);
     for (int i = i0; i < i1; i++) {
-        float* land = &s_fineLand[i * n];
+        float* land = &fineLand[i * n];
         const float* crown = &s_trees.fine[(i + di) * kTreeFine + dj];
         for (int j = j0; j < j1; j++) {
             land[j] = std::max(land[j], crown[j]);
         }
     }
+}
+
+// Worker thread: the fine level's sweep over its land snapshot, its light-side edge from a copy of the coarse lit heights.
+FineJob MakeFine(FineJob job, std::vector<float> coarse, int cr0, int cc0, std::array<float, 3> L) {
+    job.lit.resize(kFineSize * kFineSize);
+    Build(job.lit.data(), kFineSize, kFineCell, job.r0, job.c0, L.data(),
+        [&](float qr, float qc) { return FineHeightAt(job.land.data(), job.r0, job.c0, qr, qc); },
+        [&](float qr, float qc) { return CoarseLitAt(coarse.data(), cr0, cc0, qr / kFinePerCoarse, qc / kFinePerCoarse); });
+    job.texels.resize(job.lit.size());
+    for (size_t i = 0; i < job.lit.size(); i++) {
+        job.texels[i] = Pack(job.lit[i]);
+    }
+    return job;
+}
+
+// Main thread: takes a finished fine build (the previous texture fades out in the shader), starts the next one when
+// it is due and none is running or fading.
+void UpdateFine(bool due, bool fade, uint32_t now) {
+    if (s_fineJob.valid() && s_fineJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        FineJob job;
+        try {
+            job = s_fineJob.get();
+        } catch (...) {     // shadow audit C1
+            s_fineStale = true;
+        }
+        if (!job.lit.empty()) {
+            s_fine.fading = job.fade && s_fine.tex;
+            if (s_fine.fading) {
+                Row(s_fine, s_finePrevRow, 0.0f);
+                std::swap(s_fine.tex, s_finePrev);
+                s_fine.fadeStart = now;
+            }
+            s_fine.r0 = job.r0;
+            s_fine.c0 = job.c0;
+            s_fineChunks = job.chunks;
+            s_fineLand.swap(job.land);
+            s_fine.lit.swap(job.lit);
+            s_fine.texels.swap(job.texels);
+            Upload(s_fine, true, now, "TerrainSunShadowFine");
+            s_fineOn = s_fine.built;
+        }
+    }
+    if (s_fine.fading && now - s_fine.fadeStart >= kFadeMs) {
+        s_fine.fading = false;
+    }
+    if (!due || s_fineJob.valid() || s_fine.fading) {
+        return;
+    }
+    FineJob job;
+    job.r0 = static_cast<int>(std::floor(kFineOrigin - s_fineCam[0] / kFineCell)) - kFineSize / 2;
+    job.c0 = static_cast<int>(std::floor(kFineOrigin - s_fineCam[1] / kFineCell)) - kFineSize / 2;
+    job.fade = fade && s_fineOn;
+    FillFineLand(job.r0, job.c0, job.land);     // world data: the main thread's share
+    ApplyFineTrees(job.r0, job.c0, job.land);
+    job.chunks = CountFineChunks(job.r0, job.c0);
+    s_fineStale = false;
+    s_fineJob = std::async(std::launch::async, MakeFine, std::move(job), s_coarse.lit, s_coarse.r0, s_coarse.c0, std::array<float, 3> { s_light[0], s_light[1], s_light[2] });
 }
 
 }  // namespace
@@ -505,7 +591,7 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
         }
         s_builtTrees = !s_trees.fine.empty();
         Rebuild(s_coarse, r, c, fade, now, [&] {
-            Build(s_coarse, toLight, CoarseLandAt, [](float, float) { return kNone; });
+            Build(s_coarse.lit.data(), kSize, kCell, s_coarse.r0, s_coarse.c0, toLight, CoarseLandAt, [](float, float) { return kNone; });
         });
     }
     if (!Upload(s_coarse, coarse, now, "TerrainSunShadow")) {
@@ -518,19 +604,17 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
     if (FineWanted()) {
         const int fr = static_cast<int>(std::floor(kFineOrigin - camPos[0] / kFineCell)) - kFineSize / 2;
         const int fc = static_cast<int>(std::floor(kFineOrigin - camPos[1] / kFineCell)) - kFineSize / 2;
-        bool fine = coarse || !s_fine.built || !s_fineOn || std::abs(fr - s_fine.r0) > kFineRecentre || std::abs(fc - s_fine.c0) > kFineRecentre;
-        if (!fine && now - s_finePoll >= kChunkPollMs) {
+        if (!fade && coarse) {
+            s_fineOn = false;   // a new map or a snap: the old fine level is wrong until its rebuild arrives
+        }
+        s_fineStale = s_fineStale || coarse;
+        if (!s_fineStale && s_fine.built && now - s_finePoll >= kChunkPollMs) {
             s_finePoll = now;
-            fine = CountFineChunks() != s_fineChunks;
+            s_fineStale = CountFineChunks(s_fine.r0, s_fine.c0) != s_fineChunks;
         }
-        if (fine) {
-            Rebuild(s_fine, fr, fc, fade && s_fineOn, now, [&] {
-                FillFineLand();
-                ApplyFineTrees();
-                Build(s_fine, s_light, FineHeightAt, [](float qr, float qc) { return CoarseLitAt(qr / kFinePerCoarse, qc / kFinePerCoarse); });
-            });
-        }
-        s_fineOn = Upload(s_fine, fine, now, "TerrainSunShadowFine");
+        s_fineCam[0] = camPos[0];
+        s_fineCam[1] = camPos[1];
+        UpdateFine(s_fineStale || !s_fine.built || !s_fineOn || std::abs(fr - s_fine.r0) > kFineRecentre || std::abs(fc - s_fine.c0) > kFineRecentre, fade, now);
     } else {
         s_fineOn = false;
     }
@@ -540,7 +624,10 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
     return true;
 }
 
-bool Fine(CGxTex*& tex, float row[4]) {
+bool Fine(CGxTex*& tex, float row[4], CGxTex*& from, float fromRow[4]) {
+    from = nullptr;
+    std::memset(fromRow, 0, 4 * sizeof(float));
+    fromRow[3] = 1.0f;
     if (!s_fineOn || !FineWanted() || !s_fine.tex) {
         tex = nullptr;
         std::memset(row, 0, 4 * sizeof(float));
@@ -548,6 +635,11 @@ bool Fine(CGxTex*& tex, float row[4]) {
     }
     tex = s_fine.tex;
     Row(s_fine, row, 1.0f / kFineBlendUv);
+    if (s_fine.fading && s_finePrev) {
+        from = s_finePrev;
+        std::memcpy(fromRow, s_finePrevRow, 3 * sizeof(float));
+        fromRow[3] = std::min(static_cast<float>(OsGetAsyncTimeMs() - s_fine.fadeStart) / kFadeMs, 1.0f);
+    }
     return true;
 }
 
@@ -571,7 +663,7 @@ float Visibility(const float pos[3], const float toward[3]) {
         // The fine level's heights (as the mask's texture) inside its window, the WDL beyond.
         const float fr = kFineOrigin - x / kFineCell - s_fine.r0, fc = kFineOrigin - y / kFineCell - s_fine.c0;
         const bool inFine = fine && fr >= 0.0f && fc >= 0.0f && fr < kFineSize && fc < kFineSize;
-        const float land = inFine ? FineHeightAt(fr + s_fine.r0, fc + s_fine.c0) : HeightAt(kGridOrigin - x / kCell, kGridOrigin - y / kCell);
+        const float land = inFine ? FineHeightAt(s_fineLand.data(), s_fine.r0, s_fine.c0, fr + s_fine.r0, fc + s_fine.c0) : HeightAt(kGridOrigin - x / kCell, kGridOrigin - y / kCell);
         if (land > z + 2.0f) {
             return 0.0f;
         }
@@ -581,8 +673,20 @@ float Visibility(const float pos[3], const float toward[3]) {
 }
 
 void Release() {
+    // shadow audit M1: no raster left running into the CRT teardown (RendererShutdown calls this before it)
+    if (s_treeJob.valid()) {
+        s_treeJob.wait();
+    }
+    if (s_fineJob.valid()) {
+        s_fineJob.wait();
+    }
     ReleaseLevel(s_coarse);
     ReleaseLevel(s_fine);
+    if (s_finePrev) {
+        GxTexDestroy(s_finePrev);
+        s_finePrev = nullptr;
+    }
+    s_fine.fading = false;
     s_fineOn = false;
 }
 

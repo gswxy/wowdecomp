@@ -25,7 +25,9 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
 
 // shadowMaskFine: the nested ADT level Update built (4.2 yd texels, +-1067 yd; same lit-height texels), for the shadow
 // mask. row = (u0, v0, k, 1 / blend uv): the mask fades it into the coarse level near its edge. False (row 0): off.
-bool Fine(CGxTex*& tex, float row[4]);
+// from / fromRow = (u0, v0, k, w): the previous build's texture and window while a rebuild fades in (w 0 -> 1; w = 1
+// and no texture: none), lerp(from, tex, w) inside the old window.
+bool Fine(CGxTex*& tex, float row[4], CGxTex*& from, float fromRow[4]);
 
 // 0 when the land between pos and the light (toward, unit) blocks it, else 1.
 float Visibility(const float pos[3], const float toward[3]);

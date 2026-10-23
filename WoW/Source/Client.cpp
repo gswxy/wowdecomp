@@ -113,6 +113,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/FriendList.h"
 #include "WoW/Source/WowSysMessageOutput.h"
 #include "WoW/Source/Ui/Radio.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 
 namespace {
 
@@ -1888,6 +1889,7 @@ int32_t CommonMain() {
         BeginCloseGame();
     }
 
+    FarLand::Shutdown();   // FARLAND: not in 12340 (stop + join its bake worker before SFile closes)
     GxTeardownLog("StormDestroy");
     StormDestroy();
     // Not stock: registered after StormDestroy's StormAtExit, so it runs first; StormAtExit's _cexit then runs the

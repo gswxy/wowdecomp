@@ -24,6 +24,9 @@ void BeginPass();
 // tile's slot, or queues the tile's bake. false = draw the stock fog-coloured tile (farLand 0, not baked yet, no ADT).
 bool Apply(const CMapAreaLow* area);
 
+// Before StormDestroy (Client.cpp): stops and joins the bake worker, so it never reads SFile after the archives close.
+void Shutdown();
+
 } // namespace FarLand
 
 #endif

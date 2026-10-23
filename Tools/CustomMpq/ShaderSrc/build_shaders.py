@@ -87,8 +87,8 @@ SHADERS = {
     'SoftParticle1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 1}),
     # Cata ProcMagma lava/slime over the stock vsLiquidMagma (backlog #10, liquidProcMagma)
     'LiquidProcMagma': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 2, 3), 0, 'LiquidProcMagma', {}),
-    # shadowMask (Legion survey 2.7): the land's sun shadow over the opaque world, a multiply; s5/s6 cascades, s7 land
-    'VFogShadowMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9), 0, 'VFogShadowMask', {}),
+    # shadowMask (Legion survey 2.7): the land's sun shadow over the opaque world, a multiply; s5/s6 cascades, s7 land, s10/s11 its fine level
+    'VFogShadowMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
     # Legion lights (lightMode, docs/LEGION_PORT.md): the frame's M2 point lights on the surfaces, colour += colour * light
     'LegionLights': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4), 0, 'LegionLights', {}),
     # Legion FFX post (docs/LEGION_PORT.md): colour shift only, FXAA low + colour shift, FXAA high + colour shift

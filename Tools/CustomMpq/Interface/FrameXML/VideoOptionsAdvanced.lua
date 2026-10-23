@@ -267,6 +267,8 @@ table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", titl
 	{ "lightSkyAmbient", "slider", "Sky ambient", "Shadowed sides take the sky's colour from above and the ground's from below. 0 turns it off (half strength with physically based lighting on). D3D11/Vulkan only.", 0, 1, 0.05 },
 	{ "lightPbr", "check", "Physically based lighting", "Soft, realistic highlights from the sun and dynamic lights, a faint reflection of the sky, and surfaces guessed as metal, skin, stone or wood. D3D11/Vulkan only." },
 	{ "lightRoughnessBias", "slider", "Surface roughness", "Makes every surface rougher (right) or shinier (left) under physically based lighting. D3D11/Vulkan only.", -0.5, 0.5, 0.05 },
+	{ "wmoNormalMaps", "check", "Building relief", "Stone, brick and wood on buildings catch the light with surface relief (normal maps). D3D11/Vulkan only." },
+	{ "wmoNormalStrength", "slider", "Building relief strength", "How deep the stone and wood relief looks. D3D11/Vulkan only.", 0, 2, 0.05 },
 })
 -- Sky and clouds (SkyClouds.cpp, DayNight.cpp).
 table.insert(PAGES, #PAGES, { name = "Sky", parent = "Advanced", title = "Sky & Clouds",

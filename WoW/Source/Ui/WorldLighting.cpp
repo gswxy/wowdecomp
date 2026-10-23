@@ -62,6 +62,8 @@ struct LightingCVars {
     CVar* skyAmbient;
     CVar* pbr;
     CVar* roughnessBias;
+    CVar* wmoNormalMaps;
+    CVar* wmoNormalStrength;
 };
 
 LightingCVars s_cv;
@@ -153,6 +155,7 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
     // lightPbr takes its ambient from the sky: half strength unless lightSkyAmbient says otherwise
     p.m_hemisphere = Positive(s_cv.skyAmbient) > 0.0f ? std::min(Positive(s_cv.skyAmbient), 1.0f) : ((features & GxLighting_Pbr) ? 0.5f : 0.0f);
     p.m_roughnessBias = std::clamp(s_cv.roughnessBias->m_floatValue, -1.0f, 1.0f);
+    p.m_wmoNormal = s_cv.wmoNormalMaps->m_intValue > 0 ? std::min(Positive(s_cv.wmoNormalStrength), 2.0f) : 0.0f;
     p.m_cameraPosition = camera;
     p.m_time = static_cast<float>(OsGetAsyncTimeMs() % 3600000u) * 0.001f;
     p.m_debug = s_cv.debug->m_intValue < 0 ? 0u : static_cast<uint32_t>(s_cv.debug->m_intValue);
@@ -621,6 +624,7 @@ void WriteGpu(const GxLightingParams& p) {
         g.m_flags[3] = p.m_debug;
         Tint(p.m_skyColor, g.m_skyTint);
         Tint(p.m_groundColor, g.m_groundTint);
+        g.m_groundTint[3] = p.m_wmoNormal;   // WMONORMALS
         g.m_skyTint[3] = (features & GxLighting_Hemisphere) ? p.m_hemisphere : 0.0f;
 
         // world up (z) in view space; the time for the flicker
@@ -688,6 +692,8 @@ void WorldLightingRegisterCVars() {
     s_cv.skyAmbient = Reg("lightSkyAmbient", "Ambient tinted by the sky above and the ground below, 0 = off (0.5 under lightPbr) (0-1)", "0");
     s_cv.pbr = Reg("lightPbr", "PBR-lite: GGX specular from the sun and dynamic lights, the sky's reflection, roughness and metalness guessed per surface (D3D11/Vulkan)", "1");
     s_cv.roughnessBias = Reg("lightRoughnessBias", "PBR-lite: added to every surface's roughness, negative = shinier (-1 to 1)", "0");
+    s_cv.wmoNormalMaps = Reg("wmoNormalMaps", "WMO stone and wood relief from the _n normal maps, shader lighting only (D3D11/Vulkan)", "1");
+    s_cv.wmoNormalStrength = Reg("wmoNormalStrength", "WMO normal map strength (0-2)", "1");
     // last: Features() takes a registered hdr to mean they all are
     s_cv.hdr = Reg("hdr", "HDR world target with a tonemap (D3D11; Vulkan tonemaps the 8-bit scene)", "0");
     ConsoleCommandRegister("lightingDump", CCommand_LightingDump, CATEGORY_GRAPHICS, "Prints the dynamic lights gathered next frame and the stock model lights within 30 yd");

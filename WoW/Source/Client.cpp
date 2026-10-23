@@ -1432,6 +1432,13 @@ static void OpenArchives() {
         }
     }
 
+    // Not in the 12340 exe (WMONORMALS): Data\wmonormals.MPQ, the WMO `_n.blp` normal maps
+    // (Tools/WmoNormals). Optional; nothing reads them under D3D9.
+    if (SFile::OpenArchive("Data\\wmonormals.MPQ", priority, 0xC00, &s_archiveHandles[slot])) {
+        slot++;
+        priority++;
+    }
+
     s_numPatchArchives = slot;
     int32_t basePriority = 63;
     s_firstBaseArchive = slot;

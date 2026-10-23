@@ -66,6 +66,7 @@ layout(std140, set = 1, binding = 1) uniform GxLighting {
     vec4 gxUpView;                   // xyz world up in view space, w time in seconds
     vec4 gxLightParams;              // x wrap, y dynamic light intensity, z M2 specular, w WMO specular
     GxLight gxLights[32];
+    vec4 gxArmor;                    // PBR-lite armour: x plate metalness, y plate roughness, z mail metalness, w mail roughness
 };
 
 #define GXK(i) regs.v[i]
@@ -169,6 +170,34 @@ float GxGgx(vec3 n, vec3 v, vec3 l, float a, float f0) {
 // colour, gxMask takes the texture alpha as the specular mask (M2 items and sphere-mapped parts)
 float gxMetal = 0.0;
 float gxMask = 0.0;
+float gxF0 = 0.04;       // the f0 the GGX was taken with
+float gxMetalLum = 0.0;  // 1: metal only on texels bright enough (dark straps, wood and cloth stay dielectric)
+float gxMetalGrey = 0.0; // 1: metal only on grey texels too (iron bands on a painted or wooden doodad, not the paint)
+
+// ARMORMETAL: set in the stock body (shadow_capture): the sun's visibility from the shadow map (1 lit) and the
+// body's first s0 texel (x < 0: none); gxUv0 the M2's texcoord0, for the composite skin's region
+float gxShadow = 1.0;
+vec4 gxTex0 = vec4(-1.0);
+vec2 gxUv0 = vec2(-1.0);
+
+// ARMORMETAL: the armour of the composite body skin texel at uv (GxLighting.h GxLightingMaterial_Body): 0 none, 1 mail,
+// 2 plate, 2 bits per CCharacterComponent section (s_sectionInfoRaw on the 512 x 512 texture; the face has none)
+uint GxSkinArmor(uint bits, vec2 uv) {
+    if (bits == 0u || uv.x < 0.0) {
+        return 0u;
+    }
+    vec2 t = clamp(uv, 0.0, 1.0);
+    uint r;
+    if (t.x < 0.5) {
+        if (t.y >= 0.625) {
+            return 0u;
+        }
+        r = t.y < 0.25 ? 0u : (t.y < 0.5 ? 1u : 2u);
+    } else {
+        r = t.y < 0.25 ? 3u : (t.y < 0.375 ? 4u : (t.y < 0.625 ? 5u : (t.y < 0.875 ? 6u : 7u)));
+    }
+    return (bits >> (2u * r)) & 3u;
+}
 
 // the point lights at view position p (all gxLightFlags.y of them): diffuse returned, specular (power > 0, or GGX
 // when a > 0) in spec
@@ -206,17 +235,28 @@ vec3 GxDynamic(vec3 p, vec3 n, float power, out vec3 spec, float a, float f0) {
     return sum;
 }
 
-// the specular a sphere-mapped M2 (or any PBR-lite surface) adds to the pixel shader's colour
+// the specular a sphere-mapped M2 (or any PBR-lite surface) adds to the pixel shader's colour: gxSpecular the
+// dynamic lights' (their own attenuation), gxSpecSun the sun's (under gxShadow, as the stock shader shadows the sun's
+// diffuse), gxSpecAmb the sky's reflection, never brighter than the ambient diffuse it takes (gxAmbCap = (1 - kd) / kd
+// of the final colour; that colour is already shadowed)
 vec3 gxSpecular = vec3(0.0);
+vec3 gxSpecSun = vec3(0.0);
+vec3 gxSpecAmb = vec3(0.0);
+float gxAmbCap = 0.0;
 
-// gxSpecular at the end of the pixel module: a metal's tinted by the textured colour; under gxMask the texture
-// alpha is the specular mask (unmasked texels keep a quarter, a dielectric's)
+// the specular at the end of the pixel module: a metal's tinted by the texel; under gxMask the texture alpha is the
+// specular mask (unmasked texels keep a quarter, a dielectric's)
 vec3 GxSpecFinal(vec4 o) {
-    float m = mix(1.0, clamp(o.a, 0.0, 1.0), gxMask);
-    vec3 albedo = GxDec(o.rgb);
+    bool tex = gxTex0.x >= 0.0;
+    float m = mix(1.0, clamp(tex ? gxTex0.a : o.a, 0.0, 1.0), gxMask);
+    vec3 albedo = GxDec(tex ? gxTex0.rgb : o.rgb);
     float lum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
     vec3 tint = lum > 0.001 ? min(albedo / lum, vec3(3.0)) : vec3(1.0);
-    return gxSpecular * mix(vec3(1.0), tint, gxMetal * m) * mix(0.25, 1.0, m);
+    float hi = max(albedo.r, max(albedo.g, albedo.b));
+    float sat = (hi - min(albedo.r, min(albedo.g, albedo.b))) / max(hi, 1e-3);
+    float mm = mix(1.0, smoothstep(0.015, 0.06, lum), gxMetalLum) * mix(1.0, 1.0 - smoothstep(0.2, 0.45, sat), gxMetalGrey);
+    vec3 t = mix(vec3(1.0), tint, gxMetal * m * mm) * (mix(0.25, 1.0, m) * mix(min(0.04 / max(gxF0, 0.04), 1.0), 1.0, mm));
+    return (gxSpecSun * gxShadow + gxSpecular) * t + min(gxSpecAmb * t, GxDec(o.rgb) * gxAmbCap);
 }
 
 // WMONORMALS: a MapObj pixel's normal bent by its material's normal map (stage 10, CMapObj::BindNormalMap), the
@@ -303,16 +343,31 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
     float a = 0.0;
     float f0 = 0.04;
     if (pbr) {
-        uint cat = uint(max(regs.misc.y - 0.5, 0.0));
+        // misc.y - 1: the category in bits 0-2, the composite body's section armour above (GxLighting.h)
+        uint code = uint(max(regs.misc.y - 0.5, 0.0));
+        uint cat = code & 7u;
         float metal = 0.0;
+        bool body = cat == 6u;
+        if (body) {
+            uint arm = GxSkinArmor(code >> 3u, gxUv0);
+            cat = arm == 2u ? 5u : (arm == 1u ? 4u : 1u);
+        }
         if (family == GX_SURF_TERRAIN) {
             rough = 0.9;
         } else if (family == GX_SURF_WMO) {
             rough = wmoSpecular ? 0.5 : 0.8;
-        } else if (env) {
-            rough = 0.35; metal = 0.8; gxMask = 1.0;
+        } else if (cat == 5u || cat == 4u) {
+            // ARMORMETAL: plate / mail (lightMetalPlate, lightMetalMail); the body's composite has no specular alpha
+            rough = cat == 5u ? gxArmor.y : gxArmor.w; metal = cat == 5u ? gxArmor.x : gxArmor.z;
+            gxMetalLum = 1.0; gxMask = body ? 0.0 : 1.0;
+        } else if (cat == 3u) {
+            rough = 0.7;    // cloth and leather armour, capes
+        } else if (env && cat != 1u) {
+            // sphere-mapped (the stock shiny layer) doodads and items: metal only on grey, bright texels under the alpha
+            rough = 0.4; metal = 0.6; gxMask = 1.0; gxMetalLum = 1.0; gxMetalGrey = 1.0;
         } else if (cat == 2u) {
-            rough = 0.45; metal = 0.6; gxMask = 1.0;
+            // weapons and other item models: the same per-texel mask (wooden hafts, leather grips stay dull)
+            rough = 0.45; metal = 0.6; gxMask = 1.0; gxMetalLum = 1.0; gxMetalGrey = 1.0;
         } else if (cat == 1u) {
             rough = 0.65;
         } else {
@@ -321,7 +376,9 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         rough = clamp(rough + uintBitsToFloat(gxLightFlags.z), 0.05, 1.0);
         a = rough * rough;
         f0 = mix(0.04, 0.5, metal);
+        gxF0 = f0;
         gxMetal = metal;
+        gxMask = wmoSpecular ? 1.0 : gxMask;   // the stock MapObjSpecular masks its highlight by the texture alpha
         power = 0.0;
     }
 
@@ -342,27 +399,33 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         float specAlbedo = f0 * ab.x + ab.y;
         float up = clamp(dot(reflect(-v, n), gxUpView.xyz) * 0.5 + 0.5, 0.0, 1.0);
         float k = family == GX_SURF_M2 ? gxLightParams.z : gxLightParams.w;
-        pbrSpec = (GxDec(sunCol) * GxGgx(n, v, l, a, f0) + GxDec(amb) * mix(gxGroundTint.rgb, gxSkyTint.rgb, up) * specAlbedo
-                   + spec * gxLightParams.y) * k;
+        gxSpecSun = GxDec(sunCol) * (GxGgx(n, v, l, a, f0) * k);
+        gxSpecAmb = GxDec(amb) * mix(gxGroundTint.rgb, gxSkyTint.rgb, up) * (specAlbedo * k);
+        pbrSpec = spec * (gxLightParams.y * k);
         // energy conservation: what the specular reflects the diffuse gives up
         kd = clamp(1.0 - specAlbedo * k, 0.0, 1.0);
+        gxAmbCap = (1.0 - kd) / max(kd, 0.05);
     }
 
     // lightingDebug 3: the dynamic light alone
     c.rgb = gxLightFlags.w == 3u ? GxEnc(dyn) : GxEnc((GxDec(c.rgb) + GxDec(mat) * dyn) * kd);
 
     if (pbr) {
-        if (wmoSpecular) {
-            c1.rgb = GxEnc(pbrSpec);    // the stock MapObjSpecular pixel shader masks COLOR1 by the texture alpha
-        } else {
-            gxSpecular = pbrSpec;
+        gxSpecular = pbrSpec;
+        if (family == GX_SURF_TERRAIN) {
+            // the stock terrain shader masks COLOR1 by the layer's alpha, shadows it (shadow map and baked MCSH) and fogs it
+            c1.rgb = GxEnc(gxSpecSun);
+            gxSpecSun = vec3(0.0);
+        } else if (wmoSpecular) {
+            c1.rgb = vec3(0.0);         // the highlight goes through gxSpecSun (shadowed) instead
         }
     } else if (power > 0.0) {
         if (wmoSpecular) {
             c1.rgb = GxEnc(GxDec(c1.rgb) + spec * (gxLightParams.y * gxLightParams.w));
         } else {
             vec3 h = normalize(normalize(-p) - GXK(12).xyz);
-            gxSpecular = (GxDec(GXK(10).rgb) * pow(clamp(dot(n, h), 0.0, 1.0), power) + spec * gxLightParams.y) * gxLightParams.z;
+            gxSpecSun = GxDec(GXK(10).rgb) * (pow(clamp(dot(n, h), 0.0, 1.0), power) * gxLightParams.z);
+            gxSpecular = spec * (gxLightParams.y * gxLightParams.z);
         }
     }
 
@@ -370,7 +433,8 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
 }
 '''
 
-SPEC_ADD = '    oC0.rgb = any(greaterThan(gxSpecular, vec3(0.0))) ? GxEnc(GxDec(oC0.rgb) + GxSpecFinal(oC0)) : oC0.rgb;'
+SPEC_ADD = ('    oC0.rgb = any(greaterThan(gxSpecular + gxSpecSun + gxSpecAmb, vec3(0.0))) ? GxEnc(GxDec(oC0.rgb) + GxSpecFinal(oC0))'
+            ' : oC0.rgb;')
 
 
 def surface_outputs(em):
@@ -500,8 +564,9 @@ WMO_NORMAL_SLOT = 10
 
 
 def pixel_colors(em):
-    """His Writer::LitPixel: the COLOR0 / COLOR1 input registers of a lit pixel record (rgb read), and the TEXCOORD0
-    input of a MapObj one (its normal map's uv, WMONORMALS; None otherwise), or None."""
+    """His Writer::LitPixel: the COLOR0 / COLOR1 input registers of a lit pixel record (rgb read), the TEXCOORD0
+    input of a MapObj one (its normal map's uv, WMONORMALS; None otherwise) and the TEXCOORD0 input (ARMORMETAL: the
+    composite skin's uv; None without), or None."""
     if em.vs or em.families != {FAMILY_LITPIXEL}:
         return None
     c = {}
@@ -512,10 +577,43 @@ def pixel_colors(em):
             c.setdefault(sem, nm)
     names = getattr(em.rec, 'names', None) or []
     wmo = bool(names) and all(n.lower().startswith('mapobj') for n in names) and WMO_NORMAL_SLOT not in em.samplers
-    return (c['color0'], c.get('color1'), c.get('texcoord0') if wmo else None) if 'color0' in c else None
+    return (c['color0'], c.get('color1'), c.get('texcoord0') if wmo else None, c.get('texcoord0')) if 'color0' in c else None
 
 
-def pixel_splice(c0, c1, uv=None):
+# ARMORMETAL (shadow_capture): the stock body's shadow factor multiplying the lit COLOR0 (M2 and WMO: `rA.xyz = rS.www *
+# v0.xyz`), the mad that made it from the shadow map's visibility (`rS.w = rV.x * c14.x + c14.y`), and the first
+# s0 sample (the albedo)
+import re as _re
+_GLSL = dict(anchor=r'(r\d+)\.([xyzw])\2\2 \* {c0}\.xyz\b', mad=r'^\s*{r}\.{c} = (r\d+\.[xyzw]) \* \S+ \+ \S+;',
+             tex=r'^\s*(r\d+) = texture\(s0, ', set='    gx{0} = {1};')
+
+
+def shadow_capture(body, c0, d=_GLSL):
+    """The body with gxShadow (the sun's visibility, 1 lit) set before the stock shader shadows the lit colour, and
+    gxTex0 after its first s0 sample. Terrain shadows its texel instead and needs neither (its COLOR1 is shadowed)."""
+    body = list(body)
+    for i, ln in enumerate(body):
+        m = _re.match(d['tex'], ln)
+        if m:
+            body.insert(i + 1, d['set'].format('Tex0', m.group(1)))
+            break
+    pa = _re.compile(d['anchor'].format(c0=_re.escape(c0)))
+    for i, ln in enumerate(body):
+        m = pa.search(ln)
+        if not m:
+            continue
+        r, c = m.group(1), m.group(2)
+        for j in range(i - 1, max(i - 4, -1), -1):
+            mm = _re.match(d['mad'].format(r=r, c=c), body[j])
+            if mm:
+                body.insert(j, d['set'].format('Shadow', mm.group(1)))
+                return body
+        body.insert(i, d['set'].format('Shadow', 'clamp(%s.%s, 0.0, 1.0)' % (r, c)))
+        return body
+    return body
+
+
+def pixel_splice(c0, c1, uv=None, uv0=None):
     """The lines after the pixel module's prologue: COLOR0 (and COLOR1) lit per pixel; the face normal, and a
     MapObj module's normal-map frame (uv: its TEXCOORD0 input), are taken here, outside any branch."""
     s = ['    // the colour lit per pixel (bls/lighting.py)',
@@ -538,5 +636,7 @@ def pixel_splice(c0, c1, uv=None):
               '        }']
     s += ['        vec4 gxC1 = %s;' % (c1 or 'vec4(0.0)'),
           '        %s = GxLightPixel(%s, gxC1, gxFlatN, gxNMap);' % (c0, c0)]
+    if uv0:
+        s.insert(-1, '        gxUv0 = %s.xy;' % uv0)
     s += (['        %s = gxC1;' % c1] if c1 else []) + ['    }', '']
     return s

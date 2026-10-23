@@ -5,6 +5,8 @@
 #include <emmintrin.h>
 #include <new>
 #include <typeinfo>
+#include <array>
+#include <unordered_map>
 #if defined(_MSC_VER)
 #include <malloc.h>
 #else
@@ -44,6 +46,8 @@
 #include "WoW/Source/DB/Rec/CreatureModelDataRec.h"
 #include "WoW/Source/DB/Rec/HelmetGeosetVisDataRec.h"
 #include "WoW/Source/DB/Rec/ItemDisplayInfoRec.h"
+#include "WoW/Source/DB/Rec/ItemRec.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "WoW/Source/DB/Rec/ItemVisualEffectsRec.h"
 #include "WoW/Source/DB/Rec/ItemVisualsRec.h"
 #include "WoW/Source/DB/Rec/ParticleColorRec.h"
@@ -159,6 +163,70 @@ CCharacterComponent* CCharacterComponent::m_activePlayerComponent;
 
 // STATIC: 0x00B6B880
 static uint32_t* s_componentHeap;
+
+// CUSTOM (ARMORMETAL): the PBR-lite category (GxLighting.h) of an item display: the Item.dbc subclass of the class 4
+// (armour) items using it, the most common one (ties to the heavier): Cloth for misc/cloth/leather, Mail, Plate; 0 for
+// a display no armour uses (weapons, creature-only displays). One map for players and NPCs alike, whose
+// CreatureDisplayInfoExtra gives display ids only. Built on first use, once Item.dbc has rows.
+static uint32_t PbrArmorCategory(uint32_t displayId) {
+    static std::unordered_map<uint32_t, uint8_t> s_category;
+    static bool s_built;
+
+    if (!s_built && g_itemDB.m_numRecords > 0) {
+        s_built = true;
+        std::unordered_map<uint32_t, std::array<uint16_t, 5>> counts;
+
+        for (int32_t i = 0; i < g_itemDB.m_numRecords; i++) {
+            const ItemRec& rec = g_itemDB.m_records[i];
+
+            if (rec.m_classID == 4 && rec.m_subclassID >= 0 && rec.m_subclassID <= 4 && rec.m_displayInfoID > 0) {
+                counts[static_cast<uint32_t>(rec.m_displayInfoID)][rec.m_subclassID]++;
+            }
+        }
+
+        for (const auto& [id, c] : counts) {
+            int32_t best = 0;
+
+            for (int32_t k = 1; k <= 4; k++) {
+                best = c[k] >= c[best] ? k : best;
+            }
+
+            s_category[id] = static_cast<uint8_t>(best == 4 ? GxLightingMaterial_Plate : (best == 3 ? GxLightingMaterial_Mail : GxLightingMaterial_Cloth));
+        }
+    }
+
+    auto it = s_category.find(displayId);
+    return it == s_category.end() ? 0u : it->second;
+}
+
+// CUSTOM (ARMORMETAL): the body model's composite sections' armour for the lit shaders (CM2Model::m_pbrArmor bits
+// 8..23, 2 bits per section: 0 none, 1 mail, 2 plate), from the topmost item layer of each section whose display is
+// known armour (a tabard or shirt on top keeps its cloth; skin with no item none). Called whenever the sections are
+// composited.
+static void PbrArmorSections(CCharacterComponent* component) {
+    CM2Model* model = component->m_data.m_model;
+
+    if (!model) {
+        return;
+    }
+
+    uint32_t bits = 0;
+
+    for (int32_t section = 0; section <= SECTION_FOOT; section++) {
+        const CharacterSection& data = component->m_section[section];
+
+        for (int32_t layer = 6; layer >= 0; layer--) {
+            uint32_t category = (data.m_layerMask & (1u << layer)) && data.m_layerItemDisplayId[layer] ? PbrArmorCategory(data.m_layerItemDisplayId[layer]) : 0u;
+
+            if (category) {
+                bits |= (category == GxLightingMaterial_Plate ? 2u : (category == GxLightingMaterial_Mail ? 1u : 0u)) << (2 * section);
+                break;
+            }
+        }
+    }
+
+    model->m_pbrArmor = (model->m_pbrArmor & 0xFFu) | (bits << 8);
+}
 
 // STATIC: 0x00B6B884
 int32_t CCharacterComponent::s_bInRenderPrep;
@@ -2060,6 +2128,7 @@ void CCharacterComponent::AddLink(CM2Model* parent, GEOCOMPONENTLINKS link, cons
 
     model->ReplaceTexture(M2TEX_OBJECT_SKIN, texture);
     HandleClose(reinterpret_cast<HOBJECT>(texture));
+    model->m_pbrArmor = displayRec ? PbrArmorCategory(displayRec->m_id) : 0u;   // CUSTOM (ARMORMETAL): helm, shoulders
 
     if (itemVisual > 0) {
         CCharacterComponent::ComponentUtilAddItemVisual(model, itemVisual);
@@ -3618,6 +3687,8 @@ void CCharacterComponent::RenderPrepAll() {
         (this->*CCharacterComponent::m_prepFunc[section])();
     }
 
+    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
+
     if (this->m_gxTexFormat == GxTex_Dxt1) {
         ComputeMipLevels(CCharacterComponent::s_textureBuffer, s_compressedTextureBuffer);
     }
@@ -5104,6 +5175,7 @@ void CCharacterComponent::RenderPrepSections() {
     }
 
     this->PrepSections();
+    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
     this->m_flags &= ~0x1;
     this->m_dirtySections = 0;
     this->DestroyRenderTextures();
@@ -5216,6 +5288,7 @@ int32_t CCharacterComponent::ThreadInitialize() {
 // VERIFY: 672afabf manual
 // OFFSET: 0x004F1790
 void CCharacterComponent::CreateComponentRequest() {
+    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
     this->m_request = CCharacterComponent::AllocComponentRequest();
     this->m_request->m_format = this->m_gxTexFormat;
 

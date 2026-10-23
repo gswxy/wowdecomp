@@ -3901,6 +3901,7 @@ CM2Model::CM2Model() {
     this->m_hitTestNext = nullptr;
     this->m_hitTestOwner = nullptr;
     this->m_hitTestGroup = 0;
+    this->m_pbrArmor = 0;
 
     if (!CM2Model::s_transformVertices[0]) {
         CM2Model::s_transformVertices[0] = CM2Model::TransformVertices_cpp;

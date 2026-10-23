@@ -3967,12 +3967,12 @@ void CMapObj::RenderGroupCollidable(CMapObjGroup* group, uint32_t index) {
     CMapObj::SetRenderModeLight();
     GxRsSet(GxRs_VertexShader, 0);
     GxRsSet(GxRs_PixelShader, 0);
-    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_PolygonFill, 1);
+    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_PolygonFill, Gx_Enable);
     GxRsSet(GxRs_BlendingMode, 0);
     GxRsSet(GxRs_MatDiffuse, static_cast<int32_t>(0x80CCCCCC));
     GxRsSet(GxRs_DepthWrite, 1);
     CMapObj::RenderGroupCollidableFaces(group);
-    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_PolygonFill, 0);
+    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_PolygonFill, Gx_Disable);
     GxRsSet(GxRs_BlendingMode, 2);
     GxRsSet(GxRs_MatDiffuse, static_cast<int32_t>(0x80111111));
     GxRsSet(GxRs_DepthWrite, 0);

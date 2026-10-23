@@ -1269,7 +1269,7 @@ void ClientInitializeGame(uint32_t mapId, C3Vector position) {
         SetClientInitialized(0);
     }
 
-    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_Fog, 1);
+    g_theGxDevicePtr->MasterEnableSet(GxMasterEnable_Fog, Gx_Enable);
 
     if (World::s_weather) {
         World::s_weather->Reset();

@@ -1100,7 +1100,7 @@ void RenderPortraitTexture(CSimpleTexture* texture, CGUnit_C* unit) {
     GxXformProjection(savedProjection);
     GxXformView(savedView);
     int32_t fogEnabled = GxMasterEnable(GxMasterEnable_Fog);
-    GxMasterEnableSet(GxMasterEnable_Fog, 0);
+    GxMasterEnableSet(GxMasterEnable_Fog, Gx_Disable);
 
     static C44Matrix s_identity;
 

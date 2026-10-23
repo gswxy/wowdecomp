@@ -5,7 +5,7 @@
 //
 // The receivers already shaded with the engine's shadow maps (C = min(unit map, band 0/1/2), as they do) the stock
 // way: lit colour x (1 - k (1 - C)), k = 0.3 (vfog38, shadow audit H1/F1). In the land's shadow (T = 0) the surface
-// should get the ambient alone, so the output is lerp(A / stock, 1, T) per channel, stock = (A + D ndl)(1 - k (1 - C)):
+// should get the ambient alone (or a full cascade shadow, if darker), so the output is lerp(target / stock, 1, T) per channel, stock = (A + D ndl)(1 - k (1 - C)):
 // a tree's shadow inside a mountain's merges into it (A either way) instead of staying at 0.7 of lit. Never above 1.
 // ndl from a normal rebuilt from the depth (the smaller-step neighbour per axis, so silhouettes keep their own side),
 // against the receivers' own light (m_light1 after PickLightBody; the land texture keeps the true sun).
@@ -104,7 +104,11 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
 
     float cascade = ReceiverShadow(p, InterleavedGradientNoise(pixel));
     float3 stock = (cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl) * (1 - cMaskDiffuse.w * (1 - cascade));
-    float3 ratio = lerp(saturate(cMaskAmbient.rgb / max(stock, 1.0 / 255)), 1, land);
+    // Shadows combine as min: in the land's shadow the target is the darker of the ambient and a full cascade shadow
+    // ((A + D ndl)(1 - k)), so a model's cascade shadow inside the land's shadow (stock < A, which this multiply cannot
+    // lift) lands on the same colour as around it instead of showing through darker.
+    float3 target = min(cMaskAmbient.rgb, (cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl) * (1 - cMaskDiffuse.w));
+    float3 ratio = lerp(saturate(target / max(stock, 1.0 / 255)), 1, land);
     // The stock fog is in the colour when the volumetric fog did not push it out: fogged pixels keep their colour.
     float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
     return float4(lerp(1, saturate(ratio), cMaskLight.w * (1 - fog)), 1);

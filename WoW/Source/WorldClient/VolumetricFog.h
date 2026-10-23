@@ -41,7 +41,7 @@ struct Config {
     int dataMode = 1;               // vfogData: 0 derived only, 1 Classic/Forever data where it covers
     int colorSpace = 1;             // 1 = linear-light scattering (gamma-decoded colours)
     int classicPhase = 0;
-    float sunScatter = 0.2f;
+    float sunScatter = 0.1f;        // vfogSunScatter (coa 0.2; halved 2026-10-24, washed-out sunlit fog)
     float ambient = 0.8f;           // vfogAmbient
     float exposure = 1.0f;
     float classicExposure = 0.85f;
@@ -224,6 +224,7 @@ void OnSolidDone();                         // after the detail doodads, before 
 void OnLiquidDone();                        // after RenderLiquidPass, above-water branch only
 void OnHeatHaze();                          // LEGION refraction: after OnLiquidDone, heat haze over tagged fire emitters
 void OnWorldDone();                         // end of CGWorldFrame::OnWorldRender
+void OnWorldUpscaled();                     // FSR: after g_gxUpscale->EndWorld, the full world viewport set
 void OnWorldRendered();                     // CGWorldFrame::RenderWorld, after OnWorldRender (glow done), before names
 bool GlareDrawn();                          // OnLiquidDone drew DayNight::RenderGlares under the fog: skip the stock call
 bool LiquidDepthWrite();                    // force liquid depth writes while Active()

@@ -756,7 +756,7 @@ void RegisterCVars() {
         return CVar::Register(name, help, 1, value, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     };
     // coa CoAVolFog.ini keys that were constants until vfog13 (defaults as coa, the user's look where VFOG_PORT 8 says).
-    s_cvars.sunScatter = reg("vfogSunScatter", "Volumetric fog in-scattered sun or moon light (coa SunScatter), 0..10", "0.2");
+    s_cvars.sunScatter = reg("vfogSunScatter", "Volumetric fog in-scattered sun or moon light (coa SunScatter; 0.2 before 2026-10-24), 0..10", "0.1");
     s_cvars.exposure = reg("vfogExposure", "Volumetric fog brightness of the derived layers (coa Exposure), 0..10", "1");
     s_cvars.classicExposure = reg("vfogClassicExposure", "Volumetric fog brightness of the authored layers (coa ClassicExposure, 1 = as authored), 0..10", "0.85");
     s_cvars.classicPhase = reg("vfogClassicPhase", "Volumetric fog authored sun scattering: 0 = phase peaks at 1, 1 = energy-normalised (coa ClassicPhase)", "0");
@@ -1203,6 +1203,18 @@ void OnWorldDone() {
     s_armed = false;
     s_glareDrawn = false;
     RestoreStockFog();
+}
+
+// FSR: OnWorldDone armed the grade and the post at the render size (the top-left of the world viewport); they draw in
+// OnWorldRendered, over the upscaled world, so they take the full world viewport here (else a seam at the render
+// width and height).
+void OnWorldUpscaled() {
+    if (s_grade.pending) {
+        s_grade.world = LiveWorldViewport();
+    }
+    if (s_post.pending) {
+        s_post.world = LiveWorldViewport();
+    }
 }
 
 void OnWorldRendered() {

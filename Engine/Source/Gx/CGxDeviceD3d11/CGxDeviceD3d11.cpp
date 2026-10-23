@@ -13,6 +13,7 @@
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDeviceD3d11/FfShaders.h"
 #include "Engine/Source/Gx/CGxDeviceD3d11/D3d11Lighting.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "Engine/Source/Gx/Blit.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxPool.h"
@@ -2683,7 +2684,8 @@ void CGxDeviceD3d11::IStateSyncDeviceConstants(bool ffVs) {
     dev[16 * 4] = alphaRef > 0 ? alphaRef * (1.0f / 255.0f) : 0.0f;
     // LIGHTING: .y 1 = the bound VS writes the lit surface (gxN/gxP/gxM/gxF) the pixel shader may relight with
     CGxShader* vs = static_cast<CGxShader*>(this->m_appRenderStates[GxRs_VertexShader].m_value.m_data.p);
-    dev[16 * 4 + 1] = !ffVs && vs->m_litSurface ? 1.0f : 0.0f;
+    // (1 + the PBR-lite material category, GxLighting.h)
+    dev[16 * 4 + 1] = !ffVs && vs->m_litSurface ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
 
     uint32_t mask = this->m_appRenderStates[GxRs_ClipPlaneMask].m_value.m_data.u[0] & 0x3F;
 

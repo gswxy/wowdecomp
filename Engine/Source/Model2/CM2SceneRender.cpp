@@ -583,16 +583,25 @@ void CM2SceneRender::DrawBatch() {
     element->m_effect->SetCurrent();
 
     // CUSTOM (PBR-lite, GxLighting.h): the batch's material category from its first texture's type: skin, hair and
-    // creature skins medium; item textures (armour, cape, blade, handle) and the models attached to another metal-ish
+    // creature skins medium; item textures (blade, handle) and the models attached to another metal on grey texels.
+    // ARMORMETAL: an attached armour piece takes its item's category (CCharacterComponent::AddLink), the composite
+    // body skin its sections' armour, a character's own object skin (the cape) is cloth
     g_gxLightingMaterial = GxLightingMaterial_Generic;
 
     if (this->m_curBatch->m_textureCount) {
         uint32_t combo = this->m_data->m_textureCombos[this->m_curBatch->m_textureComboIndex];
         uint32_t type = combo < this->m_data->m_textures.m_count ? this->m_data->m_textures[combo].m_type : 0;
+        uint32_t armor = this->m_curModel->m_pbrArmor;
+        CM2Model* parent = this->m_curModel->m_attachParent;
 
-        if (type == 2 || type == 3 || type == 4 || (type == 0 && this->m_curModel->m_attachParent)) {
-            g_gxLightingMaterial = GxLightingMaterial_Item;
-        } else if (type == 1 || (type >= 6 && type <= 8) || (type >= 10 && type <= 13)) {
+        if (type == 1) {
+            uint32_t sections = GX_PBR_ARMOR_SECTIONS(armor);
+            g_gxLightingMaterial = sections ? GxLightingMaterial_Body | (sections << 3) : GxLightingMaterial_Skin;
+        } else if (type == 2 && !parent) {
+            g_gxLightingMaterial = GxLightingMaterial_Cloth;
+        } else if (type == 2 || type == 3 || type == 4 || (type == 0 && parent)) {
+            g_gxLightingMaterial = (armor & 7u) ? (armor & 7u) : GxLightingMaterial_Item;
+        } else if ((type >= 6 && type <= 8) || (type >= 10 && type <= 13)) {
             g_gxLightingMaterial = GxLightingMaterial_Skin;
         }
     }
@@ -674,6 +683,7 @@ void CM2SceneRender::DrawBatchProj() {
     M2Element* element = this->m_curElement;
     this->m_curBatch = element->m_batch;
     this->m_curSkinSection = element->m_skinSection;
+    g_gxLightingMaterial = GxLightingMaterial_Generic;   // CUSTOM (PBR-lite): not the last DrawBatch's category
 
     CAaBox box;
     box.b.x = 0.0f;

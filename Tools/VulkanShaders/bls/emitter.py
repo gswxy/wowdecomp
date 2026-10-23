@@ -787,6 +787,7 @@ class Emitter(object):
         P('')
         if self.litpix:
             L.extend(lighting.pixel_splice(*self.litpix))
+            body = lighting.shadow_capture(body, self.litpix[0])   # ARMORMETAL: gxShadow, gxTex0
         L.extend(body)
         P('')
         if self.surface:

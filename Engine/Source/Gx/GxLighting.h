@@ -33,8 +33,18 @@ enum EGxLightingFeature : uint32_t {
 enum EGxLightingMaterial : uint32_t {
     GxLightingMaterial_Generic = 0,   // a doodad: wood, stone, plants (rough)
     GxLightingMaterial_Skin = 1,      // character and creature bodies, hair (medium)
-    GxLightingMaterial_Item = 2,      // item models and textures: armour, weapons (metal-ish, smoother)
+    GxLightingMaterial_Item = 2,      // item models and textures: weapons, unknown items (metal on grey, bright texels)
+    // ARMORMETAL: equipped armour by its Item.dbc subclass (CCharacterComponent: attachments by their item, the
+    // composite body skin by the item that painted each section)
+    GxLightingMaterial_Cloth = 3,     // cloth and leather armour, capes (non-metal)
+    GxLightingMaterial_Mail = 4,      // lightMetalMail
+    GxLightingMaterial_Plate = 5,     // lightMetalPlate
+    GxLightingMaterial_Body = 6,      // the composite body skin: bits 3.. carry 2 bits per COMPONENT_SECTIONS section
+                                      // (0..7: 0 none, 1 mail, 2 plate); the shader picks the section from the uv
 };
+
+// ARMORMETAL: CM2Model::m_pbrArmor = an attached item's category (bits 0-2, 0 none) | the body's section bits << 8
+#define GX_PBR_ARMOR_SECTIONS(armor) (((armor) >> 8) & 0xFFFFu)
 
 extern uint32_t g_gxLightingMaterial;
 
@@ -62,6 +72,8 @@ struct GxLightingParams {
     C3Vector m_groundColor;
     float m_hemisphere = 0.0f;
     float m_roughnessBias = 0.0f;    // PBR-lite: added to every surface's roughness
+    float m_metalPlate = 0.0f;       // ARMORMETAL: plate armour's metalness (lightMetalPlate)
+    float m_metalMail = 0.0f;        // mail's (lightMetalMail)
 
     // fog, as the engine has it this frame (DayNight)
     C3Vector m_fogColor;
@@ -126,6 +138,7 @@ struct GxLightingGpu {
     float m_upView[4];        // xyz world up in view space, w time in seconds (flicker)
     float m_lightParams[4];   // x wrap, y dynamic intensity, z M2 specular, w WMO specular
     GxLightingGpuLight m_lights[kGxLightingMaxLights];
+    float m_armor[4];         // ARMORMETAL: x plate metalness, y plate roughness, z mail metalness, w mail roughness
 };
 
 extern GxLightingGpu g_gxLightingGpu;

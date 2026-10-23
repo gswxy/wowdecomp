@@ -255,7 +255,7 @@ vec3 GxSpecFinal(vec4 o) {
     float hi = max(albedo.r, max(albedo.g, albedo.b));
     float sat = (hi - min(albedo.r, min(albedo.g, albedo.b))) / max(hi, 1e-3);
     float mm = mix(1.0, smoothstep(0.015, 0.06, lum), gxMetalLum) * mix(1.0, 1.0 - smoothstep(0.2, 0.45, sat), gxMetalGrey);
-    vec3 t = mix(vec3(1.0), tint, gxMetal * m * mm) * (mix(0.25, 1.0, m) * mix(min(0.04 / max(gxF0, 0.04), 1.0), 1.0, mm));
+    vec3 t = mix(vec3(1.0), tint, gxMetal * m * mm) * (mix(0.25, 1.0, m) * mix(min(0.02 / max(gxF0, 0.04), 1.0), 1.0, mm));
     return (gxSpecSun * gxShadow + gxSpecular) * t + min(gxSpecAmb * t, GxDec(o.rgb) * gxAmbCap);
 }
 
@@ -339,6 +339,8 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
     // PBR-lite: a roughness and metalness guessed per draw category (no PBR maps); misc.y - 1 is the engine's
     // category (GxLighting.h GxLightingMaterial)
     bool pbr = (features & GX_LIGHT_PBR) != 0u && valid;
+    bool specOn = true;
+    float damp = 1.0;
     float rough = 1.0;
     float a = 0.0;
     float f0 = 0.04;
@@ -375,6 +377,9 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         }
         rough = clamp(rough + uintBitsToFloat(gxLightFlags.z), 0.05, 1.0);
         a = rough * rough;
+        // the GGX only under lightSpecular; a rough non-metal's damped toward Lambert ((1 - rough)^2 * 2: 0.85 -> 0.045)
+        specOn = (features & GX_LIGHT_SPECULAR) != 0u;
+        damp = metal > 0.0 || wmoSpecular ? 1.0 : min(2.0 * (1.0 - rough) * (1.0 - rough), 1.0);
         f0 = mix(0.04, 0.5, metal);
         gxF0 = f0;
         gxMetal = metal;
@@ -383,7 +388,7 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
     }
 
     vec3 spec;
-    vec3 dyn = GxDynamic(p, n, power, spec, a, f0) * gxLightParams.y;
+    vec3 dyn = GxDynamic(p, n, power, spec, specOn ? a : 0.0, f0) * gxLightParams.y;
     float kd = 1.0;
     vec3 pbrSpec = vec3(0.0);
 
@@ -399,9 +404,9 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         float specAlbedo = f0 * ab.x + ab.y;
         float up = clamp(dot(reflect(-v, n), gxUpView.xyz) * 0.5 + 0.5, 0.0, 1.0);
         float k = family == GX_SURF_M2 ? gxLightParams.z : gxLightParams.w;
-        gxSpecSun = GxDec(sunCol) * (GxGgx(n, v, l, a, f0) * k);
+        gxSpecSun = specOn ? GxDec(sunCol) * (GxGgx(n, v, l, a, f0) * k * damp) : vec3(0.0);
         gxSpecAmb = GxDec(amb) * mix(gxGroundTint.rgb, gxSkyTint.rgb, up) * (specAlbedo * k);
-        pbrSpec = spec * (gxLightParams.y * k);
+        pbrSpec = spec * (gxLightParams.y * k * damp);
         // energy conservation: what the specular reflects the diffuse gives up
         kd = clamp(1.0 - specAlbedo * k, 0.0, 1.0);
         gxAmbCap = (1.0 - kd) / max(kd, 0.05);

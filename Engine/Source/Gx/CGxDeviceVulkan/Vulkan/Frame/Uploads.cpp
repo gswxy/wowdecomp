@@ -26,6 +26,7 @@ namespace gxvk::vk::frame::detail
         }
         slot.chunkUsed = 0;
         slot.cursor    = 0;
+        slot.staged    = 0;
     }
 
     /// Before the submit: the host writes of this frame's staging made visible to the device, the
@@ -85,6 +86,13 @@ namespace gxvk::vk::frame
         return s.slots[s.fi].pre;
     }
 
+    void ThrottleStaging()
+    {
+        // An active query pins the frame (Flush would end its pass); the ring's cap still holds.
+        if (!s.open || s.queryActive || s.slots[s.fi].staged < kStagingBudget) return;
+        Flush();
+    }
+
     bool Stage(VkDeviceSize bytes, VkBuffer& buffer, VkDeviceSize& offset, void*& mapped)
     {
         if (bytes == 0 || !EnsureFrame()) return false;
@@ -107,6 +115,7 @@ namespace gxvk::vk::frame
                         mapped      = static_cast<uint8_t*>(c.block.mapped) + at;
                         slot.cursor = at + bytes;
                         s.stats.stagedBytes += bytes;
+                        slot.staged += bytes;
                         return true;
                     }
                 }
@@ -158,6 +167,7 @@ namespace gxvk::vk::frame
         offset = 0;
         mapped = d.block.mapped;
         s.stats.stagedBytes += bytes;
+        slot.staged += bytes;
         ++s.stats.stagedDedicated;
         return true;
     }

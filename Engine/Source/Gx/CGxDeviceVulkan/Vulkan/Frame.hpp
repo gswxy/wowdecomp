@@ -171,6 +171,12 @@ namespace gxvk::vk::frame
     /// on the same targets, their contents kept): what a blocking query read needs.
     void Flush();
 
+    /// Bounds the staging ring: once the open frame has staged kStagingBudget bytes, it is
+    /// submitted (Flush) so the next upload goes into the other slot's ring, recycled after its
+    /// fence. Without it a load (Dalaran) staged everything into one frame: ~1 GiB of 8 MiB blocks.
+    /// Call between uploads only, never with a staged batch not yet recorded.
+    void ThrottleStaging();
+
     /// The render pass the current target's draws are recorded in; pipelines are built against it.
     VkRenderPass RenderPass();
 

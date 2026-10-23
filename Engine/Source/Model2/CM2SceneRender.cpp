@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include "Engine/Source/Model2/CM2SceneRender.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/GxParticleQuads.h"
@@ -581,6 +582,21 @@ void CM2SceneRender::DrawBatch() {
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
     element->m_effect->SetCurrent();
 
+    // CUSTOM (PBR-lite, GxLighting.h): the batch's material category from its first texture's type: skin, hair and
+    // creature skins medium; item textures (armour, cape, blade, handle) and the models attached to another metal-ish
+    g_gxLightingMaterial = GxLightingMaterial_Generic;
+
+    if (this->m_curBatch->m_textureCount) {
+        uint32_t combo = this->m_data->m_textureCombos[this->m_curBatch->m_textureComboIndex];
+        uint32_t type = combo < this->m_data->m_textures.m_count ? this->m_data->m_textures[combo].m_type : 0;
+
+        if (type == 2 || type == 3 || type == 4 || (type == 0 && this->m_curModel->m_attachParent)) {
+            g_gxLightingMaterial = GxLightingMaterial_Item;
+        } else if (type == 1 || (type >= 6 && type <= 8) || (type >= 10 && type <= 13)) {
+            g_gxLightingMaterial = GxLightingMaterial_Skin;
+        }
+    }
+
     this->SetupLighting();
     this->SetupMaterial();
     this->SetupTextures();
@@ -780,6 +796,8 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
     this->m_curSkinSection = element->m_skinSection;
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
     element->m_effect->SetCurrent();
+
+    g_gxLightingMaterial = GxLightingMaterial_Generic;   // CUSTOM (PBR-lite): a doodad
 
     this->SetupLighting();
     this->SetupMaterial();

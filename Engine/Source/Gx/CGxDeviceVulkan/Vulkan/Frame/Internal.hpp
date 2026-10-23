@@ -57,6 +57,10 @@ namespace gxvk::vk::frame::detail
     /// A ring chunk kept past the frame's need for this many frames is given back.
     constexpr uint32_t kStagingTrimFrames = 600;
 
+    /// Bytes a frame may stage before ThrottleStaging() submits it: the ring stays at about this
+    /// many chunks per slot (plus the one upload that crosses it).
+    constexpr VkDeviceSize kStagingBudget = 64u * 1024u * 1024u;
+
     /// Colour formats a target may have (one pass set each), depth buffers (one per target size),
     /// framebuffers (one per target image, layer and depth buffer) kept at once. Pass sets are
     /// (format, samples): a session that cycles gxMultisample adds up to three scene sets (2x, 4x,
@@ -86,6 +90,7 @@ namespace gxvk::vk::frame::detail
         uint32_t       chunkUsed  = 0;
         VkDeviceSize   cursor     = 0;
         uint32_t       idleFrames = 0;
+        VkDeviceSize   staged     = 0;   ///< bytes Stage() handed out this frame
         memory::Buffer dedicated[kMaxDedicated];
         uint32_t       dedicatedCount = 0;
     };

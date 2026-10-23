@@ -6,6 +6,10 @@
 
 float4 cRayMask : register(c9);
 float4 cRaySource : register(c10);
+// xy = the sun's pixel (world viewport px), z = the disc test radius px, w = 1 test on. 2026-10-24: with the disc behind a
+// mountain, a model or the player, bright sky gaps within the wide falloff fanned out as spotlight rays; the mask now
+// scales by how much of the disc's neighbourhood is open sky (pixels clamped into the viewport when it is off screen).
+float4 cSunDisc : register(c11);
 
 sampler2D sDepth : register(s0);
 sampler2D sSceneBeforeFog : register(s1);
@@ -21,6 +25,17 @@ float4 main(float2 rayUv : TEXCOORD0) : COLOR0
     float sunFalloff = pow(saturate(dot(viewDirection, cRayMask.xyz)), cRayMask.w);
     float3 scene = tex2Dlod(sSceneBeforeFog, float4(rayUv, 0, 0)).rgb;
     float luminance = dot(scene, kLumaWeights);
-    float brightSky = skyMask * sunFalloff * saturate((luminance - cRaySource.y) * kThresholdRampSlope);
+    float discSky = 1;
+    [branch] if (cSunDisc.w > 0)
+    {
+        discSky = 0;
+        [unroll] for (int k = 0; k < 9; k++)
+        {
+            float2 offset = float2(k % 3, k / 3) - 1;
+            float2 tap = clamp(cSunDisc.xy + offset * cSunDisc.z, ViewportOrigin() + 0.5, ViewportLastPixelCentre());
+            discSky += IsSky(SampleDepth(sDepth, tap)) ? 1.0 / 9 : 0;
+        }
+    }
+    float brightSky = skyMask * discSky * discSky * sunFalloff * saturate((luminance - cRaySource.y) * kThresholdRampSlope);
     return float4(scene * brightSky, 1);
 }

@@ -502,11 +502,11 @@ bool CGxDeviceD3d::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t&
     }
 
     switch (param) {
-        case GxQueryParam_Unk0:
+        case GxQueryParam_DataSize:
             data = static_cast<LPDIRECT3DQUERY9>(query->m_apiSpecific)->GetDataSize();
             return true;
 
-        case GxQueryParam_Unk1:
+        case GxQueryParam_ResultAvailable:
             data = static_cast<LPDIRECT3DQUERY9>(query->m_apiSpecific)->GetData(nullptr, 0, 0) == D3D_OK;
             return false;
 

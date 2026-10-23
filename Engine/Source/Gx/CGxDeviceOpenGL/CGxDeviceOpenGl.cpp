@@ -961,7 +961,7 @@ bool CGxDeviceOpenGl::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32
 
     GLenum error = GL_INVALID_OPERATION;
 
-    if (param == 0) {
+    if (param == GxQueryParam_DataSize) {
         GLint bits;
         glGetQueryivARB(s_glQueryTarget[query->m_type], GL_QUERY_COUNTER_BITS_ARB, &bits);
         error = glGetError();
@@ -969,7 +969,7 @@ bool CGxDeviceOpenGl::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32
         if (!error) {
             data = bits / 8;
         }
-    } else if (param == 1) {
+    } else if (param == GxQueryParam_ResultAvailable) {
         GLuint available;
         glGetQueryObjectuivARB(static_cast<GLuint>(reinterpret_cast<uintptr_t>(query->m_apiSpecific)), GL_QUERY_RESULT_AVAILABLE_ARB, &available);
         error = glGetError();

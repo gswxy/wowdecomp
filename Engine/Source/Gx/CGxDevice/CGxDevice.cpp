@@ -1846,7 +1846,7 @@ void CGxDevice::ShaderDestroy(CGxShader*& shader) {
 void CGxDevice::DeviceOverride(EGxOverride override, uint32_t value) {
     CGxDevice::Log("CGxDevice::DeviceOverride(): %d set to %d", override, value);
 
-    if (override == GxOverride_Unk8) {
+    if (override == GxOverride_PointScaleMax) {
         int32_t enable = value > 1;
         this->m_caps.m_pointParameters = enable;
         this->m_caps.m_pointSprite = enable;

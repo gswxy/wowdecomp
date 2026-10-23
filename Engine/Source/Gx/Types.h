@@ -106,14 +106,14 @@ enum EGxBufferBit : uint32_t {
 
 enum EGxOverride {
     GxOverride_PixelShader = 0,
-    GxOverride_Unk1 = 1,
-    GxOverride_Unk2 = 2,
-    GxOverride_Unk3 = 3,
-    GxOverride_Unk4 = 4,
-    GxOverride_Unk5 = 5,
-    GxOverride_Unk6 = 6,
-    GxOverride_Unk7 = 7,
-    GxOverride_Unk8 = 8,
+    GxOverride_VertexBufferObject = 1,
+    GxOverride_StreamVertexBufferObject = 2,
+    GxOverride_StreamIndexBufferObject = 3,
+    GxOverride_StreamVertexBufferBroker = 4,
+    GxOverride_StreamIndexBufferBroker = 5,
+    GxOverride_SphereMapReflection = 6,
+    GxOverride_TexNonPow2 = 7,
+    GxOverride_PointScaleMax = 8,
     GxOverrides_Last = 9,
 };
 

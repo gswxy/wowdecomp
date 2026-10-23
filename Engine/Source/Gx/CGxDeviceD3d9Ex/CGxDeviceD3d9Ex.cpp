@@ -579,7 +579,7 @@ void CGxDeviceD3d9Ex::DeviceOverride(EGxOverride override, uint32_t value) {
 
     if (override == GxOverride_PixelShader) {
         this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
-    } else if (override == GxOverride_Unk7) {
+    } else if (override == GxOverride_TexNonPow2) {
         this->m_caps.m_texNonPow2 = value != 0;
     }
 }

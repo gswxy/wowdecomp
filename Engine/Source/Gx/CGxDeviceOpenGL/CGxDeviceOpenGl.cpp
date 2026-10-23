@@ -533,50 +533,50 @@ void CGxDeviceOpenGl::DeviceOverride(EGxOverride override, uint32_t value) {
     CGxDevice::DeviceOverride(override, value);
 
     switch (override) {
-        case 0:
+        case GxOverride_PixelShader:
             this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
             break;
 
-        case 1:
+        case GxOverride_VertexBufferObject:
             if (!value) {
                 glARBVertexBufferObject = 0;
             }
 
             break;
 
-        case 2:
+        case GxOverride_StreamVertexBufferObject:
             if (!value) {
                 this->m_useVbo[0][2] = 0;
             }
 
             break;
 
-        case 3:
+        case GxOverride_StreamIndexBufferObject:
             if (!value) {
                 this->m_useVbo[1][2] = 0;
             }
 
             break;
 
-        case 4:
+        case GxOverride_StreamVertexBufferBroker:
             if (value) {
                 this->m_useVboBroker[0][2] = 1;
             }
 
             break;
 
-        case 5:
+        case GxOverride_StreamIndexBufferBroker:
             if (value) {
                 this->m_useVboBroker[1][2] = 1;
             }
 
             break;
 
-        case 6:
+        case GxOverride_SphereMapReflection:
             this->m_sphereMapMode = value != 0 ? GL_REFLECTION_MAP_ARB : GL_SPHERE_MAP;
             break;
 
-        case 7:
+        case GxOverride_TexNonPow2:
             this->m_caps.m_texNonPow2 = value != 0;
             break;
 

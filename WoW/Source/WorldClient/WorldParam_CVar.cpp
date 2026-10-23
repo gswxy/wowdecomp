@@ -754,6 +754,10 @@ void CWorldParam::Initialize() {
         FarTrees::s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farTreesShadow", "The far trees (farTrees) cast the sun's shadow: into the shadow cascades, and onto the far land past them: 1 = on (default), 0 = off", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        FarTrees::s_shadow = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // SOFTPARTICLES: not in 12340 (wxl-light Soft.cpp). Blended particles and ribbons fade into the scene behind them.
     CVar::Register("softParticles", "Particles and ribbons fade where they meet the scene behind them", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {

@@ -1,8 +1,10 @@
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <future>
 #include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
@@ -10,6 +12,8 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Os/TimeManager.h"
+#include "Engine/Source/ShaderEffect/ShadowCache.h"
+#include "WoW/Source/WorldClient/FarTrees.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapArea.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
@@ -40,6 +44,13 @@ constexpr uint32_t kFadeMs = 1000;          // vfog38 (audit M2): a rebuild cros
 constexpr uint32_t kFadeStepMs = 33;        // re-upload at most this often while fading
 constexpr float kSnapCos = 0.99f;           // ~8 degrees of turn at once (debugHour, a time jump): no fade
 constexpr float kUnset = -1e30f;            // from: not in the old window
+// farTreesShadow: the far trees as crowns in the land heights, rasterised off the main thread (MakeTrees) on grids
+// centred on the camera with a margin, so the builds only take max(land, crown) per texel.
+constexpr int kTreeRecentre = 16;           // fine texels (67 yd) of drift before a new raster
+constexpr int kTreeMargin = kFineRecentre + 2 * kTreeRecentre;   // the fine window's drift + the raster's
+constexpr int kTreeFine = kFineSize + 2 + 2 * kTreeMargin;
+constexpr int kTreeCoarse = kSize + 2 * (kRecentre + 2);
+constexpr float kForest = 0.5f;             // a coarse cell takes its crowns' top once they cover this much of it
 
 // One nested level (clipmap ring): a square window of lit heights on a grid of `cell` yards, r/c down world x/y.
 struct Level {
@@ -71,6 +82,18 @@ int s_fineChunks;       // loaded ADT chunks over the fine window at its build
 uint32_t s_finePoll;
 bool s_fineOn;          // the fine level is current (Visibility uses it)
 float s_light[3];
+// The trees' rasters (MakeTrees): crown tops on the fine grid, forest tops on the coarse, kNone where there are none.
+struct Trees {
+    const void* wdl = nullptr;
+    uint32_t loads = 0;
+    int fr0 = 0, fc0 = 0, cr0 = 0, cc0 = 0;
+    std::vector<float> fine, coarse;
+};
+Trees s_trees;
+std::future<Trees> s_treeJob;
+uint32_t s_treeGen;             // FarTrees::CanopyGeneration at the last snapshot
+float s_treeCam[2], s_treeNear;
+bool s_builtTrees;              // the shown heights hold a tree raster
 const void* s_wdl;
 uint32_t s_loads;       // g_lowDetailLoads at the build (audit L10: a new WDL can reuse the freed one's address)
 
@@ -308,6 +331,132 @@ void ReleaseLevel(Level& lv) {
     lv.built = false;
 }
 
+// Trees nearer than this (yd, flat) to the camera are left to the shadow cascades (the real models, and
+// FarTrees::DrawShadow's impostors): their reach less the camera's drift between a raster and the fine level's
+// rebuild. Past it a cascade and the lit heights may both shade a spot, which the shadow mask merges, never doubles.
+float TreesNear() {
+    const float reach = CShadowCache::s_shadowMode > SHADOW_MEDIUM ? CShadowCache::s_extShadowBands[2].m_radius : 0.0f;
+    return std::max(reach - kTreeMargin * kFineCell * 1.4142f, 0.0f);
+}
+
+// Worker thread: nothing here touches the world. Fine: every crown (at least its nearest vertex) at the tree's top.
+// Coarse: one 33 yd cell is too coarse for a lone tree, so a cell rises to its crowns' top only where they cover
+// kForest of it (a forest). ponytail: coverage threshold, no partial heights.
+Trees MakeTrees(std::vector<FarTrees::Canopy> trees, float camX, float camY, float near_, const void* wdl, uint32_t loads) {
+    Trees out;
+    out.wdl = wdl;
+    out.loads = loads;
+    out.fr0 = static_cast<int>(std::floor(kFineOrigin - camX / kFineCell)) - kTreeFine / 2;
+    out.fc0 = static_cast<int>(std::floor(kFineOrigin - camY / kFineCell)) - kTreeFine / 2;
+    out.cr0 = static_cast<int>(std::floor(kGridOrigin - camX / kCell)) - kTreeCoarse / 2;
+    out.cc0 = static_cast<int>(std::floor(kGridOrigin - camY / kCell)) - kTreeCoarse / 2;
+    out.fine.assign(kTreeFine * kTreeFine, kNone);
+    out.coarse.assign(kTreeCoarse * kTreeCoarse, 0.0f);
+    std::vector<float> top(kTreeCoarse * kTreeCoarse, kNone);
+    const float near2 = near_ * near_;
+    constexpr int n = kTreeFine;
+    for (const FarTrees::Canopy& t : trees) {
+        const float dx = t.x - camX, dy = t.y - camY;
+        if (dx * dx + dy * dy <= near2) {
+            continue;
+        }
+        const int r = static_cast<int>(std::lround(kGridOrigin - t.x / kCell)) - out.cr0;
+        const int c = static_cast<int>(std::lround(kGridOrigin - t.y / kCell)) - out.cc0;
+        if (r >= 0 && c >= 0 && r < kTreeCoarse && c < kTreeCoarse) {
+            out.coarse[r * kTreeCoarse + c] += 3.1415927f * t.radius * t.radius;
+            top[r * kTreeCoarse + c] = std::max(top[r * kTreeCoarse + c], t.top);
+        }
+        const float fr = kFineOrigin - t.x / kFineCell - out.fr0, fc = kFineOrigin - t.y / kFineCell - out.fc0;
+        const float rr = t.radius / kFineCell;
+        if (fr + rr < 0 || fc + rr < 0 || fr - rr > n - 1 || fc - rr > n - 1) {
+            continue;
+        }
+        const int i0 = std::max(static_cast<int>(std::ceil(fr - rr)), 0), i1 = std::min(static_cast<int>(std::floor(fr + rr)), n - 1);
+        const int j0 = std::max(static_cast<int>(std::ceil(fc - rr)), 0), j1 = std::min(static_cast<int>(std::floor(fc + rr)), n - 1);
+        bool any = false;
+        for (int i = i0; i <= i1; i++) {
+            for (int j = j0; j <= j1; j++) {
+                if ((i - fr) * (i - fr) + (j - fc) * (j - fc) <= rr * rr) {
+                    out.fine[i * n + j] = std::max(out.fine[i * n + j], t.top);
+                    any = true;
+                }
+            }
+        }
+        const int ni = static_cast<int>(std::lround(fr)), nj = static_cast<int>(std::lround(fc));
+        if (!any && ni >= 0 && nj >= 0 && ni < n && nj < n) {
+            out.fine[ni * n + nj] = std::max(out.fine[ni * n + nj], t.top);
+        }
+    }
+    for (size_t i = 0; i < out.coarse.size(); i++) {
+        out.coarse[i] = out.coarse[i] >= kForest * kCell * kCell ? top[i] : kNone;
+    }
+    return out;
+}
+
+bool TreesValid() {
+    return !s_trees.fine.empty() && s_trees.wdl == CMap::s_lowDetail.m_data && s_trees.loads == g_lowDetailLoads;
+}
+
+// Main thread, every Update: takes a finished raster, starts the next when the trees changed or the camera drifted.
+// Its share: the snapshot (FarTrees::Canopies, about 0.2 ms at 30k trees) on the frame a raster starts. True when a
+// raster arrived and the shown heights hold none yet (the first after a map load or farTreesShadow on): build now;
+// later rasters wait for the next build (drift or light turn), so the trees add no builds of their own.
+bool PollTrees(const float camPos[3]) {
+    bool first = false;
+    if (s_treeJob.valid() && s_treeJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        s_trees = s_treeJob.get();
+        first = !s_builtTrees && TreesValid();
+    }
+    if (s_treeJob.valid()) {
+        return false;
+    }
+    const uint32_t gen = FarTrees::CanopyGeneration();
+    const float near_ = TreesNear();
+    const float drift = kTreeRecentre * kFineCell;
+    if (gen == s_treeGen && near_ == s_treeNear && std::fabs(camPos[0] - s_treeCam[0]) <= drift && std::fabs(camPos[1] - s_treeCam[1]) <= drift) {
+        return first;
+    }
+    s_treeGen = gen;
+    s_treeNear = near_;
+    s_treeCam[0] = camPos[0];
+    s_treeCam[1] = camPos[1];
+    if (gen == 0) {     // farTrees or farTreesShadow off: drop the raster, and the trees with the next build
+        s_trees = Trees();
+        return s_builtTrees;
+    }
+    std::vector<FarTrees::Canopy> trees;
+    FarTrees::Canopies(trees);
+    s_treeJob = std::async(std::launch::async, MakeTrees, std::move(trees), camPos[0], camPos[1], near_, CMap::s_lowDetail.m_data, g_lowDetailLoads);
+    return first;
+}
+
+// The coarse land with the forests on it (absolute grid r, c; nearest cell).
+float CoarseLandAt(float r, float c) {
+    const float h = HeightAt(r, c);
+    if (s_trees.coarse.empty()) {
+        return h;
+    }
+    const int ir = static_cast<int>(std::lround(r)) - s_trees.cr0, ic = static_cast<int>(std::lround(c)) - s_trees.cc0;
+    return ir < 0 || ic < 0 || ir >= kTreeCoarse || ic >= kTreeCoarse ? h : std::max(h, s_trees.coarse[ir * kTreeCoarse + ic]);
+}
+
+// The crowns over s_fineLand (FillFineLand's window): one max a texel, about 0.1 ms, on the fine level's builds only.
+void ApplyFineTrees() {
+    if (!TreesValid()) {
+        return;
+    }
+    constexpr int n = kFineSize + 2;
+    const int di = s_fine.r0 - 1 - s_trees.fr0, dj = s_fine.c0 - 1 - s_trees.fc0;
+    const int i0 = std::max(0, -di), i1 = std::min(n, kTreeFine - di), j0 = std::max(0, -dj), j1 = std::min(n, kTreeFine - dj);
+    for (int i = i0; i < i1; i++) {
+        float* land = &s_fineLand[i * n];
+        const float* crown = &s_trees.fine[(i + di) * kTreeFine + dj];
+        for (int j = j0; j < j1; j++) {
+            land[j] = std::max(land[j], crown[j]);
+        }
+    }
+}
+
 }  // namespace
 
 void RegisterCVars() {
@@ -342,7 +491,8 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
     const float turn = toLight[0] * s_light[0] + toLight[1] * s_light[1] + toLight[2] * s_light[2];
     const uint32_t now = OsGetAsyncTimeMs();
     const bool sameMap = s_wdl == CMap::s_lowDetail.m_data && g_lowDetailLoads == s_loads;
-    const bool coarse = !s_coarse.built || !s_coarse.tex || !sameMap || turn < kTurnCos || std::abs(r - s_coarse.r0) > kRecentre || std::abs(c - s_coarse.c0) > kRecentre;
+    const bool trees = PollTrees(camPos);     // farTreesShadow
+    const bool coarse = trees || !s_coarse.built || !s_coarse.tex || !sameMap || turn < kTurnCos || std::abs(r - s_coarse.r0) > kRecentre || std::abs(c - s_coarse.c0) > kRecentre;
     // vfog38 (audit M2): fade from the heights shown now, moved into the new window; a new map, the first build
     // or a big turn snaps. Texels the old window did not cover start at the new heights.
     const bool fade = sameMap && turn >= kSnapCos;
@@ -350,8 +500,12 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
         std::memcpy(s_light, toLight, sizeof(s_light));
         s_wdl = CMap::s_lowDetail.m_data;
         s_loads = g_lowDetailLoads;
+        if (!TreesValid()) {
+            s_trees = Trees();      // another map's
+        }
+        s_builtTrees = !s_trees.fine.empty();
         Rebuild(s_coarse, r, c, fade, now, [&] {
-            Build(s_coarse, toLight, HeightAt, [](float, float) { return kNone; });
+            Build(s_coarse, toLight, CoarseLandAt, [](float, float) { return kNone; });
         });
     }
     if (!Upload(s_coarse, coarse, now, "TerrainSunShadow")) {
@@ -372,6 +526,7 @@ bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float r
         if (fine) {
             Rebuild(s_fine, fr, fc, fade && s_fineOn, now, [&] {
                 FillFineLand();
+                ApplyFineTrees();
                 Build(s_fine, s_light, FineHeightAt, [](float qr, float qc) { return CoarseLitAt(qr / kFinePerCoarse, qc / kFinePerCoarse); });
             });
         }

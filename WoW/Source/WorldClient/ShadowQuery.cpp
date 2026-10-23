@@ -38,6 +38,7 @@
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 #include "WoW/Source/WorldClient/CMapBaseObjLink.h"
+#include "WoW/Source/WorldClient/FarTrees.h"
 
 // Not stock: gfxSunShadows (wxl-light's Sun.cpp shadow_sun), gfxShadowSnap, gfxShadowAnchor (northlight).
 static CVar* s_cvSunShadows;
@@ -777,8 +778,10 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
     ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
 
     const bool terrain = TerrainCastWanted(data, band);
+    // Not stock (farTreesShadow): the far tree impostors past their fade cast into the cascades as the trees would.
+    const bool farTrees = band >= 0 && band < 3 && (data.m_queryFlags[band] & 0x8) && FarTrees::ShadowWanted();
 
-    if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count && !terrain) {
+    if (!buffers.m_groupCount && !buffers.m_untextured.m_count && !buffers.m_textured.m_count && !terrain && !farTrees) {
         CShadowQuery::Clear(target, colorTarget, data.m_texBounds[band]);
         return 1;
     }
@@ -883,6 +886,10 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
 
     if (terrain) {
         RenderTerrainShadow(data, band, camera);
+    }
+
+    if (farTrees) {
+        FarTrees::DrawShadow(data.m_extents[band], data.m_bandFrustums[band], camera);
     }
 
     g_theGxDevicePtr->RsPop();

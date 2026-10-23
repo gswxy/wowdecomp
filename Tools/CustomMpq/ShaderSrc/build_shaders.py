@@ -28,6 +28,7 @@ Soft particles (wxl-light Soft.cpp): SoftParticle{0,1}.
 Caustics (wxl-water): VFogCausticsAbove / VFogCausticsUnder.
 Sky and clouds under the sun arc (wxl-light Clouds.cpp, WorldClient/SkyClouds.cpp): SkyClouds.
 Far land (farLand, WorldClient/FarLand.cpp): FarLandVS / FarLandPS.
+Far trees (farTrees, WorldClient/FarTrees.cpp): FarTreesVS / FarTreesPS, and FarTreesShadowVS / FarTreesShadowPS (farTreesShadow).
 """
 import argparse
 import concurrent.futures
@@ -118,6 +119,9 @@ SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWa
 # Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).
 SHADERS['FarTreesVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesVS', {})
 SHADERS['FarTreesPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'FarTreesPS', {})
+# ... and as sun shadow casters (farTreesShadow, FarTrees::DrawShadow).
+SHADERS['FarTreesShadowVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesShadowVS', {})
+SHADERS['FarTreesShadowPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'FarTreesShadowPS', {})
 # VFogWater{1,2,3}: coa ps_vw_shade_low/mid/high (SSR_STEPS 0/16/32, cmake/WaterShaders.cmake)
 for _v, _ssr in ((1, 0), (2, 16), (3, 32)):
     SHADERS['VFogWater%d' % _v] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(*range(0, 16)), 0, 'VFogWater',

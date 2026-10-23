@@ -1,5 +1,5 @@
 // farLand (WorldClient/FarLand.cpp): the stock WDL horizon mesh (GxVBF_PC, world positions, CMap::RenderLowDetail's
-// own buffers) laid with the map's baked atlases (Tools/FarLand/bake_farland.py). The tile's slot comes in c5.
+// own buffers) laid with farLand's window atlases (FarLandBake.cpp, baked at run time). The tile's slot comes in c5.
 float4 gM[4] : register(c0);   // camera-relative world -> clip (row vectors, native projection: the horizon's)
 float4 gCam  : register(c4);   // xyz camera
 float4 gTile : register(c5);   // tile top-left world x, y; slot origin u, v (0..1)

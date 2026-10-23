@@ -20,32 +20,43 @@ Read from 413f7c4, 9b70f5d, 90928f1, 2a753377, a3f9818d, e5ef0b0 and docs/archiv
    soft blobs; first version used minimap textures (wrong colour, baked lighting).
 5. **Too much surface at once** (five features, ~3000 lines, new CVars each) - nothing could be judged alone.
 
-## Design (this branch)
+## Design (this branch, revised 2026-10-23: bake at run time, cached)
 
-- **All baking offline** (`Tools/FarLand/bake_farland.py`, ~1 min a continent): per map, an albedo atlas
-  (128 px a tile = 4.17 yd, one texture repeat; MCLY layer means blended by MCAL, big alpha weighted sum, x MCCV,
-  liquids flat-coloured) and a normal atlas (64 px a tile = 8.3 yd, 4x finer than the WDL mesh, from MCVT heights;
-  DXT5nm). Tiles packed sparsely, 32 x 32 slots (64 x 32 above 1024 tiles: Northrend). Shipped in custom.MPQ
-  as `FarLand\<Map>.flnd/_a.blp/_n.blp`. Runtime CPU work: zero.
-- **Stock mesh, stock draw count.** `CMap::RenderLowDetail` keeps its buffers, holes and draws; `FarLand::Apply`
-  only binds a VS/PS pair (FarLandVS/PS), the two atlases and one constant (the tile's slot). No new buffers,
-  no LOD levels, nothing to pop. One state: a tile is baked or it is stock.
-- **No fog changes.** The pass uses `DNInfo::m_fog` as the terrain does. Under vfog (default) that fog is pushed
-  out of range and vfog's composite already fogs the horizon depth band by real distance, so the far land shows
-  through it. With vfog 0 the stock curve ends at farclip, so the far land comes out fog-coloured = stock.
-- **Lighting** is the terrain's sun (CM2Lighting::GetSunLight, as CMapRenderChunk): ambient + diffuse x N.L
-  with the baked normal, so distant slopes turn with the sun.
-- **Seams**: a tile edge maps to its edge texel's centre, so mip 0 never samples the unrelated neighbour slot.
-  Known corner: lower mips can bleed half a texel across slots (faint lines at very long range).
-- Not done (add when asked): finer mesh than the WDL's 33 yd (silhouettes stay WDL), MCSH baked shadows,
-  far water reflections, far WMOs.
+Baked files shipped in an MPQ go stale on servers with custom or updated maps, so each tile is baked on the
+client from the ADT it really loads, once, and cached.
+
+- **Worker thread** (`FarLand.cpp` WorkerMain, one `std::thread`): a tile is queued the first time
+  `RenderLowDetail` draws it; the worker takes the queued tile nearest the camera, reads the ADT through SFile (so
+  the server's patch MPQs win), CRC32s it, and either loads `Cache\FarLand\<map>\<col>_<row>.flt` (header
+  `FLT1`, version, ADT size, ADT CRC32, then the tile) when size and CRC match, or bakes (`FarLandBake.cpp`) and
+  rewrites it. Layer texture means are cached per map on the worker.
+- **The bake** (FarLandBake.cpp, no engine headers): albedo 128 px a tile (4.17 yd, one MCLY repeat: each layer
+  texture's 4 x 4 mip mean, blended by MCAL sized by sizeAlpha; big alpha weighted sum, else layered lerp; x MCCV;
+  MH2O liquids flat-coloured by LiquidType type), DXT1 levels 128..4; normals 64 px (8.3 yd, 4x the WDL's
+  resolution) from MCVT, DXT5nm levels 64..4. 16.4 KB a tile.
+- **Main thread**: `BeginPass` copies at most `farLandUploads` (default 4) finished tiles a frame into two window
+  atlases (tile in slot row mod 32, col mod 32: albedo 4096 DXT1, normals 2048 DXT5, CPU copies latched by the
+  texture callback) and uploads the slot's rectangle; atlas levels where a block spans slots get the slots' mean
+  colour. It never waits on the worker (a mutex held for a queue push/pop only).
+- **No popping**: an unbaked tile draws stock (fog colour); a baked one cross-fades from the fog colour over
+  600 ms. An evicted slot's old tile goes back to stock and is re-queued when seen (a cache hit then).
+- **Stock mesh, stock draw count, no fog changes**: as before; the shaders, one slot constant and a fade
+  constant per tile are all that is added to the stock WDL draw.
+- Not done (add when asked): a seed cache for stock maps (the offline tool was dropped; the first visit bakes),
+  texture changes without an ADT change are not detected (the key is the ADT only), finer mesh than the WDL's
+  33 yd, MCSH shadows, far water reflections.
+
+## Measured bake cost (this server, `Tools/FarLand/bake_harness.cpp`, native clang -O2, one core)
+
+| Map | ADT read + CRC | Bake | Worst bake |
+|---|---|---|---|
+| Azeroth (200 tiles from Elwynn) | 9.4 ms | 2.0 ms | 13 ms |
+| Northrend (200 tiles) | 15.6 ms | 4.9 ms | 24 ms |
+
+The worst cases are first uses of many layer textures (each read once a map). All of it is on the worker; a
+cache hit costs the ADT read + CRC only.
 
 ## Cost
 
-GPU: two texture samples and a dot product per far pixel; the same draws as stock. VRAM: about 16 MB a map
-(Northrend 32 MB). Disk: 17 MB a map in custom.MPQ before zlib.
-
-## Shipping steps (not done by this branch)
-
-`python3 -I Tools/FarLand/bake_farland.py` -> `Tools/CustomMpq/FarLand`, then the usual
-`translate_shaders.py` (Vulkan) + `build_custom_mpq.py`. FarLandVS/PS .bls (D3D9/D3D11) are committed.
+GPU: two texture samples and a dot product per far pixel; the same draws as stock. Memory: 16 MB of atlases on
+the GPU plus the same in CPU copies, once farLand has been on. Disk: about 16 KB a tile (~11-18 MB a continent).

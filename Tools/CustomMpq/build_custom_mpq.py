@@ -28,8 +28,6 @@ Contents:
                           water presets, FFT tiles and foam masks, coa-vfog data/waterdata.bin, read by
                           VolumetricFogWater.cpp; cloudnoise.bin: wxl-light's 64^3 BGRA cloud noise, src/CloudNoise.bin,
                           read by SkyClouds.cpp).
-  FarLand\\...           farLand's per-map bake (<Map>.flnd, <Map>_a.blp, <Map>_n.blp), Tools/CustomMpq/FarLand from
-                          Tools/FarLand/bake_farland.py (generated, not committed; missing = stock horizon).
   Interface\\...         every file in Tools/CustomMpq/Interface (FrameXML\\VideoOptionsAdvanced.lua: the Video
                           Options > Advanced page, run by GameUI.cpp after the stock FrameXML.toc).
 Cache/vkpipelines.bin is a runtime cache and stays loose.
@@ -192,10 +190,6 @@ def main(argv):
     files.update(normals)
     vfog = folder_files('VFog', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VFog'))
     files.update(vfog)
-    farland = folder_files('FarLand', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'FarLand'))
-    if not farland:
-        print('warning: no Tools/CustomMpq/FarLand (run Tools/FarLand/bake_farland.py): farLand draws the stock horizon')
-    files.update(farland)
     ui = folder_files('Interface', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Interface'))
     files.update(ui)
 

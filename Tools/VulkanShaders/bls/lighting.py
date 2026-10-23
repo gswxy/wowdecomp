@@ -256,7 +256,7 @@ vec3 GxSpecFinal(vec4 o) {
     float sat = (hi - min(albedo.r, min(albedo.g, albedo.b))) / max(hi, 1e-3);
     float mm = mix(1.0, smoothstep(0.015, 0.06, lum), gxMetalLum) * mix(1.0, 1.0 - smoothstep(0.2, 0.45, sat), gxMetalGrey);
     vec3 t = mix(vec3(1.0), tint, gxMetal * m * mm) * (mix(0.25, 1.0, m) * mix(min(0.02 / max(gxF0, 0.04), 1.0), 1.0, mm));
-    return (gxSpecSun * gxShadow + gxSpecular) * t + min(gxSpecAmb * t, GxDec(o.rgb) * gxAmbCap);
+    return (gxSpecSun * gxShadow + gxSpecular) * t + min(gxSpecAmb * (t * (0.25 + 0.75 * gxShadow)), GxDec(o.rgb) * gxAmbCap);
 }
 
 // WMONORMALS: a MapObj pixel's normal bent by its material's normal map (stage 10, CMapObj::BindNormalMap), the
@@ -402,13 +402,14 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
         vec4 rr = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
         vec2 ab = vec2(-1.04, 1.04) * (min(rr.x * rr.x, exp2(-9.28 * nv)) * rr.x + rr.y) + rr.zw;
         float specAlbedo = f0 * ab.x + ab.y;
-        float up = clamp(dot(reflect(-v, n), gxUpView.xyz) * 0.5 + 0.5, 0.0, 1.0);
         float k = family == GX_SURF_M2 ? gxLightParams.z : gxLightParams.w;
         gxSpecSun = specOn ? GxDec(sunCol) * (GxGgx(n, v, l, a, f0) * k * damp) : vec3(0.0);
-        gxSpecAmb = GxDec(amb) * mix(gxGroundTint.rgb, gxSkyTint.rgb, up) * (specAlbedo * k);
+        // the environment's reflection: metals only, faint, in the ambient light's colour (tinted by the texel at the
+        // end, never the sky's colour: no blue-grey sheen); a non-metal gets none, its hue stays lightPbr 0's
+        gxSpecAmb = gxMetal > 0.0 ? GxDec(amb) * (specAlbedo * k * 0.5) : vec3(0.0);
         pbrSpec = spec * (gxLightParams.y * k * damp);
         // energy conservation: what the specular reflects the diffuse gives up
-        kd = clamp(1.0 - specAlbedo * k, 0.0, 1.0);
+        kd = gxMetal > 0.0 ? clamp(1.0 - specAlbedo * k, 0.0, 1.0) : 1.0;
         gxAmbCap = (1.0 - kd) / max(kd, 0.05);
     }
 

@@ -23,7 +23,8 @@ void main() {
     float dn = (d - gxDepthRange.x) * gxDepthRange.z;
     bool geometry = d <= gxDepthRange.y + 0.00001 && dn < 0.99999;
 
-    vec2 ndc = vec2((float(id.x) + 0.5) / gxRender.z * 2.0 - 1.0, 1.0 - (float(id.y) + 0.5) / gxRender.w * 2.0);
+    // a pixel centre is 1/128 past the D3D9 sample point: the viewport moved by kD3d9CentreShift (CGxDeviceVulkanDraw.cpp)
+    vec2 ndc = vec2((float(id.x) + 0.0078125) / gxRender.z * 2.0 - 1.0, 1.0 - (float(id.y) + 0.0078125) / gxRender.w * 2.0);
     vec4 h = vec4(ndc, min(dn, 1.0), 1.0) * gxInvProj;
     vec3 view = h.xyz / h.w;
 

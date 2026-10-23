@@ -17,10 +17,11 @@ namespace gxvk::vk::pipelines::detail
      *                         the device enabled samplerAnisotropy
      *
      * "No mip" is mipmapMode NEAREST with maxLod 0: the level of detail is clamped to level 0.
+     * FSR: bits 16-19, a negative mip LOD bias in 1/8 steps (Vulkan/Upscale.cpp, the world while upscaled).
      * Wrap: bit 3 (U) and bit 4 (V) set mean REPEAT, clear mean CLAMP_TO_EDGE (the engine has no
      * border or mirrored modes); W is always CLAMP_TO_EDGE.
      *
-     * @param uint32 key : CGxTexFlags & 0x3E1F
+     * @param uint32 key : CGxTexFlags & 0x3E1F, plus the FSR bias bits
      * @return VkSampler sampler : VK_NULL_HANDLE when the cache is full or the create failed (logged once)
      */
     VkSampler Sampler(uint32_t key)
@@ -55,7 +56,7 @@ namespace gxvk::vk::pipelines::detail
         info.mipmapMode = filter >= 4 ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
         info.minLod     = 0.0f;
         info.maxLod     = noMip ? 0.0f : VK_LOD_CLAMP_NONE;
-        info.mipLodBias = 0.0f;
+        info.mipLodBias = -static_cast<float>((key >> 16) & 0xFu) / 8.0f;
 
         info.addressModeU = wrapU ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         info.addressModeV = wrapV ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;

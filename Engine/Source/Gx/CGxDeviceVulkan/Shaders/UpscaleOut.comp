@@ -14,7 +14,8 @@ void main() {
         return;
     }
 
-    vec4 c = gxSource.z > 0.5 ? textureLod(gxColor, (gxRender.xy + (vec2(id) + 0.5) * gxRender.zw / gxNative.zw) * gxSource.xy, 0.0)
-                              : texelFetch(gxColor, id, 0);
+    // the stretch kept inside the drawn rectangle: past it the scene holds last frame's full-size world
+    vec2 at = clamp(gxRender.xy + (vec2(id) + 0.5) * gxRender.zw / gxNative.zw, gxRender.xy + 0.5, gxRender.xy + gxRender.zw - 0.5);
+    vec4 c = gxSource.z > 0.5 ? textureLod(gxColor, at * gxSource.xy, 0.0) : texelFetch(gxColor, id, 0);
     imageStore(gxOut, id + ivec2(gxNative.xy), clamp(c, 0.0, 1.0).bgra);
 }

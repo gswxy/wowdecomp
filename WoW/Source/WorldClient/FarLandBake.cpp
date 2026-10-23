@@ -272,12 +272,28 @@ bool Bake(Context& ctx, const uint8_t* adt, size_t size, Tile& out) {
         for (int r = 0; r < 9; r++)
             for (int q = 0; q < 9; q++) hgt[(iy * 8 + r) * 129 + ix * 8 + q] = s.Get<float>(c0 + oH + 8 + (r * 17 + q) * 4) + z0;
 
+        // audit 8: no MH2O, so the chunk's MCLQ (its first liquid: MCNK flags 0x4 river .. 0x20 slime = LiquidType 1..4,
+        // as CMapChunk does), a cell wet unless its tile is 0x0F (no liquid); the whole chunk when MCLQ is unreadable.
+        const uint32_t oLq = s.Get<uint32_t>(p + 0x60), szLq = s.Get<uint32_t>(p + 0x64);
+        if (!haveMh2o && (flags & 0x3C)) {
+            uint32_t type = 1;
+            while (!(flags & (4u << (type - 1)))) type++;
+            const int8_t cat = int8_t(type < ctx.liquidCategory.size() ? std::min<uint8_t>(ctx.liquidCategory[type], 3) : 0);
+            const bool tiles = szLq > 8 && s.Has(c0 + oLq + 8 + 0x290, 64);
+            for (int r = 0; r < 8; r++)
+                for (int q = 0; q < 8; q++)
+                    if (!tiles || (adt[c0 + oLq + 8 + 0x290 + r * 8 + q] & 0x0F) != 0x0F) liq[(iy * 8 + r) * kAlbedoPx + ix * 8 + q] = cat;
+        }
+
         float c[8][8][3];
         uint32_t tex[4] = {};
         uint32_t lflags[4] = {}, lofs[4] = {};
-        const uint32_t n = std::min(nl, 4u);
+        uint32_t n = std::min(nl, 4u);
         for (uint32_t k = 0; k < n; k++) {
-            if (!s.Has(c0 + oLy + 8 + 16 * k, 16)) return false;
+            if (!s.Has(c0 + oLy + 8 + 16 * k, 16)) {
+                n = k;   // audit 10: a truncated layer table keeps the layers before it, not fail the tile
+                break;
+            }
             tex[k] = s.Get<uint32_t>(c0 + oLy + 8 + 16 * k);
             lflags[k] = s.Get<uint32_t>(c0 + oLy + 8 + 16 * k + 4);
             lofs[k] = s.Get<uint32_t>(c0 + oLy + 8 + 16 * k + 8);
@@ -292,6 +308,7 @@ bool Bake(Context& ctx, const uint8_t* adt, size_t size, Tile& out) {
             for (int x = 0; x < 8; x++) rest[y][x] = 1.0f;
         float upper[3][8][8][3] = {};
         for (uint32_t k = 1; k < n && szAl > 8; k++) {
+            if (!(lflags[k] & 0x100)) continue;   // audit 9: no alpha map (MCLY 0x100), as stock builds none for it
             uint8_t a[4096];
             size_t q = c0 + oAl + 8 + lofs[k];
             if (ctx.bigAlpha && (lflags[k] & 0x200)) {

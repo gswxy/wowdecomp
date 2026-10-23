@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -13,6 +14,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <process.h>
+#include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
@@ -40,12 +43,17 @@ namespace {
 using FarLandBake::Tile;
 
 // Window atlases (wxl-farfield's `albedo` layout): tile (row, col) lives in slot (row mod 32, col mod 32), so the
-// 32 x 32 tiles round the camera fit; the horizon reaches at most ~12 tiles each way (farclip 1277 x 4).
+// 32 x 32 tiles round the camera fit; the horizon reaches ~12 tiles each way at farclip 1277 x 4, up to ~20 at
+// horizonFarclipScale 6 (audit 7: Drain then keeps a visible nearer owner, see kKeep).
 constexpr uint32_t kWin = 32;
 constexpr uint32_t kAtlasA = kWin * FarLandBake::kAlbedoPx;   // 4096, DXT1
 constexpr uint32_t kAtlasN = kWin * FarLandBake::kNormalPx;   // 2048, DXT5
-constexpr uint32_t kCacheVersion = 1;
+constexpr uint32_t kCacheVersion = 2;      // 2: MCLQ water, MCLY 0x100, a bad MCLY drops its layers only; WDT/liquid key, payload CRC
 constexpr float kFadeMs = 600.0f;
+constexpr int32_t kKeep = 16;              // tiles: queued jobs and finished bakes farther than this from the camera are dropped
+constexpr float kRetryMs = 60000.0f;       // a failed tile (no ADT, a read error) is asked again after this
+constexpr float kContestMs = 2000.0f;      // a tile whose slot a nearer visible tile holds is asked again after this
+constexpr float kIdleMs = 2000.0f;         // no horizon pass this long (character select, a loading screen): drop the queue
 
 int32_t s_enabled = 0;
 int32_t s_uploads = 4;
@@ -53,6 +61,7 @@ int32_t s_uploads = 4;
 CGxShader* s_vs = nullptr;
 CGxShader* s_ps = nullptr;
 bool s_shaderFailed = false;
+bool s_atlasFailed = false;   // audit 6: a texture create failed once; never retried (it would leak and re-memset each frame)
 
 // ---------- atlases: a CPU copy of every level, latched by the texture callback ----------
 struct Atlas {
@@ -96,17 +105,32 @@ void FlatNormals() {   // DXT5nm (0, 0, 1): alpha 128 / green 128 everywhere
     }
 }
 
+void FreeAtlases() {   // audit 13: the textures and their 17 MB of CPU copies (farLand 0, a failed create)
+    for (Atlas* at : { &s_albedo, &s_normal }) {
+        if (at->tex) HandleClose(reinterpret_cast<HOBJECT>(at->tex));
+        at->tex = nullptr;
+        std::vector<uint8_t>().swap(at->chain);
+    }
+}
+
 bool Atlases() {
     if (s_albedo.tex) return true;
+    if (s_atlasFailed) return false;
     s_albedo.Init(kAtlasA, 8);
     s_normal.Init(kAtlasN, 16);
     FlatNormals();
     const CGxTexFlags flags(GxTex_LinearMipLinear, 0, 0, 0, 0, 0, 1);
     s_albedo.tex = TextureCreate(kAtlasA, kAtlasA, GxTex_Dxt1, GxTex_Dxt1, flags, &s_albedo, AtlasUserFunc, "FarLandAlbedo", 0);
     s_normal.tex = TextureCreate(kAtlasN, kAtlasN, GxTex_Dxt5, GxTex_Dxt5, flags, &s_normal, AtlasUserFunc, "FarLandNormal", 0);
+    if (!s_albedo.tex || !s_normal.tex) {
+        FreeAtlases();
+        s_atlasFailed = true;
+        ConsolePrintf("farLand: the atlas textures could not be created");
+        return false;
+    }
     for (Atlas* at : { &s_albedo, &s_normal })
-        if (CGxTex* g = at->tex ? TextureGetGxTex(at->tex, 0, nullptr) : nullptr) GxTexUpdate(g, 0, 0, at->px, at->px, 1);
-    return s_albedo.tex && s_normal.tex;
+        if (CGxTex* g = TextureGetGxTex(at->tex, 0, nullptr)) GxTexUpdate(g, 0, 0, at->px, at->px, 1);
+    return true;
 }
 
 // ---------- per map state (main thread) ----------
@@ -115,7 +139,11 @@ uint32_t s_loadedFor = 0xFFFFFFFFu;
 uint8_t s_state[4096];
 int16_t s_owner[kWin * kWin];
 uint8_t s_slotMean[kWin * kWin][3];
-float s_readyMs[4096];
+float s_readyMs[4096];    // kReady: when it arrived (the fade); kFailed: when to ask again
+int32_t s_drawFrame[4096];   // CWorld::frameCnt of the tile's last Apply
+int32_t s_drainFrame = -1;
+float s_lastPassMs = 0.0f;
+int32_t s_prunedFor = -1;    // s_camTile at the last queue prune
 
 float NowMs() {
     using namespace std::chrono;
@@ -137,7 +165,12 @@ uint32_t s_gen = 0;
 std::string s_map;
 std::vector<uint8_t> s_liquidCategory;
 std::atomic<int32_t> s_camTile { 0 };
-bool s_workerStarted = false;
+bool s_stop = false;                  // under s_lock: Shutdown
+std::thread* s_worker = nullptr;      // never deleted: a missed Shutdown must not std::terminate in a static destructor
+
+int32_t TileDistance(int32_t a, int32_t b) {
+    return std::max(std::abs(a / 64 - b / 64), std::abs(a % 64 - b % 64));
+}
 
 bool ReadClientFile(const std::string& path, std::vector<uint8_t>& out) {
     SFileImpl* f = nullptr;
@@ -152,14 +185,17 @@ bool ReadClientFile(const std::string& path, std::vector<uint8_t>& out) {
 struct CacheHeader {
     char magic[4];
     uint32_t version, adtSize, adtCrc;
+    uint32_t envCrc;    // audit 12: the WDT (big alpha) and the LiquidType categories the bake read
+    uint32_t tileCrc;   // audit 11: the payload, so a torn or zeroed file is a miss
 };
 
-std::unique_ptr<Tile> BakeOrLoad(FarLandBake::Context& ctx, const std::string& map, int32_t t) {
+std::unique_ptr<Tile> BakeOrLoad(FarLandBake::Context& ctx, uint32_t envCrc, const std::string& map, int32_t t) {
     char name[320];
     std::snprintf(name, sizeof(name), "World\\Maps\\%s\\%s_%d_%d.adt", map.c_str(), map.c_str(), t % 64, t / 64);
     std::vector<uint8_t> adt;
     if (!ReadClientFile(name, adt) || adt.empty()) return nullptr;
-    const CacheHeader want { { 'F', 'L', 'T', '1' }, kCacheVersion, uint32_t(adt.size()), FarLandBake::Crc32(adt.data(), adt.size()) };
+    CacheHeader want { { 'F', 'L', 'T', '1' }, kCacheVersion, uint32_t(adt.size()), FarLandBake::Crc32(adt.data(), adt.size()), envCrc, 0 };
+    const size_t keyBytes = offsetof(CacheHeader, tileCrc);
     const std::filesystem::path dir = std::filesystem::path("Cache") / "FarLand" / map;
     char file[32];
     std::snprintf(file, sizeof(file), "%d_%d.flt", t % 64, t / 64);
@@ -167,17 +203,24 @@ std::unique_ptr<Tile> BakeOrLoad(FarLandBake::Context& ctx, const std::string& m
     auto tile = std::make_unique<Tile>();
     if (FILE* f = _wfopen(path.c_str(), L"rb")) {   // the cache: valid only for the very same ADT bytes
         CacheHeader h;
-        const bool hit = std::fread(&h, sizeof(h), 1, f) == 1 && std::memcmp(&h, &want, sizeof(h)) == 0 && std::fread(tile.get(), sizeof(Tile), 1, f) == 1;
+        const bool hit = std::fread(&h, sizeof(h), 1, f) == 1 && std::memcmp(&h, &want, keyBytes) == 0 && std::fread(tile.get(), sizeof(Tile), 1, f) == 1 &&
+            h.tileCrc == FarLandBake::Crc32(reinterpret_cast<const uint8_t*>(tile.get()), sizeof(Tile));
         std::fclose(f);
         if (hit) return tile;
     }
     if (!FarLandBake::Bake(ctx, adt.data(), adt.size(), *tile)) return nullptr;
+    want.tileCrc = FarLandBake::Crc32(reinterpret_cast<const uint8_t*>(tile.get()), sizeof(Tile));
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
-    if (FILE* f = _wfopen(path.c_str(), L"wb")) {
+    // audit 11: written whole beside it, then renamed over it (MoveFileExW REPLACE_EXISTING), so a reader or a
+    // second client never sees a half-written entry
+    std::filesystem::path tmp = path;
+    tmp += L".tmp" + std::to_wstring(_getpid());
+    if (FILE* f = _wfopen(tmp.c_str(), L"wb")) {
         const bool ok = std::fwrite(&want, sizeof(want), 1, f) == 1 && std::fwrite(tile.get(), sizeof(Tile), 1, f) == 1;
-        std::fclose(f);
-        if (!ok) std::filesystem::remove(path, ec);   // never leave a torn entry behind
+        const bool closed = std::fclose(f) == 0;
+        if (ok && closed) std::filesystem::rename(tmp, path, ec);
+        if (!ok || !closed || ec) std::filesystem::remove(tmp, ec);   // never leave a torn entry behind
     }
     return tile;
 }
@@ -185,14 +228,15 @@ std::unique_ptr<Tile> BakeOrLoad(FarLandBake::Context& ctx, const std::string& m
 void WorkerMain() {
     FarLandBake::Context ctx;
     ctx.read = ReadClientFile;
-    uint32_t ctxGen = 0xFFFFFFFFu;
+    uint32_t ctxGen = 0xFFFFFFFFu, envCrc = 0;
     std::string map;
     for (;;) {
         int32_t t;
         uint32_t gen;
         {
             std::unique_lock<std::mutex> lock(s_lock);
-            s_wake.wait(lock, [] { return !s_jobs.empty(); });
+            s_wake.wait(lock, [] { return s_stop || !s_jobs.empty(); });
+            if (s_stop) return;
             // nearest the camera's tile first
             const int32_t cam = s_camTile.load();
             auto dist = [cam](int32_t a) { const int32_t dr = a / 64 - cam / 64, dc = a % 64 - cam % 64; return dr * dr + dc * dc; };
@@ -209,8 +253,9 @@ void WorkerMain() {
             ctxGen = gen;
             std::vector<uint8_t> wdt;
             ctx.bigAlpha = ReadClientFile("World\\Maps\\" + map + "\\" + map + ".wdt", wdt) && FarLandBake::ReadBigAlpha(wdt);
+            envCrc = FarLandBake::Crc32(wdt.data(), wdt.size()) ^ (FarLandBake::Crc32(ctx.liquidCategory.data(), ctx.liquidCategory.size()) * 31u);
         }
-        std::unique_ptr<Tile> tile = BakeOrLoad(ctx, map, t);
+        std::unique_ptr<Tile> tile = BakeOrLoad(ctx, envCrc, map, t);
         std::lock_guard<std::mutex> lock(s_lock);
         s_done.push_back({ gen, t, std::move(tile) });
     }
@@ -234,9 +279,21 @@ void NewMap() {
     s_liquidCategory.swap(cats);
     s_jobs.clear();
     s_done.clear();
-    if (!s_workerStarted) {
-        s_workerStarted = true;
-        std::thread(WorkerMain).detach();   // lives as long as the process; it sleeps on s_wake when idle
+    if (!s_worker && !s_stop) {
+        s_worker = new std::thread(WorkerMain);   // sleeps on s_wake when idle; Shutdown joins it
+    }
+}
+
+// audit 2: queued tiles the camera left (a teleport, a turn at a long horizon) are dropped, asked again when seen.
+void Prune(int32_t cam) {
+    std::lock_guard<std::mutex> lock(s_lock);
+    for (auto it = s_jobs.begin(); it != s_jobs.end();) {
+        if (TileDistance(*it, cam) > kKeep) {
+            s_state[*it] = kNone;
+            it = s_jobs.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -287,8 +344,13 @@ void Upload(int32_t t, const Tile& tile) {
     s_readyMs[t] = NowMs();
 }
 
-// Main thread, once a pass: take at most farLandUploads finished tiles.
+// Main thread, once a frame (audit 14: not again for the water reflection's pass): take at most farLandUploads
+// finished tiles. Audit 7: a bake for a tile the camera left is dropped, and one whose slot a nearer tile drawn in the
+// last second holds waits (kContestMs), so turning at a long horizon does not swap two visible tiles back and forth.
 void Drain() {
+    if (s_drainFrame == CWorld::frameCnt) return;
+    s_drainFrame = CWorld::frameCnt;
+    const int32_t cam = s_camTile.load();
     std::vector<Result> take;
     {
         std::lock_guard<std::mutex> lock(s_lock);
@@ -296,10 +358,22 @@ void Drain() {
         std::move(s_done.begin(), end, std::back_inserter(take));
         s_done.erase(s_done.begin(), end);
     }
+    const float now = NowMs();
     for (Result& r : take) {
         if (r.gen != s_gen || s_state[r.tile] != kQueued) continue;
         if (!r.data) {
-            s_state[r.tile] = kFailed;   // no ADT or an unreadable one: this tile stays stock
+            s_state[r.tile] = kFailed;   // no ADT or an unreadable one: stock, asked again after kRetryMs (audit 10)
+            s_readyMs[r.tile] = now + kRetryMs;
+            continue;
+        }
+        if (TileDistance(r.tile, cam) > kKeep) {
+            s_state[r.tile] = kNone;
+            continue;
+        }
+        const int16_t owner = s_owner[(r.tile / 64 % kWin) * kWin + r.tile % 64 % kWin];
+        if (owner >= 0 && owner != r.tile && s_state[owner] == kReady && CWorld::frameCnt - s_drawFrame[owner] < 60 && TileDistance(owner, cam) < TileDistance(r.tile, cam)) {
+            s_state[r.tile] = kFailed;
+            s_readyMs[r.tile] = now + kContestMs;
             continue;
         }
         Upload(r.tile, *r.data);
@@ -332,13 +406,7 @@ void PassConstants() {
     std::memcpy(vs, &vp, sizeof(float) * 16);
     const C3Vector& cam = CWorldScene::s_activeWorldView;
     vs[4][0] = cam.x; vs[4][1] = cam.y; vs[4][2] = cam.z;
-    // uv = slot origin + 0.5 texel + t * (S - 1) texels: a tile edge lands on its edge texel's centre, so mip 0
-    // never samples the next slot (a different tile).
-    const float a = float(FarLandBake::kAlbedoPx - 1) / kAtlasA, n = float(FarLandBake::kNormalPx - 1) / kAtlasN;
-    const float uv[2][4] = { { a, a, 0.5f / kAtlasA, 0.5f / kAtlasA }, { n, n, 0.5f / kAtlasN, 0.5f / kAtlasN } };
-    std::memcpy(vs[6], uv, sizeof(uv));
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, &vs[0][0], 5);
-    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 6, &vs[6][0], 2);
 
     // The terrain's sun (CMapRenderChunk::InitializeVertexShaderConstants): world direction towards the sun.
     float ps[5][4] = {};
@@ -359,6 +427,10 @@ void PassConstants() {
     ps[4][0] = dn.m_fog.m_start;
     ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? 1.0f / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, &ps[0][0], 5);
+    // FarLandPS c6: slot texels and 1 / atlas texels per atlas, for its in-slot uv (audit 3/4: LOD capped, inset by
+    // half a texel of the mip it reads, so no mip samples the next slot or the flat normal levels past kNormalLevels)
+    const float atlas[4] = { float(FarLandBake::kAlbedoPx), 1.0f / kAtlasA, float(FarLandBake::kNormalPx), 1.0f / kAtlasN };
+    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 6, atlas, 1);
 }
 
 } // namespace
@@ -376,19 +448,52 @@ void RegisterCVars() {
 
 void BeginPass() {
     s_needConstants = true;
-    if (!s_enabled || !g_theGxDevicePtr) return;
+    if (!g_theGxDevicePtr) return;
+    if (!s_enabled) {
+        if (s_albedo.tex) {
+            FreeAtlases();
+            s_loadedFor = 0xFFFFFFFFu;   // owners and states start over with the next farLand 1
+            std::lock_guard<std::mutex> lock(s_lock);
+            s_jobs.clear();
+        }
+        return;
+    }
+    if (!Shaders()) return;   // audit 5: nothing could be drawn, so nothing is baked or uploaded
     if (s_loadedFor != g_lowDetailLoads) NewMap();
     const C3Vector& cam = CWorldScene::s_activeWorldView;
     const int32_t row = std::min(std::max(int32_t((17066.666f - cam.x) / (1600.0f / 3.0f)), 0), 63);
     const int32_t col = std::min(std::max(int32_t((17066.666f - cam.y) / (1600.0f / 3.0f)), 0), 63);
     s_camTile.store(row * 64 + col);
+    // audit 2: back from character select or a loading screen, the queue left behind is dropped (asked again when seen)
+    const float now = NowMs();
+    if (now - s_lastPassMs > kIdleMs) {
+        std::lock_guard<std::mutex> lock(s_lock);
+        for (int32_t t : s_jobs) s_state[t] = kNone;
+        s_jobs.clear();
+    }
+    s_lastPassMs = now;
+    if (s_prunedFor != row * 64 + col) {
+        s_prunedFor = row * 64 + col;
+        Prune(s_prunedFor);
+    }
     if (Atlases()) Drain();
+}
+
+void Shutdown() {
+    {
+        std::lock_guard<std::mutex> lock(s_lock);
+        s_stop = true;
+        s_jobs.clear();
+    }
+    s_wake.notify_all();
+    if (s_worker && s_worker->joinable()) s_worker->join();
 }
 
 bool Apply(const CMapAreaLow* area) {
     if (!s_enabled || !g_theGxDevicePtr || s_loadedFor != g_lowDetailLoads || !s_albedo.tex) return false;
     const int32_t t = (area->m_index.y & 63) * 64 + (area->m_index.x & 63);
-    if (s_state[t] == kNone) Request(t);
+    s_drawFrame[t] = CWorld::frameCnt;
+    if (s_state[t] == kNone || (s_state[t] == kFailed && NowMs() >= s_readyMs[t])) Request(t);
     if (s_state[t] != kReady || !Shaders()) return false;
     CGxTex* albedo = TextureGetGxTex(s_albedo.tex, 0, nullptr);
     CGxTex* normal = TextureGetGxTex(s_normal.tex, 0, nullptr);

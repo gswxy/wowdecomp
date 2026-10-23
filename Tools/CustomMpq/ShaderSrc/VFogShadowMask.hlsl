@@ -9,9 +9,10 @@
 // a tree's shadow inside a mountain's merges into it (A either way) instead of staying at 0.7 of lit. Never above 1.
 // ndl from a normal rebuilt from the depth (the smaller-step neighbour per axis, so silhouettes keep their own side),
 // against the receivers' own light (m_light1 after PickLightBody; the land texture keeps the true sun).
-// TEXCOORD0 = world-viewport uv. s0 scene depth, s5/s6 bands 1/2, s7 the land, s8 band 0, s9 the unit map, s10 the land's fine level.
+// TEXCOORD0 = world-viewport uv. s0 scene depth, s5/s6 bands 1/2, s7 the land, s8 band 0, s9 the unit map, s10 the land's fine level,
+// s11 its previous build while it fades in.
 // c10 (shading toLight world, strength), c11 (ambient rgb, surface bias yd), c12 (diffuse rgb, k), c13 (stock fog
-// start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on), c72 the fine level.
+// start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on), c72 the fine level, c73 its fade.
 #include "vf_common.hlsli"
 #include "vf_shadow.hlsli"
 #include "vf_gbuffer.hlsli"
@@ -26,6 +27,10 @@ float4 cMaskMaps : register(c71);
 // (u0, v0, k, 1 / blend uv) as c63; it fades into s7's over its outer 1 / w of uv. w = 0: off.
 float4 cTerrainFine : register(c72);
 sampler2D sTerrainFine : register(s10);
+// The fine level's previous build while a rebuild fades in (shadow audit P2): (u0, v0, k, w), lerp(s11, s10, w) inside
+// its own window; w = 1: no fade.
+float4 cTerrainFineFrom : register(c73);
+sampler2D sTerrainFineFrom : register(s11);
 
 sampler2D sDepth : register(s0);
 sampler2D sBand0 : register(s8);
@@ -71,14 +76,20 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
         return 1;
     float3 p = ViewRayAtUnitDepth(pixel) * LinearDepth(depth);
     float3 world = mul(float4(p, 1), cViewToWorld).xyz;
-    float lit = tex2Dlod(sTerrainShadow, float4(cTerrainShadow.xy - cTerrainShadow.z * world.yx, 0, 0)).x;
+    float lit = dot(tex2Dlod(sTerrainShadow, float4(cTerrainShadow.xy - cTerrainShadow.z * world.yx, 0, 0)).xy, 1);   // R + G: fp16 + residual
     [branch] if (cTerrainFine.w > 0)
     {
         float2 uv = cTerrainFine.xy - cTerrainFine.z * world.yx;
         float2 edge = abs(uv - 0.5);
         float w = saturate((0.5 - max(edge.x, edge.y)) * cTerrainFine.w);
         [branch] if (w > 0)
-            lit = lerp(lit, tex2Dlod(sTerrainFine, float4(uv, 0, 0)).x, w);
+        {
+            float fine = dot(tex2Dlod(sTerrainFine, float4(uv, 0, 0)).xy, 1);
+            float2 from = cTerrainFineFrom.xy - cTerrainFineFrom.z * world.yx;
+            [branch] if (cTerrainFineFrom.w < 1 && max(abs(from.x - 0.5), abs(from.y - 0.5)) < 0.5)
+                fine = lerp(dot(tex2Dlod(sTerrainFineFrom, float4(from, 0, 0)).xy, 1), fine, cTerrainFineFrom.w);
+            lit = lerp(lit, fine, w);
+        }
     }
     float land = saturate(1 - (lit - world.z - cMaskAmbient.w) * cTerrainShadow.w);
     [branch] if (land >= 1)

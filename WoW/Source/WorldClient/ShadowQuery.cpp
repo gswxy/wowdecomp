@@ -5,6 +5,8 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
+#include <vector>
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -34,6 +36,7 @@
 #include "Engine/Source/Tempest/CiRect.h"
 #include "WoW/Source/WorldClient/MapArea.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
+#include "WoW/Source/WorldClient/MapLowDetail.h"
 #include "WoW/Source/WorldClient/MapDoodadDef.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
@@ -604,13 +607,28 @@ int32_t CShadowQuery::QueryCallback(CShadowCacheQueryData& data, uint32_t frame)
 // Not stock (shadowTerrainCast): ADT chunks cast into the band, depth only through the WMO untextured shadow path.
 // Only the triangles facing away from the light are drawn: their depth is where a ray leaves the land, so a hill
 // still shades what lies behind it, while a slope facing the light never shades itself (no acne there) and flat
-// ground costs nothing. Away-facing slopes are unlit by N.L anyway. Band 2 uses the 9x9 corner grid (2 tris a quad).
+// ground costs nothing. Away-facing slopes are unlit by N.L anyway. Every band uses the rendered 4 triangles a quad
+// (shadow audit V1: band 2's old 2-triangle corner grid stood off the surface by the centre vertex's dip).
 // Positions go in camera-relative (the band's view is camera-relative), pushed back along the light by two texels:
 // that is depth bias only, the shadow does not move.
 static void GetChunkRect(const CAaBox& box, CiRect& rect);
 static const uint32_t kTerrainBatchChunks = 64;    // 64 * 145 * 36 B = 334 KB of the 2.8 MB vertex stream pool
 static uint32_t s_terrainTris[3];
 static uint32_t s_terrainDraws[3];
+
+// shadow audit P1: a chunk's caster (its 145 positions and away-facing triangles) depends on the sun alone, so it is
+// kept per chunk until the sun turns ~1 degree or the map reloads; entries not drawn for kTerrainCacheFrames go.
+struct TerrainCaster {
+    const float* height;    // the chunk's identity with its pointer (a freed chunk's address can come back)
+    C3Vector topLeft;
+    int32_t frame;
+    C3Vector p[145];
+    std::vector<uint16_t> indices;
+};
+static const int32_t kTerrainCacheFrames = 600;
+static std::unordered_map<const CMapChunk*, TerrainCaster> s_terrainCache;
+static C3Vector s_terrainCacheSun;
+static uint32_t s_terrainCacheLoads;
 
 static bool TerrainCastWanted(const CShadowCacheQueryData& data, int32_t band) {
     return s_cvShadowTerrainCast && s_cvShadowTerrainCast->m_intValue && band >= 0 && band < 3 && (data.m_queryFlags[band] & 0x8);
@@ -621,9 +639,18 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
     s_terrainDraws[band] = 0;
 
     const C3Vector& sun = CShadowCache::s_sunDir;    // light travel direction
-    const bool coarse = band >= 2;
     const float texel = CShadowCache::s_textureSize[0] > 0.0f ? 2.0f * data.m_radius[band] / CShadowCache::s_textureSize[0] : 0.5f;
-    const float push = 2.0f * texel + (coarse ? 1.0f : 0.0f);
+    const float push = 2.0f * texel + (band >= 2 ? 1.0f : 0.0f);
+
+    if (sun.x * s_terrainCacheSun.x + sun.y * s_terrainCacheSun.y + sun.z * s_terrainCacheSun.z < 0.99985f || s_terrainCacheLoads != g_lowDetailLoads) {
+        s_terrainCache.clear();
+        s_terrainCacheSun = sun;
+        s_terrainCacheLoads = g_lowDetailLoads;
+    } else if ((CWorld::frameCnt & 255) == 0) {
+        for (auto it = s_terrainCache.begin(); it != s_terrainCache.end();) {
+            it = CWorld::frameCnt - it->second.frame > kTerrainCacheFrames ? s_terrainCache.erase(it) : std::next(it);
+        }
+    }
     const C3Vector shift(sun.x * push - camera.x, sun.y * push - camera.y, sun.z * push - camera.z);
 
     CAaBox& extents = data.m_extents[band];
@@ -675,7 +702,7 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
     };
 
     // keeps triangle (a, b, c) of the chunk's 145 vertices when it faces away from the light
-    auto tri = [&](const C3Vector* p, uint32_t base, int32_t a, int32_t b, int32_t c) {
+    auto tri = [&](const C3Vector* p, std::vector<uint16_t>& out, int32_t a, int32_t b, int32_t c) {
         C3Vector e1 = p[b] - p[a];
         C3Vector e2 = p[c] - p[a];
         C3Vector n(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x);
@@ -688,9 +715,9 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
             return;
         }
 
-        indices[icount++] = static_cast<uint16_t>(base + a);
-        indices[icount++] = static_cast<uint16_t>(base + b);
-        indices[icount++] = static_cast<uint16_t>(base + c);
+        out.push_back(static_cast<uint16_t>(a));
+        out.push_back(static_cast<uint16_t>(b));
+        out.push_back(static_cast<uint16_t>(c));
     };
 
     for (int32_t row = rect.minY; row <= rect.maxY; row++) {
@@ -711,6 +738,40 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
                 continue;
             }
 
+            TerrainCaster& caster = s_terrainCache[chunk];
+
+            if (caster.height != chunk->m_height || !(caster.topLeft == chunk->m_topLeftCoords)) {
+                caster.height = chunk->m_height;
+                caster.topLeft = chunk->m_topLeftCoords;
+                caster.indices.clear();
+
+                for (int32_t i = 0; i < 145; i++) {
+                    chunk->GetVertexPosition(i, &caster.p[i]);
+                }
+
+                const uint32_t holes = chunk->m_header->m_holes;
+
+                for (int32_t r = 0; r < 8; r++) {
+                    for (int32_t c = 0; c < 8; c++) {
+                        if (holes & CMap::s_holeMask[(r / 2) * 4 + (c / 2)]) {
+                            continue;
+                        }
+
+                        const int32_t tl = r * 17 + c, tr = tl + 1, ctr = tl + 9, bl = tl + 17, br = tl + 18;
+                        tri(caster.p, caster.indices, ctr, tl, bl);
+                        tri(caster.p, caster.indices, ctr, tr, tl);
+                        tri(caster.p, caster.indices, ctr, br, tr);
+                        tri(caster.p, caster.indices, ctr, bl, br);
+                    }
+                }
+            }
+
+            caster.frame = CWorld::frameCnt;
+
+            if (caster.indices.empty()) {
+                continue;   // all of it faces the light: casts nothing
+            }
+
             if (!vbuf) {
                 vbuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, sizeof(CGxVertexPNCT), kTerrainBatchChunks * 145);
                 ibuf = g_theGxDevicePtr->BufStream(GxPoolTarget_Index, 2, kTerrainBatchChunks * 768);
@@ -718,39 +779,11 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
                 indices = reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(ibuf));
             }
 
-            C3Vector p[145];
-
-            for (int32_t i = 0; i < 145; i++) {
-                chunk->GetVertexPosition(i, &p[i]);
+            for (uint16_t i : caster.indices) {
+                indices[icount++] = static_cast<uint16_t>(vcount + i);
             }
 
-            const uint32_t holes = chunk->m_header->m_holes;
-            const uint32_t firstIndex = icount;
-
-            for (int32_t r = 0; r < 8; r++) {
-                for (int32_t c = 0; c < 8; c++) {
-                    if (holes & CMap::s_holeMask[(r / 2) * 4 + (c / 2)]) {
-                        continue;
-                    }
-
-                    const int32_t tl = r * 17 + c, tr = tl + 1, ctr = tl + 9, bl = tl + 17, br = tl + 18;
-
-                    if (coarse) {
-                        tri(p, vcount, tl, bl, br);
-                        tri(p, vcount, tl, br, tr);
-                    } else {
-                        tri(p, vcount, ctr, tl, bl);
-                        tri(p, vcount, ctr, tr, tl);
-                        tri(p, vcount, ctr, br, tr);
-                        tri(p, vcount, ctr, bl, br);
-                    }
-                }
-            }
-
-            if (icount == firstIndex) {
-                continue;   // all of it faces the light: casts nothing
-            }
-
+            const C3Vector* p = caster.p;
             CGxVertexPNCT* v = verts + vcount;
 
             for (int32_t i = 0; i < 145; i++) {

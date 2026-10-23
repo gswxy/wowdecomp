@@ -49,7 +49,8 @@ float TerrainSunVisibility(float3 viewPosition)
         return 1;
     // The texture's border texels are "nothing blocks" (TerrainSunShadow.cpp), so the clamp lights points past it.
     float3 world = mul(float4(viewPosition, 1), cViewToWorld).xyz;
-    return saturate(1 - (tex2Dlod(sTerrainShadow, float4(cTerrainShadow.xy - cTerrainShadow.z * world.yx, 0, 0)).x - world.z - VF_TERRAIN_BIAS) * cTerrainShadow.w);
+    // R + G: the lit height in fp16 and its rounding residual (TerrainSunShadow Pack)
+    return saturate(1 - (dot(tex2Dlod(sTerrainShadow, float4(cTerrainShadow.xy - cTerrainShadow.z * world.yx, 0, 0)).xy, 1) - world.z - VF_TERRAIN_BIAS) * cTerrainShadow.w);
 }
 
 bool ShadowedSun()

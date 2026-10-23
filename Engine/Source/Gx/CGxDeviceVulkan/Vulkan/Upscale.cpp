@@ -97,11 +97,11 @@ namespace
     void RegisterCVars()
     {
         if (s_cv.mode) return;
-        s_cv.mode = Reg("fsrMode", "Vulkan world upscaler: off, or fsr4 (FSR 4 from FSR4\\<arch>\\, read when the device is made: restart after turning it on)", "off");
+        s_cv.mode = Reg("fsrMode", "Vulkan world upscaler: off, or fsr4 (FSR 4 from FSR4\\<arch>\\, read when the device is made: restart after turning it on; world viewports up to 3840x2160 only)", "off");
         s_cv.scale = Reg("fsrScale", "Vulkan upscaler render scale, 0.5 to 1 of the world viewport (1 = no upscale)", "0.67");
-        s_cv.shaders = Reg("fsr4Shaders", "FSR 4 provider: fast (wxlfsr4-fast.dll, the shader-performance overrides; wxlfsr4.dll if missing) or stock (wxlfsr4.dll)", "fast");
-        s_cv.version = Reg("fsr4Version", "FSR 4 version the provider runs: 4.1.1 or 4.0.2 (any version name the provider offers)", "4.1.1");
-        s_cv.provider = Reg("fsr4Provider", "FSR 4 provider DLL name in FSR4\\<arch>\\, overriding fsr4Shaders (empty = from fsr4Shaders)", "");
+        s_cv.shaders = Reg("fsr4Shaders", "FSR 4 provider: fast (wxlfsr4-fast.dll, the shader-performance overrides; wxlfsr4.dll if missing) or stock (wxlfsr4.dll); read once: restart the client after a change", "fast");
+        s_cv.version = Reg("fsr4Version", "FSR 4 version the provider runs: 4.1.1 or 4.0.2 (any version name the provider offers); read once: restart the client after a change", "4.1.1");
+        s_cv.provider = Reg("fsr4Provider", "FSR 4 provider DLL name in FSR4\\<arch>\\, overriding fsr4Shaders (empty = from fsr4Shaders); read once: restart the client after a change", "");
     }
 
     const char* Str(CVar* cv) { return cv && cv->m_stringValue.m_str ? cv->m_stringValue.m_str : ""; }
@@ -238,6 +238,8 @@ namespace
         bool m_loggedMsaa = false;
         bool m_loggedSize = false;
         bool m_loggedFirst = false;
+        bool m_loggedEnd = false;
+        uint32_t m_offFrames = 0;       ///< world renders since FSR last ran: its context and images go after kReleaseAfter
         VkRect2D m_native = {};         ///< the world viewport, scene pixels
         VkExtent2D m_render = {};       ///< the part of it drawn into, at its top-left
         float m_minDepth = 0.0f;
@@ -253,6 +255,7 @@ namespace
         C44Matrix m_prevView, m_prevProj;
         C3Vector m_prevOrigin;
         bool m_havePrev = false;
+        uint64_t m_prevSerial = 0;      ///< the frame of the history: any gap resets it
 
         VkDevice m_vkDevice = VK_NULL_HANDLE;
         const loader::Device* m_dapi = nullptr;
@@ -266,7 +269,7 @@ namespace
         ffxContext m_ctx = nullptr;
         uint64_t m_versionId = 0;
         char m_versionName[32] = "";
-        VkExtent2D m_ctxRender = {}, m_ctxNative = {};
+        VkExtent2D m_ctxNative = {};
 
         texture::Image m_depth;       ///< the scene depth copy
         texture::Image m_color;       ///< RGBA16F, render size
@@ -279,6 +282,8 @@ namespace
         bool ICreate();
         bool IVersion();
         bool IContext();
+        void IDropContext();
+        void IDropResources();
         bool IEnsure(texture::Image& img, uint32_t width, uint32_t height, VkFormat format, bool depth);
         bool IDispatch(VkCommandBuffer cmd, Prog prog, const Constants& c, VkImageView depth, VkImageView color, VkImageLayout colorLayout,
                        texture::Image* outs[3], uint32_t width, uint32_t height);
@@ -441,24 +446,18 @@ namespace
     // The FSR context for this render and viewport size (wxl-fsr Fsr4::CreateSized); the old one after the GPU is done.
     bool VulkanUpscale::IContext()
     {
-        if (this->m_ctx && this->m_ctxRender.width == this->m_render.width && this->m_ctxRender.height == this->m_render.height
-            && this->m_ctxNative.width == this->m_native.extent.width && this->m_ctxNative.height == this->m_native.extent.height)
+        // sized for render = native, so a render-size change (fsrScale, a viewport shrink) needs only a reset
+        if (this->m_ctx && this->m_ctxNative.width >= this->m_native.extent.width && this->m_ctxNative.height >= this->m_native.extent.height)
             return true;
 
         const context::Handles* h = context::Get();
-
-        if (this->m_ctx)
-        {
-            this->m_dapi->DeviceWaitIdle(this->m_vkDevice);
-            s_provider.destroy(&this->m_ctx, nullptr);
-            this->m_ctx = nullptr;
-        }
+        this->IDropContext();
 
         ffxCreateContextDescUpscale cd = {};
         cd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
         // the 8-bit gamma frame as it is; exposure left to the provider's own pass
-        cd.flags = FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
-        cd.maxRenderSize = { this->m_render.width, this->m_render.height };
+        cd.flags = FFX_UPSCALE_ENABLE_DEPTH_INVERTED | FFX_UPSCALE_ENABLE_DEPTH_INFINITE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+        cd.maxRenderSize = { this->m_native.extent.width, this->m_native.extent.height };
         cd.maxUpscaleSize = { this->m_native.extent.width, this->m_native.extent.height };
         cd.fpMessage = &ProviderMsg;
         BackendVkDesc be = {};
@@ -488,12 +487,30 @@ namespace
             return false;
         }
 
-        this->m_ctxRender = this->m_render;
         this->m_ctxNative = this->m_native.extent;
         this->m_havePrev = false;
         Write(Info, "vulkan: fsr4: FSR %s context %ux%u -> %ux%u (the model builds on the first frame)", this->m_versionName,
               this->m_render.width, this->m_render.height, this->m_native.extent.width, this->m_native.extent.height);
         return true;
+    }
+
+    // The context, after the render thread has submitted what it holds and the GPU is done with it.
+    void VulkanUpscale::IDropContext()
+    {
+        if (!this->m_ctx) return;
+        frame::Drain();   // RENDERTHREAD: a handed-off frame may still hold this context's dispatch
+        this->m_dapi->DeviceWaitIdle(this->m_vkDevice);
+        s_provider.destroy(&this->m_ctx, nullptr);
+        this->m_ctx = nullptr;
+    }
+
+    // FSR off for a while: the context (the model) and the images freed, made again when it is turned on.
+    void VulkanUpscale::IDropResources()
+    {
+        this->IDropContext();
+        texture::Image* images[] = { &this->m_depth, &this->m_color, &this->m_fsrDepth, &this->m_motion, &this->m_out, &this->m_sceneOut };
+        for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) frame::RetireImage(*img, this->m_lastUsed);
+        this->m_havePrev = false;
     }
 
     bool VulkanUpscale::IEnsure(texture::Image& img, uint32_t width, uint32_t height, VkFormat format, bool depth)
@@ -665,7 +682,10 @@ namespace
         di.depth = Res(this->m_fsrDepth.handle, rw, rh, FFX_API_SURFACE_FORMAT_R32_FLOAT, FFX_API_RESOURCE_STATE_COMPUTE_READ, 0);
         di.motionVectors = Res(this->m_motion.handle, rw, rh, FFX_API_SURFACE_FORMAT_R16G16_FLOAT, FFX_API_RESOURCE_STATE_COMPUTE_READ, 0);
         di.output = Res(this->m_out.handle, nw, nh, FFX_API_SURFACE_FORMAT_R16G16B16A16_FLOAT, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, FFX_API_RESOURCE_USAGE_UAV);
-        di.jitterOffset = { this->m_jitterPx[0], this->m_jitterPx[1] };
+        // the scene moved by the D3D9 centre shift (CGxDeviceVulkanDraw.cpp kD3d9CentreShift) in render pixels; told as
+        // jitter, less the shift the native path has in display pixels, so the output lines up with the native UI
+        const float shift = 0.5f - 1.0f / 128.0f;
+        di.jitterOffset = { this->m_jitterPx[0] + shift * (1.0f - float(rw) / float(nw)), this->m_jitterPx[1] + shift * (1.0f - float(rh) / float(nh)) };
         di.motionVectorScale = { static_cast<float>(rw), static_cast<float>(rh) };   // the motion is in render uv
         di.renderSize = { rw, rh };
         di.upscaleSize = { nw, nh };
@@ -679,7 +699,7 @@ namespace
         di.preExposure = 1.0f;
         di.reset = reset;
         di.cameraNear = c.m_depthRange[3];
-        di.cameraFar = 100000.0f;
+        di.cameraFar = 100000.0f;   // unused: FFX_UPSCALE_ENABLE_DEPTH_INFINITE (the depth is near / w)
         di.cameraFovAngleVertical = this->m_proj.b1 != 0.0f ? 2.0f * atanf(1.0f / fabsf(this->m_proj.b1)) : 1.0f;
         di.viewSpaceToMetersFactor = 0.9144f;
         di.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
@@ -721,7 +741,7 @@ namespace
         dev->m_projJitter[0] = want[0];
         dev->m_projJitter[1] = want[1];
 
-        if (dev->m_projNative.d3 == 0.0f && (add[0] != 0.0f || add[1] != 0.0f))
+        if (dev->m_projNative.d3 == 0.0f && !dev->m_textureTarget[GxBuffers_Color].m_texture && (add[0] != 0.0f || add[1] != 0.0f))
         {
             dev->m_projNative.c0 += add[0];
             dev->m_projNative.c1 += add[1];
@@ -742,8 +762,12 @@ namespace
         if (this->m_failed || !ModeFsr4() || scale >= 0.999f || !dev || !dev->m_context || !dev->m_drawPath)
         {
             this->m_havePrev = false;
+            constexpr uint32_t kReleaseAfter = 300;
+            if (this->m_madeObjects && dev && dev->m_context && ++this->m_offFrames == kReleaseAfter) this->IDropResources();
             return;
         }
+
+        this->m_offFrames = 0;
 
         if (frame::Target() || frame::QueryActive() || !frame::Scene() || frame::Failed() || !this->ICreate())
         {
@@ -758,12 +782,13 @@ namespace
                 this->m_loggedMsaa = true;
                 Write(Warn, "vulkan: fsr4 skipped: the scene is multisampled; set gxMultisample 1 (logged once)");
             }
+            this->m_havePrev = false;
             return;
         }
 
         VkViewport vp;
         VkRect2D scissor;
-        if (!dev->IPlaceD3d(vp, scissor)) return;
+        if (!dev->IPlaceD3d(vp, scissor)) { this->m_havePrev = false; return; }
 
         const uint32_t nw = static_cast<uint32_t>(vp.width), nh = static_cast<uint32_t>(vp.height);
         const uint32_t rw = static_cast<uint32_t>(nw * scale + 0.5f), rh = static_cast<uint32_t>(nh * scale + 0.5f);
@@ -776,8 +801,13 @@ namespace
                 this->m_loggedSize = true;
                 Write(Warn, "vulkan: fsr4 skipped: %ux%u -> %ux%u is outside the provider's 64..3840 x 64..2160 (logged once)", rw, rh, nw, nh);
             }
+            this->m_havePrev = false;
             return;
         }
+
+        // a new render or viewport size: the history no longer lines up
+        if (rw != this->m_render.width || rh != this->m_render.height || nw != this->m_native.extent.width || nh != this->m_native.extent.height)
+            this->m_havePrev = false;
 
         this->m_native = { { static_cast<int32_t>(vp.x), static_cast<int32_t>(vp.y) }, { nw, nh } };
         this->m_render = { rw, rh };
@@ -796,6 +826,10 @@ namespace
         this->m_jitterNdc[0] = 2.0f * this->m_jitterPx[0] / static_cast<float>(rw);
         this->m_jitterNdc[1] = -2.0f * this->m_jitterPx[1] / static_cast<float>(rh);
         this->IJitter(true);
+
+        // world textures pick their mips for the display size (FSR's guide: log2(render / display)), in 1/8 steps
+        const int bias = static_cast<int>(-log2f(scaleX) * 8.0f + 0.5f);
+        dev->m_lodBiasKey = static_cast<uint32_t>(bias < 0 ? 0 : bias > 15 ? 15 : bias) << 16;
 
         this->m_active = true;
         this->m_viewSet = false;
@@ -826,13 +860,23 @@ namespace
         if (!this->m_active) return;
         this->m_active = false;
         this->IJitter(false);
+        this->m_device->m_lodBiasKey = 0;
 
         // the world is in the top-left of its viewport now: from here on it has to be put back at full size
         const texture::Image* scene = frame::Scene();
-        if (frame::Target() || frame::QueryActive() || !scene || frame::Failed()) { this->m_havePrev = false; return; }
+        if (frame::Target() || frame::QueryActive() || !scene || frame::Failed())
+        {
+            if (!this->m_loggedEnd)
+            {
+                this->m_loggedEnd = true;
+                Write(Warn, "vulkan: fsr4: the world could not be put back at full size this frame (a target or query open; logged once)");
+            }
+            this->m_havePrev = false;
+            return;
+        }
 
         const VkExtent2D se = scene->extent;
-        if (!this->IEnsure(this->m_sceneOut, se.width, se.height, VK_FORMAT_R8G8B8A8_UNORM, false)) { this->m_havePrev = false; return; }
+        if (!this->IEnsure(this->m_sceneOut, se.width, se.height, VK_FORMAT_R8G8B8A8_UNORM, false)) { this->IFail("its output image could not be made"); return; }
 
         bool fsr = this->m_viewSet && !this->m_failed && ModeFsr4()
             && this->IEnsure(this->m_depth, se.width, se.height, frame::DepthFormat(), true)
@@ -844,7 +888,15 @@ namespace
             && frame::CopyDepthFromScene(this->m_depth);
 
         VkCommandBuffer cmd = frame::Outside();
-        if (!cmd) { this->m_havePrev = false; return; }
+        if (!cmd) { this->IFail("no command buffer for the upscale"); return; }
+
+        // a gap in the frames (a loading screen, frames without FSR) or a camera cut: the history is of another view
+        if (this->m_havePrev)
+        {
+            const float dx = this->m_origin.x - this->m_prevOrigin.x, dy = this->m_origin.y - this->m_prevOrigin.y, dz = this->m_origin.z - this->m_prevOrigin.z;
+            const float facing = this->m_view.a2 * this->m_prevView.a2 + this->m_view.b2 * this->m_prevView.b2 + this->m_view.c2 * this->m_prevView.c2;
+            if (frame::Serial() != this->m_prevSerial + 1 || dx * dx + dy * dy + dz * dz > 50.0f * 50.0f || facing < 0.5f) this->m_havePrev = false;
+        }
 
         this->m_lastUsed = frame::Serial();
         fsr = fsr && this->IFsr(cmd, !this->m_havePrev);
@@ -863,10 +915,14 @@ namespace
                                         this->m_native.extent.width, this->m_native.extent.height);
 
         if (!ok || !frame::CopyIntoScene(this->m_sceneOut, this->m_native))
-            Write(Warn, "vulkan: fsr4: the upscale could not be recorded this frame");
+        {
+            this->IFail("the upscale could not be recorded");
+            return;
+        }
 
         // this frame's camera is the next one's previous
         this->m_havePrev = fsr && this->m_viewSet;
+        this->m_prevSerial = frame::Serial();
         this->m_prevView = this->m_view;
         this->m_prevProj = this->m_proj;
         this->m_prevOrigin = this->m_origin;
@@ -899,6 +955,7 @@ namespace
         {
             this->m_device->m_projJitter[0] = 0.0f;
             this->m_device->m_projJitter[1] = 0.0f;
+            this->m_device->m_lodBiasKey = 0;
         }
 
         CGxDeviceVulkan* device = this->m_device;

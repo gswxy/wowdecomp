@@ -747,6 +747,7 @@ int32_t CGxDeviceVulkan::ITexResolve(CGxTex* texId, uint32_t stage, pipelines::D
     t.view = r->image.view;
     t.imageId = r->image.id;
     t.samplerKey = SamplerKey(texId->m_flags);
+    t.samplerKey |= (t.samplerKey & 0x7u) >= 2 ? this->m_lodBiasKey : 0u;   // FSR: the world's mip bias, mipmapped filters only
     t.cube = r->image.cube;
     draw.textureMask |= 1u << stage;
     return 1;

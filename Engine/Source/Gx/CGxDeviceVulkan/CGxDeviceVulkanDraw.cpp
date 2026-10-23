@@ -621,8 +621,9 @@ void CGxDeviceVulkan::XformSetProjection(const C44Matrix& matrix) {
         projNative = projNative * scale;
     }
 
-    // FSR: the upscaler's sub-pixel jitter (Vulkan/Upscale.cpp); clip w is view z here (c3 = 1), so this moves NDC
-    if (projNative.d3 == 0.0f) {
+    // FSR: the upscaler's sub-pixel jitter (Vulkan/Upscale.cpp); clip w is view z here (c3 = 1), so this moves NDC.
+    // Not into a texture target (the water reflection): its own size and no history to resolve the jitter
+    if (projNative.d3 == 0.0f && !this->m_textureTarget[GxBuffers_Color].m_texture) {
         projNative.c0 += this->m_projJitter[0];
         projNative.c1 += this->m_projJitter[1];
     }

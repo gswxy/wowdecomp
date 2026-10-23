@@ -59,6 +59,8 @@ class CGxDeviceVulkan : public CGxDevice {
     int32_t m_hwCursorDirty;
     // FSR (Vulkan/Upscale.cpp): added to every perspective projection while the world is drawn upscaled, NDC units
     float m_projJitter[2] = { 0.0f, 0.0f };
+    // FSR: or-ed into the sampler key of mipmapped textures while the world is drawn upscaled (Pipelines/Samplers.cpp, bits 16-19)
+    uint32_t m_lodBiasKey = 0;
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);
     virtual void ICursorCreate(const CGxFormat& format);

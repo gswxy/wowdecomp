@@ -25,6 +25,96 @@
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
+#include <string>
+#include <unordered_map>
+#include "Engine/Source/BlizzardCore/SFile2-Core.h"
+
+// TERRAINPOM (not in 12340): height blend and parallax on the terrain (Tools/VulkanShaders/bls/terrainpom.py)
+float CMapRenderChunk::s_heightBlend = 1.0f;
+int32_t CMapRenderChunk::s_parallax = 1;
+float CMapRenderChunk::s_parallaxScale = 0.08f;
+
+namespace {
+
+// the height map beside a tileset texture, "x.blp" -> "x_h.blp" (height in alpha; Data/patch-T.MPQ has one for every
+// stock tileset), or nullptr. ponytail: cached by name for the session and never freed: one small texture per tileset seen
+CTexture* TerrainHeightTexture(const char* name) {
+    static std::unordered_map<std::string, CTexture*> s_cache;
+
+    if (!name || !*name) {
+        return nullptr;
+    }
+
+    std::string key(name);
+
+    for (char& c : key) {
+        c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : (c == '/' ? '\\' : c);
+    }
+
+    auto it = s_cache.find(key);
+
+    if (it != s_cache.end()) {
+        return it->second;
+    }
+
+    CTexture* texture = nullptr;
+    size_t dot = key.rfind('.');
+
+    if (dot != std::string::npos) {
+        std::string path = key.substr(0, dot) + "_h.blp";
+
+        if (SFile::FileExistsInArchives(path.c_str())) {
+            texture = CMap::LoadTexture(path.c_str());
+        }
+    }
+
+    s_cache.emplace(key, texture);
+    return texture;
+}
+
+// the heights (s10 + layer) and the pixel constants c13 / c14 of one chunk draw; all zero (the stock picture) on
+// D3D9 or with both features off
+void TerrainPomBind(CMapRenderChunk* chunk) {
+    float has[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float params[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+    bool on = (api == GxApi_D3d11 || api == GxApi_Vulkan) && (CMapRenderChunk::s_heightBlend > 0.0f || CMapRenderChunk::s_parallax);
+
+    for (uint32_t i = 0; i < 4; i++) {
+        CGxTex* gxTex = nullptr;
+
+        if (on && i < chunk->m_layersCount && chunk->m_layers[i].m_heightTexture) {
+            gxTex = TextureGetGxTex(chunk->m_layers[i].m_heightTexture, 0, nullptr);
+        }
+
+        if (gxTex) {
+            GxTexSetWrap(gxTex, GxTex_Wrap, GxTex_Wrap);
+            has[i] = 1.0f;
+            params[2] = std::max(params[2], static_cast<float>(gxTex->m_width));
+        }
+
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture10 + i), gxTex);
+    }
+
+    if (on && params[2] > 0.0f) {
+        params[0] = std::min(std::max(CMapRenderChunk::s_heightBlend, 0.0f), 1.0f);
+        params[1] = CMapRenderChunk::s_parallax ? std::min(std::max(CMapRenderChunk::s_parallaxScale, 0.0f), 0.5f) : 0.0f;
+        // the parallax fades out between the height map's mip 1.5 and 3.5 (patch-T's maps: 128 texels a 4 yd tile)
+        params[3] = 3.5f;
+    }
+
+    GxShaderConstantsSet(GxSh_Pixel, 13, has, 1);
+    GxShaderConstantsSet(GxSh_Pixel, 14, params, 1);
+}
+
+void TerrainPomUnbind() {
+    for (uint32_t i = 0; i < 4; i++) {
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture10 + i), static_cast<CGxTex*>(nullptr));
+    }
+}
+
+}
+
 #if defined(_MSC_VER)
 #include <malloc.h>
 #else
@@ -258,6 +348,7 @@ void CMapRenderChunk::FreeLayers() {
     for (uint32_t i = 0; i < this->m_layersCount; i++) {
         CMapRenderChunkLayer& layer = this->m_layers[i];
         layer.m_texture = nullptr;
+        layer.m_heightTexture = nullptr;
         layer.m_textureId = -1;
         layer.m_flags = 0;
 
@@ -366,6 +457,7 @@ void CMapRenderChunk::CreateLayer(CMapArea* area, SMLayer* layer, int32_t checkD
     }
 
     renderLayer->m_texture = areaTexture->m_texture;
+    renderLayer->m_heightTexture = TerrainHeightTexture(areaTexture->m_textureName);
     renderLayer->m_textureId = layer->m_textureId;
     renderLayer->m_layerTexture = nullptr;
     renderLayer->m_owner = this;
@@ -871,6 +963,7 @@ CMapRenderChunkLayer::CMapRenderChunkLayer() {
     this->m_textureId = -1;
     this->m_layerTexture = nullptr;
     this->m_owner = nullptr;
+    this->m_heightTexture = nullptr;
 }
 
 // VERIFY: d15abdb3 auto
@@ -2693,6 +2786,8 @@ void CMapRenderChunk::RenderSinglePassPixelShader() {
 
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), TextureGetGxTex(this->m_terrainBlendTexture, 1, nullptr));
     GxXformSet(static_cast<EGxXform>(GxXform_Tex0 + i), alphaMatrix);
+    static const float s_noPom[4] = { 0.0f, 0.0f, 0.0f, 0.0f };   // TERRAINPOM: no VS here, so no gxT: stock
+    GxShaderConstantsSet(GxSh_Pixel, 14, s_noPom, 1);
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
 
     for (; i >= 0; i--) {
@@ -2741,7 +2836,9 @@ void CMapRenderChunk::RenderSinglePassVertexPixelShader() {
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), blendTex);
 
     CMapRenderChunk::SetVertexShader(this, this->m_layersCount + 1, specular);
+    TerrainPomBind(this);   // TERRAINPOM
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
+    TerrainPomUnbind();
 
     for (uint32_t j = 0; j < this->m_layersCount; j++) {
         if (this->m_layers[j].m_flags & 0x40) {

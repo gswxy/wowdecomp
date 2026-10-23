@@ -805,6 +805,21 @@ void CWorldParam::Initialize() {
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
 
+    // TERRAINPOM (not in 12340): height-based layer blending and parallax occlusion on the terrain, D3D11/Vulkan only
+    // (MapRenderChunk.cpp TerrainPomBind, Tools/VulkanShaders/bls/terrainpom.py); the height maps are custom.MPQ's _h.blp
+    CVar::Register("terrainHeightBlend", "Terrain layers blend by height (0-1, 0 = stock blend; D3D11/Vulkan)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        CMapRenderChunk::s_heightBlend = static_cast<float>(SStrToFloat(value));
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("terrainParallax", "Parallax occlusion on the terrain (D3D11/Vulkan)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        CMapRenderChunk::s_parallax = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("terrainParallaxScale", "Terrain parallax depth in yards (0-0.5)", 1, "0.08", [](CVar*, const char*, const char* value, void*) -> bool {
+        CMapRenderChunk::s_parallaxScale = static_cast<float>(SStrToFloat(value));
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+
     // BACKLOG F4: spell queue window in ms (ClientExtensions [SpellQueue] window); 0 = stock "not ready" during the GCD.
     CVar::Register("spellQueueWindow", "Cast this many ms before a cooldown ends; the server queues it (0 = off)", 1, "150", [](CVar*, const char*, const char* value, void*) -> bool {
         s_spellQueueWindow = SStrToInt(value);

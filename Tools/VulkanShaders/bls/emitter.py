@@ -35,6 +35,7 @@ import math
 
 from . import dx9ir as ir
 from . import lighting
+from . import terrainpom
 
 # ---- the interface contract -------------------------------------------------------------------
 VIN_LOCATION = {'position0': 0, 'normal0': 1, 'color0': 2, 'color1': 3, 'texcoord0': 4,
@@ -46,6 +47,7 @@ VARYING_TYPE = {'fog0': 'float'}
 PCONST = 16              # pixel rows every stock record has; also the p[] array size
 PCONST_MAX = 256         # rows a pixel record may have (16 in p[], the rest in px[])
 VCONST_SMALL, VCONST_LARGE = 64, 256
+TP_SAMPLE = r'texture\(s(\d+), (v\d+\.[xyzw]{2})\)'   # a stock terrain layer / blend read (terrainpom.py)
 
 # vs_2_0 fixed-function output registers -> semantic
 VS2_OUT = {'oPos': 'position0', 'oD0': 'color0', 'oD1': 'color1', 'oFog': 'fog0', 'oPts': 'psize0'}
@@ -100,6 +102,7 @@ class Emitter(object):
         self.inputs = collections.OrderedDict()    # register name -> semantic (vertex) / pixel reads
         self.in_masks = {}
         self.out_sems = collections.OrderedDict()  # output register name -> [semantic]
+        self.tp, self.tp_reads, self.tp_vs = 0, None, None   # terrainpom.py
         self.samplers = {}                         # slot -> '2d' | 'cube'
         self.temps = set()
         self.uses_odepth = False
@@ -639,6 +642,9 @@ class Emitter(object):
             self.surface = lighting.surface_outputs(self)
             if self.surface:
                 self.flags.add('lit_surface')
+            pos = next((nm for nm, sem in self.inputs.items() if sem == 'position0'), None)
+            self.tp_vs = terrainpom.vs_line(pos, 'glsl') if (self.surface and pos and
+                                                               terrainpom.is_terrain_vs(getattr(self.rec, 'names', None) or [])) else None
             self.vconst = VCONST_LARGE if (self.relative or self.cmax >= VCONST_SMALL) else VCONST_SMALL
         else:
             self.reads = []
@@ -647,6 +653,12 @@ class Emitter(object):
                     self.reads.append(s)
             self.litpix = lighting.pixel_colors(self)
             self.vconst = VCONST_SMALL
+            # terrain height blend and parallax (terrainpom.py): the layer / blend reads, the height maps' samplers
+            self.tp = terrainpom.layers(getattr(self.rec, 'names', None) or [], self.samplers)
+            self.tp_reads = terrainpom.find_reads('\n'.join(self.body), self.tp, TP_SAMPLE) if self.tp else None
+            if self.tp_reads:
+                for k in range(self.tp):
+                    self.samplers[terrainpom.HEIGHT_SLOT + k] = '2d'
         self.pconst = PCONST
         if not self.vs and self.cmax >= PCONST:
             self.pconst = (self.cmax + 1 + 3) // 4 * 4
@@ -678,6 +690,8 @@ class Emitter(object):
             if self.surface:
                 for nm, loc in lighting.VARYINGS:
                     P('layout(location = %d) out vec4 %s;   // lighting: the surface' % (loc, nm))
+            if self.tp_vs:
+                P('layout(location = %d) out vec4 gxT;   // terrainpom.py: view-space position' % terrainpom.LOCATION)
         else:
             P('// Varyings read, by semantic, at the same locations the vertex module writes them.')
             for sem in self.reads:
@@ -686,6 +700,8 @@ class Emitter(object):
             if self.litpix:
                 for nm, loc in lighting.VARYINGS:
                     P('layout(location = %d) in vec4 %s;   // lighting: the surface' % (loc, nm))
+            if self.tp_reads:
+                P('layout(location = %d) in vec4 gxT;   // terrainpom.py: view-space position' % terrainpom.LOCATION)
             P('')
             P('layout(location = 0) out vec4 oC0;')
             if self.uses_oc1:
@@ -732,6 +748,9 @@ class Emitter(object):
             L.extend(lighting.BLOCK.split('\n'))
             if self.litpix:
                 L.extend(lighting.PIXEL_LIB.split('\n'))
+        if not self.vs and self.tp_reads:
+            P('')
+            L.extend(terrainpom.height_fn(self.tp, 'glsl'))
         P('')
         P('void main()')
         P('{')
@@ -759,13 +778,19 @@ class Emitter(object):
                 else:
                     rhs = sem
                 P('    vec4 %s = %s;' % (nm, rhs))
+        body = self.body
+        if not self.vs and self.tp_reads:
+            L.extend(terrainpom.prologue(self.tp, self.tp_reads, 'glsl'))
+            body = terrainpom.rewrite_body(body, self.tp, self.tp_reads)
         P('')
         if self.litpix:
             L.extend(lighting.pixel_splice(*self.litpix))
-        L.extend(self.body)
+        L.extend(body)
         P('')
         if self.surface:
             L.extend(self.surface)
+        if self.vs and self.tp_vs:
+            P(self.tp_vs)
         # epilogue
         if self.vs:
             for nm, sems in self.out_sems.items():

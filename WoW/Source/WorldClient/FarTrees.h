@@ -9,15 +9,33 @@
 // Design and the reasons the old cards (e658201 / 4d4185a) failed: fartrees/FARTREES-PLAN.md.
 
 #include <cstdint>
+#include <vector>
+
+class CAaBox;
+class CFrustum;
+class C3Vector;
 
 namespace FarTrees {
 
 // CVar farTrees (WorldParam_CVar.cpp), default 0.
 extern int32_t s_enabled;
+// CVar farTreesShadow, default 1: the impostors cast the sun's shadow (only with farTrees).
+extern int32_t s_shadow;
 
 // CWorldScene::Render, after the WMO groups and before the horizon (main thread). Draws before every M2 pass, so a
 // fading real tree blends over its own impostor.
 void Draw();
+
+// farTreesShadow, part 1: CShadowQuery::RenderCallback, cascade bands 0-2, after the stock casters. The trees past
+// their doodad fade (the real model casts until then) as depth-only quads on the atlas view nearest the light,
+// one draw per (tile, model). extents / cull: the band's (world); camera: what the band's view is relative to.
+bool ShadowWanted();
+void DrawShadow(const CAaBox& extents, CFrustum& cull, const C3Vector& camera);
+
+// farTreesShadow, part 2: the trees as canopy bumps in TerrainSunShadow's lit heights (past the cascades).
+struct Canopy { float x, y, top, radius; };
+uint32_t CanopyGeneration();                  // changes whenever the set below does (a tile or a model arrived or left)
+void Canopies(std::vector<Canopy>& out);     // every placed tree whose model is baked (empty when off)
 
 } // namespace FarTrees
 

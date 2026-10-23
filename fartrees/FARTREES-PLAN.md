@@ -58,3 +58,20 @@ Pre-made placement and atlas files go stale on servers with custom or updated ma
 - Tilted placements drawn upright; WMO doodad-set trees left out; glow and replaceable-texture batches left out.
 - Untested in game. If the depth write misbehaves on a backend, check FarTreesPS `o.depth` against the native
   projection's depth range first. Custom.MPQ must carry the two shaders (and the Vulkan manifest their translation).
+
+## 5. Sun shadows (farTreesShadow, default 1, only with farTrees)
+
+- **Cascades** (`FarTrees::DrawShadow`, from `CShadowQuery::RenderCallback` after the terrain casters, bands 0-2 with
+  query flag 8): per (tile, model) one draw of the same static buffer with FarTreesShadowVS/PS. Each tree is a quad
+  of side 2R on the atlas view nearest the light (the sun is above; the hemi grid holds it), cut out at coverage 0.5,
+  writing the stock ShadowMapSL value `max(c0.w * light view z, 0)` (plus hardware depth for PCF). Hand-over: the VS
+  drops the tree while it is nearer than its level's fade start (`IsBeyondFadeDistance`, what the stock shadow
+  queries cull real doodads by), so exactly one of the two casts. Flat at the crown's centre (no baked depth).
+- **Past the cascades** (TerrainSunShadow): every placed tree as a crown of its top height (2 cz) and radius
+  (sqrt(R^2 - cz^2) / sqrt 2) in the lit-height land. A worker thread (`std::async`) rasterises them on grids centred
+  on the camera (fine 4.17 yd: each crown; coarse 33 yd: a cell rises only where crowns cover half of it); the builds
+  take max(land, crown) per texel. Trees within the band-2 reach less ~380 yd of drift are left to the cascades; in
+  the overlap the shadow mask merges the two (never darker than ambient).
+- Main thread: one snapshot of the placements per new raster (~0.2 ms at 30k trees, on a 67 yd drift or when trees
+  arrive), and ~0.1 ms of max() on a fine build. New rasters wait for the next build (drift, light turn), except the
+  first after a map load or turning it on. Shaders: FarTreesShadowVS / FarTreesShadowPS in custom.MPQ.

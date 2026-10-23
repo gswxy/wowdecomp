@@ -17,7 +17,10 @@
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
+#include "Engine/Source/Tempest/CAaBox.h"
+#include "Engine/Source/Tempest/CFrustum.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/FarTreesBake.h"
@@ -28,6 +31,7 @@
 namespace FarTrees {
 
 int32_t s_enabled = 0;
+int32_t s_shadow = 1;
 
 namespace {
 
@@ -72,6 +76,10 @@ std::unordered_set<uint32_t> s_seen;         // uniqueIds placed (a doodad cross
 CGxShader* s_vs = nullptr;
 CGxShader* s_ps = nullptr;
 bool s_failed = false;
+CGxShader* s_shVs = nullptr;   // farTreesShadow casters
+CGxShader* s_shPs = nullptr;
+bool s_shFailed = false;
+uint32_t s_generation = 0;     // CanopyGeneration
 
 void TexCallback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_t level, void* userArg, uint32_t& stride, const void*& texels) {
     if (command != GxTex_Latch) return;
@@ -81,6 +89,7 @@ void TexCallback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint
 }
 
 void FreeTile(Tile& t) {
+    if (!t.places.empty()) s_generation++;
     for (Segment& s : t.segs) if (s.buf) g_theGxDevicePtr->BufDestroy(s.buf);
     t.segs.clear();
     if (t.pool) g_theGxDevicePtr->PoolDestroy(t.pool);
@@ -100,6 +109,7 @@ void Reset() {
     s_modelIndex.clear();
     s_seen.clear();
     s_map.clear();
+    s_generation++;
 }
 
 uint32_t ModelIndex(const std::string& name) {
@@ -132,6 +142,7 @@ void TakeTile(FarTreesBake::TileResult& r) {
         if (t.segs.empty() || t.segs.back().model != t.places[j].model) t.segs.push_back({ t.places[j].model, j, 0, nullptr });
         t.segs.back().count++;
     }
+    if (!t.places.empty()) s_generation++;
 }
 
 void TakeModel(FarTreesBake::ModelResult& r, uint32_t now) {
@@ -148,6 +159,7 @@ void TakeModel(FarTreesBake::ModelResult& r, uint32_t now) {
     g_theGxDevicePtr->TexCreate(GxTex_2d, W, W, 0, GxTex_Dxt5, GxTex_Dxt5, flags, &m.nrmData, TexCallback, "FarTreesN", m.nrm);
     m.state = m.alb && m.nrm ? 1 : 2;
     m.readyMs = now;
+    if (m.state == 1) s_generation++;
 }
 
 bool Gpu() {
@@ -158,6 +170,19 @@ bool Gpu() {
     }
     if (!s_vs || !s_vs->Valid() || !s_ps || !s_ps->Valid()) {
         s_failed = true;   // no FarTrees shaders in custom.MPQ (or no shader path): no far trees
+        return false;
+    }
+    return true;
+}
+
+bool GpuShadow() {
+    if (s_shFailed) return false;
+    if (!s_shVs) {
+        g_theGxDevicePtr->ShaderCreate(&s_shVs, GxSh_Vertex, "Shaders\\Vertex", "FarTreesShadowVS", 1);
+        g_theGxDevicePtr->ShaderCreate(&s_shPs, GxSh_Pixel, "Shaders\\Pixel", "FarTreesShadowPS", 1);
+    }
+    if (!s_shVs || !s_shVs->Valid() || !s_shPs || !s_shPs->Valid()) {
+        s_shFailed = true;   // an older custom.MPQ without them: no far tree shadows in the cascades
         return false;
     }
     return true;
@@ -338,6 +363,110 @@ void Draw() {
         }
     }
     if (begun) g_theGxDevicePtr->RsPop();
+}
+
+bool ShadowWanted() {
+    return s_enabled && s_shadow && !s_tiles.empty() && !s_failed && !s_shFailed && (CWorld::enables & Enable_Doodads) && (CWorld::enables & Enable_NoFullAlpha);
+}
+
+// Inside the band's RsPush, with its view (light look-at, camera-relative) and projection set. Every tree is tested
+// in FarTreesShadowVS (fade hand-over, size class), so a tile costs one draw per model and nothing per tree here.
+void DrawShadow(const CAaBox& extents, CFrustum& cull, const C3Vector& camera) {
+    if (!g_theGxDevicePtr || !ShadowWanted() || !GpuShadow()) return;
+
+    C44Matrix vp;
+    GxXformViewProjNativeTranspose(vp);
+    vp = vp.Transpose();
+    const CGxMatrixStack& stack = g_theGxDevicePtr->m_xforms[GxXform_View];
+    const C44Matrix& V = stack.m_mtx[stack.m_level];
+    const C3Vector& eye = CWorldScene::s_activeWorldView;
+    const C3Vector& sun = CShadowCache::s_sunDir;   // light travel direction
+
+    float k[11][4] = {};
+    std::memcpy(k, &vp, sizeof(float) * 16);
+    k[4][0] = camera.x; k[4][1] = camera.y; k[4][2] = camera.z;
+    k[7][0] = CWorldScene::s_fadeDistMin[2]; k[7][1] = CWorldScene::s_fadeDistMin[3];
+    k[8][0] = eye.x; k[8][1] = eye.y; k[8][2] = eye.z;
+    k[9][0] = -sun.x; k[9][1] = -sun.y; k[9][2] = -sun.z;
+    k[10][0] = V.a2; k[10][1] = V.b2; k[10][2] = V.c2; k[10][3] = V.d2;
+    const float pc[4] = { 0.0f, 0.0f, 0.0f, CShadowCache::s_shadowScale };
+
+    const float nearest = std::fmin(CWorldScene::s_fadeDistMin[2], CWorldScene::s_fadeDistMin[3]);
+    bool begun = false;
+    for (auto& kv : s_tiles) {
+        Tile& t = kv.second;
+        if (!t.ready || t.places.empty()) continue;
+        float far2 = 0.0f;
+        const float c[3] = { eye.x, eye.y, eye.z };
+        for (int i = 0; i < 3; ++i) {
+            const float df = std::fmax(std::fabs(t.lo[i] - c[i]), std::fabs(t.hi[i] - c[i]));
+            far2 += df * df;
+        }
+        if (far2 < nearest * nearest) continue;   // every tree still a real model, casting itself
+        const CAaBox box(C3Vector(t.lo[0], t.lo[1], t.lo[2]), C3Vector(t.hi[0], t.hi[1], t.hi[2]));
+        if (!extents.Intersects(box) || !cull.Cull(box) || !EnsureBuffers(t)) continue;
+
+        for (const Segment& s : t.segs) {
+            Model& m = s_models[s.model];
+            if (m.state != 1 || !s.buf || !s.buf->m_hasData) continue;
+            if (!begun) {
+                g_theGxDevicePtr->RsPush();
+                GxRsSet(GxRs_VertexShader, s_shVs);
+                GxRsSet(GxRs_PixelShader, s_shPs);
+                GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);   // cut-out by clip() in FarTreesShadowPS
+                GxRsSet(GxRs_AlphaRef, 0);
+                GxRsSet(GxRs_DepthTest, 1);
+                GxRsSet(GxRs_DepthFunc, 0);   // LESSEQUAL
+                GxRsSet(GxRs_DepthWrite, 1);
+                GxRsSet(GxRs_Culling, 0);
+                GxRsSet(GxRs_Fog, 0);
+                GxRsSet(GxRs_Texture1, 0);
+                g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, pc, 1);
+                begun = true;
+            }
+            const FarTreesBake::ModelResult& r = m.data;
+            const float F = static_cast<float>(FarTreesBake::kFrames);
+            k[5][0] = r.centre[0]; k[5][1] = r.centre[1]; k[5][2] = r.centre[2]; k[5][3] = r.radius;
+            k[6][0] = F; k[6][1] = F - 1.0f; k[6][2] = r.extent; k[6][3] = 1.0f / F;
+            g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, &k[0][0], 11);
+            GxRsSet(GxRs_Texture0, m.alb);
+            GxPrimVertexPtr(s.buf, GxVBF_PT);
+            CGxBatch batch;
+            batch.m_primType = GxPrim_Triangles;
+            batch.m_start = 0;
+            batch.m_count = s.count * 6;
+            batch.m_minIndex = 0;
+            batch.m_maxIndex = 0;
+            g_theGxDevicePtr->Draw(&batch, 0);
+        }
+    }
+    if (begun) g_theGxDevicePtr->RsPop();
+}
+
+uint32_t CanopyGeneration() {
+    return s_enabled && s_shadow ? s_generation : 0;
+}
+
+// Main thread, on TerrainSunShadow's snapshot (about 0.2 ms at 30k trees: no trig, the crown's offset from the trunk
+// is dropped). Model space -> crown: the bake's centre is the middle of the drawn vertices' box and its radius that
+// box's half diagonal, so with the origin at the trunk's foot the top is 2 cz and the crown's half width about
+// sqrt(R^2 - cz^2) / sqrt(2) a side. ponytail: one round crown per tree; the box itself if the cache ever keeps it.
+void Canopies(std::vector<Canopy>& out) {
+    out.clear();
+    if (!s_enabled || !s_shadow) return;
+    for (const auto& kv : s_tiles) {
+        const Tile& t = kv.second;
+        if (!t.ready) continue;
+        for (const Place& p : t.places) {
+            const Model& m = s_models[p.model];
+            if (m.state != 1) continue;
+            const FarTreesBake::ModelResult& r = m.data;
+            const float size = r.extent * p.scale;
+            if (size <= 4.0f || size > 100.0f) continue;   // FarTreesVS: no impostor for these
+            const float cz = std::fmax(r.centre[2], 0.0f);
+            out.push_back({ p.x, p.y, p.z + 2.0f * cz * p.scale, std::sqrt(std::fmax(r.radius * r.radius - cz * cz, 0.0f)) * 0.7071f * p.scale });
+        }
+    }
 }
 
 } // namespace FarTrees

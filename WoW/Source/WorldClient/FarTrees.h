@@ -26,6 +26,9 @@ extern int32_t s_shadow;
 // fading real tree blends over its own impostor.
 void Draw();
 
+// Stops the worker thread before the client closes the archives it reads (Client.cpp, no device calls).
+void Shutdown();
+
 // farTreesShadow, part 1: CShadowQuery::RenderCallback, cascade bands 0-2, after the stock casters. The trees past
 // their doodad fade (the real model casts until then) as depth-only quads on the atlas view nearest the light,
 // one draw per (tile, model). extents / cull: the band's (world); camera: what the band's view is relative to.

@@ -750,7 +750,7 @@ void CWorldParam::Initialize() {
     }, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // FARTREES: not in 12340. Trees past the doodad fade drawn to farclip as baked impostors (FarTrees.cpp).
-    CVar::Register("farTrees", "Far trees as baked impostors past the doodad fade (needs FarTrees data)", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+    CVar::Register("farTrees", "Far trees as impostors past the doodad fade, baked at run time and cached in Cache/FarTrees (needs the FarTrees shaders in custom.MPQ)", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
         FarTrees::s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);

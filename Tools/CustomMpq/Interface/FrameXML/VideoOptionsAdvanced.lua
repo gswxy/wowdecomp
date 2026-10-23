@@ -56,6 +56,8 @@ local PAGES = {
 	  { "debugHour", "slider", "Time of day (preview)", "Draws the sky, light, sun, moon, shadows and skyboxes for this hour. -1 follows the game clock. Not saved.", -1, 24, 0.5 },
 	  { "vfogGodRays", "slider", "God rays", "Light shafts from the sky around the sun. 0 turns them off.", 0, 4, 0.25 },
 	  { "vfogShadowedSun", "check", "Sun shafts through the scene", "Sunlight in the fog is blocked by trees and buildings, so beams fall through the fog where the sun reaches. Needs shadows above Low." },
+	  { "vfogShafts", "check", "Sun shafts from any angle", "The sun shafts stay visible when you look away from the sun, not only toward it. Needs the sun shafts above." },
+	  { "vfogShaftIntensity", "slider", "Sun shaft strength", "How bright the sun shafts are away from the sun.", 0, 2, 0.05 },
 	  { "vfogCanopy", "slider", "Fog darkening in shade", "How much darker the fog is under trees and beside buildings while sun shafts are on.", 0, 1, 0.05 },
 	  { "vfogSunScatter", "slider", "Sun glow in fog", "How much sun or moon light the fog catches.", 0, 10, 0.05 },
 	  { "vfogLocalLights", "check", "Lamps light the fog", "Torches, lamps and other nearby lights brighten the fog." },

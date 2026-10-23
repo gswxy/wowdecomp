@@ -364,7 +364,8 @@ bool SameSettings(const Config& a, const Config& b) {
         && a.classicNoise == b.classicNoise && a.glowCompensation == b.glowCompensation
         && a.maxDistance == b.maxDistance && a.startOffset == b.startOffset && a.temporal == b.temporal
         && a.debugView == b.debugView && a.interiorFarFog == b.interiorFarFog && a.underwater == b.underwater
-        && a.stockFog == b.stockFog && a.sunMarker == b.sunMarker && a.shadowedSun == b.shadowedSun && a.canopy == b.canopy;
+        && a.stockFog == b.stockFog && a.sunMarker == b.sunMarker && a.shadowedSun == b.shadowedSun && a.canopy == b.canopy
+        && a.shafts == b.shafts && a.shaftIntensity == b.shaftIntensity;
 }
 
 // wxl-vfog ec1c66b TangentSpan: tangents (lateral over depth) of the directions ahead that can meet a circle.
@@ -681,8 +682,9 @@ void InvalidateHistory() {
 
 // gfxShadowFade: vf_shadow.hlsli cShadowFade (c64.x = 1 - fade) for SunVisibility, the fog's and the caustics' sun
 // tap (shafts, in-scatter, canopy). The sun glare's occlusion is real and is not faded. Shared with the caustics.
-void SetShadowFadeRegister() {
-    const float unfade[4] = { 1.0f - DayNight::g_shadowFade, 0.0f, 0.0f, 0.0f };
+// y = vfogShafts' isotropic floor on the layers' sun phase (vf_integrate LayerRayTerms), the fog marches only.
+void SetShadowFadeRegister(float shafts) {
+    const float unfade[4] = { 1.0f - DayNight::g_shadowFade, shafts, 0.0f, 0.0f };
     SetPs(kShadowRegister + 8, unfade, 1);
 }
 
@@ -777,6 +779,7 @@ struct FogFrame {
     float shadow[8][4]; // vf_shadow.hlsli c56-c62 (control x = 0: sun unshadowed), c63 terrain (w = 0: off)
     CGxTex* terrainShadow;  // s7, gfxTerrainShadow
     bool sunShadowed;       // a cascade or the terrain shadow is tested (c62.x, c63.w)
+    float shafts;           // c64.y, vfogShafts: the sun phase floor that shows the shadowed in-scatter from any angle
     CGxTex* shadowMaps[2];
 };
 
@@ -797,7 +800,7 @@ void ShadowConstants(bool shadowedSun, float canopy, const FrameInputs& in, cons
 void BindShadows(const FogFrame& f, bool on) {
     if (on) {
         SetPs(kShadowRegister, &f.shadow[0][0], 8);
-        SetShadowFadeRegister();
+        SetShadowFadeRegister(f.shafts);
     }
     Bind(kShadowStage, on ? f.shadowMaps[0] : nullptr);
     Bind(kShadowStage + 1, on ? f.shadowMaps[1] : nullptr);
@@ -1310,6 +1313,10 @@ bool RenderFog(const FogParams& fogIn, const FrameInputs& in, const Config& cfg,
     // when temporal is off but a sun shadow is tested: its compares at fixed mid-steps draw the shadow volumes as shells
     // round the camera scaled by each pixel's depth, a warped copy of the scene in the fog fixed to the screen.
     f.sunShadowed = f.shadow[6][0] > 0.0f || f.shadow[7][3] > 0.0f;
+    // vfogShafts: the HG phase is forward (about 1/27 of its peak with the sun behind), so the shadowed in-scatter only
+    // showed toward the sun. An isotropic floor lets the lit and shadowed air differ from every view direction. Only
+    // with a shadow tested: unshadowed it would be a flat brightening.
+    f.shafts = cfg.shafts && f.sunShadowed ? cfg.shaftIntensity : 0.0f;
     if (!temporal && f.sunShadowed) {
         f.march[0] = 0.5f;
     }

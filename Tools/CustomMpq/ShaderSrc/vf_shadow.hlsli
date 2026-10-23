@@ -35,7 +35,7 @@ sampler2D sShadowFar : register(s6);
 float4 cTerrainShadow : register(c63);
 sampler2D sTerrainShadow : register(s7);
 // gfxShadowFade (DayNight PickLightBody): x = 1 - fade, how much of the sun's shadow (land and cascades) is lifted at
-// dusk and dawn. 0 = the full shadow, exactly.
+// dusk and dawn. 0 = the full shadow, exactly. y = vfogShafts' isotropic floor on the sun phase (marches; 0 elsewhere).
 float4 cShadowFade : register(c64);
 // VF_TERRAIN_BIAS (yd): a surface point (the caustics' bed) is tested this far up, as the ADT ground between WDL
 // vertices may sit under their lit height (the shadow mask's 4 yd). 0 for fog samples in the air.

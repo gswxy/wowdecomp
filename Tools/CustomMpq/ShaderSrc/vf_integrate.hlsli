@@ -159,7 +159,7 @@ float LayerPhase(FogLayer layer, float cosAngle)
 float2 LayerRayTerms(FogLayer layer, float cosToLight, float skyUpward)
 {
     return float2(layer.density * SkyDensityScale(layer, skyUpward),
-                  (1 - HorizonShadow(layer)) * LayerPhase(layer, cosToLight));
+                  (1 - HorizonShadow(layer)) * (LayerPhase(layer, cosToLight) + cShadowFade.y));
 }
 
 struct MarchRay

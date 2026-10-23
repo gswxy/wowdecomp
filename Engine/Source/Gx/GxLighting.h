@@ -24,7 +24,19 @@ enum EGxLightingFeature : uint32_t {
     GxLighting_Scattering = 0x40,     // the fog tinted toward the sun's colour around the sun
     GxLighting_Hdr = 0x80,            // the world into a 16-bit float target, tonemapped
     GxLighting_Bloom = 0x100,         // needs Hdr
+    GxLighting_Pbr = 0x200,           // PBR-lite: GGX specular, sky reflection, energy conservation (lightPbr)
 };
+
+// CUSTOM (PBR-lite): the material category of the next draw, guessed by the engine (assets carry no PBR maps). The
+// devices hand it to the lit pixel shader with the lit flag: D3D11 dev_alphaRef.y, Vulkan regs.misc.y = 1 + category
+// (0 = the bound VS does not write the surface). Only M2 draws set it; the shaders read it for M2 surfaces only.
+enum EGxLightingMaterial : uint32_t {
+    GxLightingMaterial_Generic = 0,   // a doodad: wood, stone, plants (rough)
+    GxLightingMaterial_Skin = 1,      // character and creature bodies, hair (medium)
+    GxLightingMaterial_Item = 2,      // item models and textures: armour, weapons (metal-ish, smoother)
+};
+
+extern uint32_t g_gxLightingMaterial;
 
 struct GxLightingParams {
     uint32_t m_features = 0;
@@ -45,10 +57,11 @@ struct GxLightingParams {
     float m_dynamicIntensity = 1.0f;
     float m_specularM2 = 0.3f;
     float m_specularWmo = 1.0f;
-    float m_wmoNormal = 0.0f;        // WMO normal map strength, 0 = off (GxLightingGpu m_flags[2] as float bits)
+    float m_wmoNormal = 0.0f;        // WMO normal map strength, 0 = off (GxLightingGpu m_groundTint[3])
     C3Vector m_skyColor;             // 0 to 1, gamma as the engine stores them
     C3Vector m_groundColor;
     float m_hemisphere = 0.0f;
+    float m_roughnessBias = 0.0f;    // PBR-lite: added to every surface's roughness
 
     // fog, as the engine has it this frame (DayNight)
     C3Vector m_fogColor;
@@ -105,11 +118,11 @@ struct GxLightingGpuLight {
 };
 
 struct GxLightingGpu {
-    uint32_t m_flags[4];      // x GxLighting_PerPixel..Hemisphere (0 = off), y lights, z WMO normal map strength (float bits, 0 = off), w lightingDebug (2, 3)
+    uint32_t m_flags[4];      // x GxLighting_PerPixel..Hemisphere, Pbr (0 = off), y lights, z roughness bias (float bits), w lightingDebug (2, 3)
     float m_view[16];         // row-major (row vector * matrix): render-relative world -> view, for the terrain
     float m_viewInv[16];
     float m_skyTint[4];       // rgb sky colour at luminance 1, a hemisphere strength
-    float m_groundTint[4];    // rgb ground colour at luminance 1
+    float m_groundTint[4];    // rgb ground colour at luminance 1, a WMO normal map strength (wmoNormalStrength, 0 = off)
     float m_upView[4];        // xyz world up in view space, w time in seconds (flicker)
     float m_lightParams[4];   // x wrap, y dynamic intensity, z M2 specular, w WMO specular
     GxLightingGpuLight m_lights[kGxLightingMaxLights];

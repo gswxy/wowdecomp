@@ -56,6 +56,8 @@ local PAGES = {
 	  { "debugHour", "slider", "Time of day (preview)", "Draws the sky, light, sun, moon, shadows and skyboxes for this hour. -1 follows the game clock. Not saved.", -1, 24, 0.5 },
 	  { "vfogGodRays", "slider", "God rays", "Light shafts from the sky around the sun. 0 turns them off.", 0, 4, 0.25 },
 	  { "vfogShadowedSun", "check", "Sun shafts through the scene", "Sunlight in the fog is blocked by trees and buildings, so beams fall through the fog where the sun reaches. Needs shadows above Low." },
+	  { "vfogShafts", "check", "Sun shafts from any angle", "The sun shafts stay visible when you look away from the sun, not only toward it. Needs the sun shafts above." },
+	  { "vfogShaftIntensity", "slider", "Sun shaft strength", "How bright the sun shafts are away from the sun.", 0, 2, 0.05 },
 	  { "vfogCanopy", "slider", "Fog darkening in shade", "How much darker the fog is under trees and beside buildings while sun shafts are on.", 0, 1, 0.05 },
 	  { "vfogSunScatter", "slider", "Sun glow in fog", "How much sun or moon light the fog catches.", 0, 10, 0.05 },
 	  { "vfogLocalLights", "check", "Lamps light the fog", "Torches, lamps and other nearby lights brighten the fog." },
@@ -262,9 +264,11 @@ table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", titl
 	{ "lightSpecular", "check", "Specular highlights", "Shiny buildings and models catch highlights from the sun and dynamic lights. D3D11/Vulkan only." },
 	{ "lightSpecularM2", "slider", "Model highlights", "Strength of the highlights on shiny models. D3D11/Vulkan only.", 0, 4, 0.05 },
 	{ "lightSpecularWmo", "slider", "Building highlights", "Strength of the highlights on shiny buildings. D3D11/Vulkan only.", 0, 4, 0.05 },
+	{ "lightSkyAmbient", "slider", "Sky ambient", "Shadowed sides take the sky's colour from above and the ground's from below. 0 turns it off (half strength with physically based lighting on). D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "lightPbr", "check", "Physically based lighting", "Soft, realistic highlights from the sun and dynamic lights, a faint reflection of the sky, and surfaces guessed as metal, skin, stone or wood. D3D11/Vulkan only." },
+	{ "lightRoughnessBias", "slider", "Surface roughness", "Makes every surface rougher (right) or shinier (left) under physically based lighting. D3D11/Vulkan only.", -0.5, 0.5, 0.05 },
 	{ "wmoNormalMaps", "check", "Building relief", "Stone, brick and wood on buildings catch the light with surface relief (normal maps). D3D11/Vulkan only." },
 	{ "wmoNormalStrength", "slider", "Building relief strength", "How deep the stone and wood relief looks. D3D11/Vulkan only.", 0, 2, 0.05 },
-	{ "lightSkyAmbient", "slider", "Sky ambient", "Shadowed sides take the sky's colour from above and the ground's from below. 0 turns it off. D3D11/Vulkan only.", 0, 1, 0.05 },
 })
 -- Sky and clouds (SkyClouds.cpp, DayNight.cpp).
 table.insert(PAGES, #PAGES, { name = "Sky", parent = "Advanced", title = "Sky & Clouds",

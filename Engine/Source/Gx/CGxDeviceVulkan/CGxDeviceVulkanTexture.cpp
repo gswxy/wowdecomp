@@ -600,6 +600,9 @@ void CGxDeviceVulkan::ITexUpload(CGxTex* texId) {
     TexRec& r = *RecOf(texId);
     g_stats.uploads++;
 
+    // Between uploads, before this one's MainNamed test: a big load streams through a bounded ring.
+    frame::ThrottleStaging();
+
     if (MainNamed(r)) {
         RenameForRefill(r);
     }

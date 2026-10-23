@@ -61,6 +61,8 @@ struct Config {
     int debugView = 0;              // vfogDebug 0..3
     float godRays = 1.0f;           // vfogGodRays: coa GodRays, 0 = off, 0..4 strength (default 1)
     bool shadowedSun = true;        // vfogShadowedSun: the sun in-scatter tested against the sun shadow maps (S3)
+    bool shafts = true;             // vfogShafts: world-space sun shafts seen from any angle (isotropic floor on the sun phase)
+    float shaftIntensity = 0.35f;   // vfogShaftIntensity: that floor, 0..2 (the forward peak is 1)
     float canopy = 0.5f;            // vfogCanopy: the haze glow kept in sun shadow, 1 - this (0 = glow unshadowed)
     bool grade = true;              // vfogGrade: coa ColorGrading > 0 (coa preset 0.5)
     float gradeStrength = 0.5f;     // vfogGradeStrength: coa ColorGrading's 0..1 strength when on

@@ -24,6 +24,7 @@
 #include "Engine/Source/Gxu/GxuScene.h"
 #include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "WoW/Source/WorldClient/LegionLights.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
@@ -3089,8 +3090,10 @@ void CWorldScene::RenderMapObjDefGroups() {
             }
 
             CM2Lighting lighting(group->m_sphere);
+            g_m2SkipPointLights = LegionLights::LightsWorldGeometry();   // POINTLIGHT: lit per pixel instead
             World::s_m2Scene->SelectLights(&lighting);
             group->SelectLights(&lighting);
+            g_m2SkipPointLights = false;
             DayNight::DNInfo* info = DayNight::GetInfo();
             CWorldScene::SetupLighting(&lighting, &CWorldScene::s_activeWorldView);
 

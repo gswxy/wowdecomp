@@ -40,6 +40,7 @@ CVar* s_dist;
 CVar* s_intensity;
 CVar* s_normalBuffer;
 CGxShader* s_shader;    // ponytail: not destroyed at device shutdown (one shader, the device goes with the process)
+bool s_noShader;        // LegionLights.bls failed to load: the stock per-vertex lights stay
 
 float Var(CVar* v, float fallback, float lo, float hi) {
     return v && std::isfinite(v->m_floatValue) ? std::clamp(v->m_floatValue, lo, hi) : fallback;
@@ -76,6 +77,7 @@ float Radius(float peak, const float att[3]) {
 void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
     CGxDevice* device = g_theGxDevicePtr;
     if (!Shader(s_shader, "LegionLights")) {
+        s_noShader = true;
         return;
     }
     const WorldViewport vp = LiveWorldViewport();
@@ -135,11 +137,16 @@ void RegisterCVars() {
     const auto reg = [](const char* name, const char* help, const char* value) {
         return CVar::Register(name, help, 1, value, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     };
-    s_mode = reg("lightMode", "Lamps and torches light the world around them: 0 = off, 1 = ground and buildings, 2 = also creatures, characters and grass", "0");
+    s_mode = reg("lightMode", "Lamps and torches light the world around them per pixel: 0 = off (the stock per-vertex light on ground and buildings), 1 = ground and buildings, 2 = also creatures, characters and grass", "1");
     s_count = reg("maxLightCount", "Most lamps that light the world at once, nearest first, 1..128", "32");
     s_dist = reg("maxLightDist", "Distance in yards out to which lamps light the world (fades out over the last quarter), 20..2048", "200");
     s_normalBuffer = reg("gxNormalBuffer", "The world's models, buildings and ground also write their smooth normals, which the lamps (lightMode), the mountains' shadow (shadowMask) and SSAO light by: 1 = on (default), 0 = rebuild them from the depth (faceted)", "1");
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");
+}
+
+bool LightsWorldGeometry() {
+    const int mode = s_mode ? s_mode->m_intValue : 0;
+    return (mode == 1 || mode == 2) && !s_noShader && !g_m2ShaderOwnedLightScene && Var(s_intensity, 1.0f, 0.0f, 4.0f) > 0.0f;
 }
 
 void OnWorld(bool solidDone) {
@@ -150,7 +157,8 @@ void OnWorld(bool solidDone) {
     }
     CM2Scene* scene = World::s_m2Scene;
     CGxDevice* device = g_theGxDevicePtr;
-    if (mode < 1 || mode > 2 || (mode == 2) != solidDone || !scene || !scene->m_lightGrid || !device) {
+    // POINTLIGHT: the forward lightDynamic (D3D11/Vulkan shaderLighting) owns the lights: one per-pixel light is enough
+    if (mode < 1 || mode > 2 || (mode == 2) != solidDone || !scene || !scene->m_lightGrid || !device || g_m2ShaderOwnedLightScene) {
         return;
     }
     const float maxDist = Var(s_dist, 200.0f, 20.0f, 2048.0f);

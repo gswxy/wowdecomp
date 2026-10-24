@@ -8,5 +8,8 @@ void RegisterCVars();               // from CWorldParam::Initialize
 // CGWorldFrame::OnWorldRender: false before scene->Draw(M2PASS_0) (lightMode 1: terrain and WMO only), true after
 // the solid world (lightMode 2: models and grass too).
 void OnWorld(bool solidDone);
+// POINTLIGHT: true when this frame's pass lights terrain and WMOs (lightMode 1 or 2, the forward lightDynamic not
+// owning the lights): their stock per-vertex point lights are then left out (M2Light.h g_m2SkipPointLights)
+bool LightsWorldGeometry();
 
 }  // namespace LegionLights

@@ -87,5 +87,9 @@ class CM2Lighting {
 // WorldLighting.cpp sets it on D3D11/Vulkan with shaderLighting, lightDynamic and lightReplaceStock on; else null).
 // CM2Lighting::AddLight skips that scene's point lights; the sun, moon and ambient still pass.
 extern CM2Scene* g_m2ShaderOwnedLightScene;
+// POINTLIGHT (not in 12340): set while a WMO group or terrain chunk gathers its lights and the LegionLights pass
+// (lightMode) lights them per pixel instead: CM2Lighting::AddLight then takes no point lights (the stock vertex
+// shaders lit them per vertex, a patchwork of triangles under a torch)
+extern bool g_m2SkipPointLights;
 
 #endif

@@ -275,24 +275,33 @@ ambient + half the diffuse, at least 0.2), so a lamp adds about albedo x lamp as
 night, faint at noon. Depth through `DepthUser_Lights` (bit 6), set only while the pass draws.
 
 **Where, and the double-lighting question.** Stock 3.3.5a lights M2s (models, characters) and grass with up to 4
-of these point lights each, but never terrain or WMO (WMO interiors have baked vertex colours, MOCV).
-- `lightMode 1` runs right after `CWorld::Render` (terrain, WMO groups, horizon, sky) and before
+of these point lights each, and terrain chunks (3) and WMO groups (4) too: `CMapRenderChunk::SetVertexShader` and
+`CWorldScene::RenderMapObjDefGroups` gather them from `World::s_m2Scene` into the vertex shader constants, lit per
+vertex (corrected 2026-10-24, fix/pointlight: an earlier note here said never terrain or WMO). Per vertex, on WMO
+floors of 5 sq yd triangles with leaning MONR normals, a torch draws a patchwork of triangles. So while the pass
+lights terrain and WMOs (`LegionLights::LightsWorldGeometry`), their stock point lights are left out
+(`g_m2SkipPointLights`, M2Light.h) and the pass replaces them per pixel.
+- `lightMode 1` (default since 2026-10-24) runs right after `CWorld::Render` (terrain, WMO groups, horizon, sky) and before
   `scene->Draw(M2PASS_0)`: the depth then holds only terrain and WMO, and every model drawn after covers its pixels
-  with its own stock-lit colour. So models are never double lit, and the lamps light exactly what stock leaves dark.
+  with its own stock-lit colour. So models are never double lit.
 - `lightMode 2` runs after the solid world (after `VolumetricFog::OnSolidDone`, so after the shadow mask): models
   and grass take the lamps too, on top of their stock point lights (brighter near lamps). For a look closer to
   Legion's "everything lit"; not the default choice.
+- With the forward `lightDynamic` owning the lights (D3D11/Vulkan shaderLighting, `g_m2ShaderOwnedLightScene`) the pass
+  stays off, so nothing is lit twice.
+- Ceiling: `GxBlend_ModAdd` on an 8-bit target at most doubles a pixel, where stock's per-vertex light could reach
+  about 3x the night ambient right under a torch; `lightIntensity` lifts the mid range.
 Both run before liquids, transparents and the fog composite, so the fog fogs the lit surfaces.
 
 **CVars** (LegionLights.cpp, Video Options > Advanced > Lights, "Lamps & Torches"):
 | CVar | Range | Default | |
 |---|---|---|---|
-| `lightMode` | 0/1/2 | 0 | 0 off, 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
+| `lightMode` | 0/1/2 | 1 | 0 off (stock per-vertex lamps), 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
 | `maxLightCount` | 1..128 | 32 | nearest lights kept (Legion 128); 16 a pass, so 32 = 2 passes |
 | `maxLightDist` | 20..2048 | 200 | yd; lights farther than this plus their radius are dropped, the light fades over the last quarter (Legion 2048) |
 | `lightIntensity` | 0..4 | 1 | scale on the added light |
 
-Default off: cost not measured (no rig by the rules), and it changes the look of every lit town at night. Estimate:
+Default on since 2026-10-24 (it replaces the stock per-vertex lamps on terrain and WMOs); cost not measured (no rig by the rules). Estimate:
 per pass 5 depth taps and ~16 x 14 ALU a pixel over the world viewport, about 0.2-0.4 ms a pass at 1440p on a mid GPU
 (discarded pixels still pay the loop). With the shader cost confirmed, `lightMode 1` is the candidate default.
 

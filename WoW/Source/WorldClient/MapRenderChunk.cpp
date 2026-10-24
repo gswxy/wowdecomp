@@ -12,6 +12,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "WoW/Source/WorldClient/LegionLights.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
@@ -811,8 +812,10 @@ void CMapRenderChunk::RenderSetup(int32_t a2) {
         GxXformSet(GxXform_World, world);
 
         CM2Lighting lighting(this->m_sphere);
+        g_m2SkipPointLights = LegionLights::LightsWorldGeometry();   // POINTLIGHT: lit per pixel instead
         World::s_m2Scene->SelectLights(&lighting);
         this->SelectLights(&lighting);
+        g_m2SkipPointLights = false;
         lighting.SetupGxLights(&CWorldScene::s_activeWorldView);
         lighting.SetupGxFog();
     }
@@ -2159,8 +2162,10 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
     int32_t vertexColor = CMapRenderChunk::s_gxBufVertexFormat == GxVBF_PNC;
 
     CM2Lighting lighting(renderChunk->m_sphere);
+    g_m2SkipPointLights = LegionLights::LightsWorldGeometry();   // POINTLIGHT: lit per pixel instead
     World::s_m2Scene->SelectLights(&lighting);
     renderChunk->SelectLights(&lighting);
+    g_m2SkipPointLights = false;
 
     C3Vector position(0.0f, 0.0f, 0.0f);
     int32_t pointLights = 0;

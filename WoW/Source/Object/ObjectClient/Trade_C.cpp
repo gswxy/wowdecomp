@@ -304,7 +304,7 @@ int32_t Packet_SMSG_TRADE_STATUS(void* param, NETMESSAGE msgId, uint32_t time, C
             break;
 
         case TRADE_STATUS_CANCELLED:
-        case TRADE_STATUS_UNKNOWN_13:
+        case TRADE_STATUS_RESET_ONLY:
             reset = 1;
             memset(s_tradeItems, 0, sizeof(s_tradeItems));
             CGTradeInfo::m_playerTrade.m_money[0] = 0;

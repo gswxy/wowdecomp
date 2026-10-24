@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
@@ -62,7 +63,41 @@ struct Light {
     float colour[3];
     float att[3];
     float distance;
+    float score;
 };
+
+// LIGHTOCC (Undercity lanterns dark from afar): a doodad's lights are refreshed only while its model animates, and
+// the world animates a doodad only while it is drawn (AddDoodadDefModelToModelScene: doodad fade distance and the
+// Legion objcull pixel size, both from the camera) or within 10 yd of the camera (World.cpp, frustum-culled doodads).
+// Past that the light keeps its stamp and SelectLights clears m_visible: the lamp goes dark with the camera's
+// distance or zoom. So the pass keeps what each light was on its last refreshed frame and lights it on from that
+// while it stays linked in the grid (the model is alive) and never moved (a static doodad, not a carried torch).
+struct Seen {
+    C3Vector pos;
+    uint32_t visible : 1;
+    uint32_t moved : 1;
+    uint32_t refreshes : 30;
+    uint32_t walk;          // the last gather that met it in the grid
+};
+std::unordered_map<const CM2Light*, Seen> s_seen;
+uint32_t s_walk;
+
+// The light's sphere against the view frustum's sides (view space, z forward, ndc = xy / z * scale + offset).
+bool InFrustum(const float v[3], float r, const float* proj) {
+    const float planes[4][2] = { { proj[0], proj[8] }, { proj[5], proj[9] } };
+    for (int axis = 0; axis < 2; ++axis) {
+        const float a = planes[axis][0];
+        const float b = planes[axis][1];
+        // a x + (b - 1) z <= 0 and -a x - (b + 1) z <= 0, each normalised
+        if ((a * v[axis] + (b - 1.0f) * v[2]) > r * std::sqrt(a * a + (b - 1.0f) * (b - 1.0f))) {
+            return false;
+        }
+        if ((-a * v[axis] - (b + 1.0f) * v[2]) > r * std::sqrt(a * a + (b + 1.0f) * (b + 1.0f))) {
+            return false;
+        }
+    }
+    return v[2] > -r;
+}
 
 // The stock M2 point light (CM2Light::SetupLighting: attenuation 0 / 0.7 / 0.03 for every M2 light) falls to kCutoff
 // of its peak at this radius.
@@ -187,11 +222,29 @@ void OnWorld(bool solidDone) {
     const float* m = reinterpret_cast<const float*>(&viewStack.m_mtx[viewStack.m_level]);
     const C3Vector& cam = CWorldScene::s_activeWorldView;
 
+    const float* proj = reinterpret_cast<const float*>(&device->m_projection);
     static std::vector<Light> s_lights;
     s_lights.clear();
+    ++s_walk;
     for (int cell = 0; cell < 64 * 64; ++cell) {
         for (const CM2Light* native = scene->m_lightGrid[cell]; native; native = native->m_lightNext) {
-            if (native->m_type != M2LIGHT_POINT || !native->m_visible) {
+            if (native->m_type != M2LIGHT_POINT) {
+                continue;
+            }
+            const bool fresh = !native->m_scene || native->m_stamp == scene->m_frameStamp;
+            Seen& seen = s_seen.try_emplace(native, Seen{ native->m_pos, 0, 0, 0, 0 }).first->second;
+            seen.walk = s_walk;
+            if (fresh) {
+                const C3Vector d = native->m_pos - seen.pos;
+                seen.moved |= seen.refreshes && d.x * d.x + d.y * d.y + d.z * d.z > 0.0025f;
+                seen.pos = native->m_pos;
+                seen.visible = native->m_visible != 0;
+                seen.refreshes = std::min<uint32_t>(seen.refreshes + 1, 2);
+            }
+            // stale: only a static light seen on at least twice, still where it was
+            const bool on = fresh ? seen.visible : seen.visible && !seen.moved && seen.refreshes >= 2 &&
+                            native->m_pos.x == seen.pos.x && native->m_pos.y == seen.pos.y && native->m_pos.z == seen.pos.z;
+            if (!on) {
                 continue;
             }
             Light l;
@@ -208,10 +261,16 @@ void OnWorld(bool solidDone) {
             }
             l.radius = Radius(peak, l.att);
             l.distance = std::sqrt(rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]);
-            if (l.radius < 0.5f || !std::isfinite(l.distance) || l.distance > maxDist + l.radius || l.view[2] < -l.radius) {
-                continue;   // too weak, out of reach, or behind the camera
+            if (l.radius < 0.5f || !std::isfinite(l.distance) || l.distance > maxDist + l.radius || !InFrustum(l.view, l.radius, proj)) {
+                continue;   // too weak, out of reach, or its sphere wholly outside the view
             }
+            l.score = l.radius / std::max(l.distance, 1.0f);   // about the share of the view its light covers
             s_lights.push_back(l);
+        }
+    }
+    if ((s_walk & 63) == 0) {   // lights no longer in the grid (their models gone): drop
+        for (auto it = s_seen.begin(); it != s_seen.end();) {
+            it = it->second.walk == s_walk ? std::next(it) : s_seen.erase(it);
         }
     }
     if (s_lights.empty()) {
@@ -219,7 +278,7 @@ void OnWorld(bool solidDone) {
     }
     if (static_cast<int>(s_lights.size()) > maxCount) {
         std::nth_element(s_lights.begin(), s_lights.begin() + maxCount, s_lights.end(),
-                         [](const Light& a, const Light& b) { return a.distance < b.distance; });
+                         [](const Light& a, const Light& b) { return a.score > b.score; });
         s_lights.resize(maxCount);
     }
     Draw(s_lights, maxDist, intensity);

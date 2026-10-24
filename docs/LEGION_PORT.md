@@ -304,6 +304,18 @@ Both run before liquids, transparents and the fog composite, so the fog fogs the
 | `lightIntensity` | 0..4 | 1 | scale on the added light |
 | `lightShadows` | 0..1 | 1 | screen-space shadow rays toward each lamp; a fully blocked lamp keeps 1 - 0.85 x this of its light |
 
+**Which lamps** (2026-10-24, lightocc; Undercity lanterns dark from afar, on with the camera close). The gate was
+the doodads' animation, not the light count: a CM2Light is refreshed (stamp, visible, position) only in
+`CM2Model::AnimateST`, and the world animates a doodad only while it is drawn (`CWorldScene::AddDoodadDefModelToModelScene`:
+the doodad fade distance `s_fadeDistSqr[fadeLevel]` and the Legion objcull pixel-size test, both measured from the camera)
+or, frustum- or occlusion-culled, within 10 yd of the camera (World.cpp, the three doodad cull loops; static flag 0x400
+excepted). Past that the light keeps an old stamp and `CM2Scene::SelectLights` clears its `m_visible`. Now the pass keeps,
+per light in the grid, what it was on its last refreshed frame (`s_seen`), and lights a stale one from that when it was on,
+was refreshed at least twice and never moved (a static doodad, not a carried torch); it drops out when its model unlinks
+it. Stock vertex lighting is unchanged. Ceiling: a lamp never animated since it loaded (camera far all along) is unknown.
+Every light's sphere is then culled against the view frustum (was: behind the camera only), and the `maxLightCount`
+kept are the largest radius / distance, not the nearest.
+
 **Shadows** (2026-10-24, lightocc; `LegionLights.hlsl` `LightVisibility`, docs/shadow-research/03-screenspace-cheap.md
 1a, Bend-style contact shadows as a plain tap loop). For each pixel and each lamp that reaches it (more than 1/512 of
 light), a ray from just off the surface toward the lamp, in view space, ending 0.75 yd short of the lamp (its own

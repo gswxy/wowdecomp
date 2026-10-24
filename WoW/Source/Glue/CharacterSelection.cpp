@@ -8,6 +8,7 @@
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Frame/CSimpleModel.h"
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -372,7 +373,7 @@ void CCharacterSelection::GenericLightingCallback(CM2Model* model, CM2Lighting* 
     if (lights->unk_01B5) {
         CSimpleModelFFX* frame = lights->m_modelFrame;
 
-        if (frame->m_flags & 0x1) {
+        if (frame->m_flags & CSimpleModel::MODEL_FOGGED) {
             lighting->SetFog(C3Vector(frame->m_fogColor), frame->m_fogNear, frame->m_fogFar);
         }
     }

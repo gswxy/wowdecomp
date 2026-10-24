@@ -1719,7 +1719,7 @@ void ClntObjMgrInitialize() {
 void ClntObjMgrInitializeStd(uint32_t mapId) {
     CGGameUI::SetLastInstanceTime(static_cast<int32_t>(time(nullptr)), CGGameUI::m_iCurrentMapID, mapId);
 
-    ObjectMgr* mgr = new (__FILE__, __LINE__) ObjectMgr(0);
+    ObjectMgr* mgr = new (__FILE__, __LINE__) ObjectMgr(PLAYER_NORMAL);
     g_clientConnection->m_objMgr = reinterpret_cast<ClntObjMgr*>(mgr);
     s_curMgr = mgr;
     mgr->m_realmConnection = g_clientConnection;

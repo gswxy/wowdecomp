@@ -13443,7 +13443,7 @@ void CGPlayer_C::DestructActivePlayer() {
         SErrDisplayAppFatalMessage("", "", 0);
     }
 
-    if (ClntObjMgrGetPlayerType() != 1) {
+    if (ClntObjMgrGetPlayerType() != PLAYER_BOT) {
         if (this->m_unit->m_unitFieldFlags & 0x80000) {
             CGGameUI::SetRegenEnabled(1);
         }

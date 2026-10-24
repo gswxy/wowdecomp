@@ -66,6 +66,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 n = normalize(cross(Nearer(p, ViewAt(pixel + float2(1, 0)), ViewAt(pixel - float2(1, 0))),
                                Nearer(p, ViewAt(pixel + float2(0, 1)), ViewAt(pixel - float2(0, 1)))));
     n *= dot(n, p) > 0 ? -1 : 1;    // toward the camera
+    float3 ng = n;                  // the true surface's (faceted) normal
     n = GBufferNormal(pixel, p, n);
     float3 t = normalize(cross(n, abs(n.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0)));
     float3 b = cross(n, t);
@@ -84,6 +85,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         float k = (i + 1) / 16;
         float h = sqrt(elevation);                  // sin of the polar angle
         float3 d = (t * (rot.x * h) + b * (rot.y * h) + n * sqrt(1 - elevation)) * (radius * lerp(0.1, 1, k * k));
+        // The smooth normal leans up to 60 degrees off the face where a WMO's vertex normals are averaged into a
+        // wall (interiors): its hemisphere dipped under the floor and the whole triangle read occluded (a dark
+        // triangle fixed in the world, bands up the walls). A tap under the true surface is mirrored back above it.
+        d -= ng * (2 * min(dot(d, ng), 0));
         float3 q = p + d;
         float2 tap = clamp(NdcToPixel(q.xy / max(q.z, 0.05) * ViewToNdcScale() + ViewToNdcOffset()),
                            ViewportOrigin() + 0.5, ViewportLastPixelCentre());

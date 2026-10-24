@@ -175,29 +175,14 @@ float gxMetalLum = 0.0;  // 1: metal only on texels bright enough (dark straps, 
 float gxMetalGrey = 0.0; // 1: metal only on grey texels too (iron bands on a painted or wooden doodad, not the paint)
 
 // ARMORMETAL: set in the stock body (shadow_capture): the sun's visibility from the shadow map (1 lit) and the
-// body's first s0 texel (x < 0: none); gxUv0 the M2's texcoord0, for the composite skin's region
+// body's first s0 texel (x < 0: none); gxUv0 the M2's texcoord0, for the armour metal mask (x < 0: none)
 float gxShadow = 1.0;
 vec4 gxTex0 = vec4(-1.0);
 vec2 gxUv0 = vec2(-1.0);
 
-// ARMORMETAL: the armour of the composite body skin texel at uv (GxLighting.h GxLightingMaterial_Body): 0 none, 1 mail,
-// 2 plate, 2 bits per CCharacterComponent section (s_sectionInfoRaw on the 512 x 512 texture; the face has none)
-uint GxSkinArmor(uint bits, vec2 uv) {
-    if (bits == 0u || uv.x < 0.0) {
-        return 0u;
-    }
-    vec2 t = clamp(uv, 0.0, 1.0);
-    uint r;
-    if (t.x < 0.5) {
-        if (t.y >= 0.625) {
-            return 0u;
-        }
-        r = t.y < 0.25 ? 0u : (t.y < 0.5 ? 1u : 2u);
-    } else {
-        r = t.y < 0.25 ? 3u : (t.y < 0.375 ? 4u : (t.y < 0.625 ? 5u : (t.y < 0.875 ? 6u : 7u)));
-    }
-    return (bits >> (2u * r)) & 3u;
-}
+// ARMORMASK: the armour metal mask texel at gxUv0 (stage 11, M2 only; set when the draw's category is 6): r plate
+// metal, g mail metal, b roughness hint
+vec4 gxArmMask = vec4(0.0);
 
 // the point lights at view position p (all gxLightFlags.y of them): diffuse returned, specular (power > 0, or GGX
 // when a > 0) in spec
@@ -345,23 +330,27 @@ vec4 GxLightPixel(vec4 c0, inout vec4 c1, vec3 flatN, vec4 nmap) {
     float a = 0.0;
     float f0 = 0.04;
     if (pbr) {
-        // misc.y - 1: the category in bits 0-2, the composite body's section armour above (GxLighting.h)
-        uint code = uint(max(regs.misc.y - 0.5, 0.0));
-        uint cat = code & 7u;
+        // misc.y - 1: the category (GxLighting.h); 6 = masked, the armour metal mask bound on stage 11
+        uint cat = uint(max(regs.misc.y - 0.5, 0.0)) & 7u;
         float metal = 0.0;
-        bool body = cat == 6u;
-        if (body) {
-            uint arm = GxSkinArmor(code >> 3u, gxUv0);
-            cat = arm == 2u ? 5u : (arm == 1u ? 4u : 1u);
+        if (cat == 6u && gxUv0.x < 0.0) {
+            cat = 1u;   // no uv for the mask: skin
         }
         if (family == GX_SURF_TERRAIN) {
             rough = 0.9;
         } else if (family == GX_SURF_WMO) {
             rough = wmoSpecular ? 0.5 : 0.8;
+        } else if (cat == 6u && family == GX_SURF_M2) {
+            // ARMORMASK: the mask decides per texel (no luminance / grey gating: painted metal stays metal)
+            vec4 am = gxArmMask;
+            float w = clamp(am.r + am.g, 0.0, 1.0);
+            metal = am.r * gxArmor.x + am.g * gxArmor.z;
+            rough = mix(0.65, am.b, w);
+            gxMask = 0.0; gxMetalLum = 0.0; gxMetalGrey = 0.0;
         } else if (cat == 5u || cat == 4u) {
-            // ARMORMETAL: plate / mail (lightMetalPlate, lightMetalMail); the body's composite has no specular alpha
+            // ARMORMETAL: plate / mail (lightMetalPlate, lightMetalMail)
             rough = cat == 5u ? gxArmor.y : gxArmor.w; metal = cat == 5u ? gxArmor.x : gxArmor.z;
-            gxMetalLum = 1.0; gxMask = body ? 0.0 : 1.0;
+            gxMetalLum = 1.0; gxMask = 1.0;
         } else if (cat == 3u) {
             rough = 0.7;    // cloth and leather armour, capes
         } else if (env && cat != 1u) {
@@ -567,12 +556,14 @@ def _surface(em, fam):
 
 # WMONORMALS: the stage a MapObj pixel module reads its material's normal map from (GxLighting.h kWmoNormalStage)
 WMO_NORMAL_SLOT = 10
+# ARMORMASK: the stage an M2 lit pixel module reads its armour metal mask from (category 6; GxLighting.h)
+ARMOR_MASK_SLOT = 11
 
 
 def pixel_colors(em):
     """His Writer::LitPixel: the COLOR0 / COLOR1 input registers of a lit pixel record (rgb read), the TEXCOORD0
     input of a MapObj one (its normal map's uv, WMONORMALS; None otherwise) and the TEXCOORD0 input (ARMORMETAL: the
-    composite skin's uv; None without), or None."""
+    armour metal mask's uv; None without) and whether it reads the mask (ARMORMASK: an M2 Combiners_* one), or None."""
     if em.vs or em.families != {FAMILY_LITPIXEL}:
         return None
     c = {}
@@ -583,7 +574,9 @@ def pixel_colors(em):
             c.setdefault(sem, nm)
     names = getattr(em.rec, 'names', None) or []
     wmo = bool(names) and all(n.lower().startswith('mapobj') for n in names) and WMO_NORMAL_SLOT not in em.samplers
-    return (c['color0'], c.get('color1'), c.get('texcoord0') if wmo else None, c.get('texcoord0')) if 'color0' in c else None
+    am = ('texcoord0' in c and bool(names) and all(n.lower().startswith('combiners') for n in names)
+          and ARMOR_MASK_SLOT not in em.samplers)
+    return (c['color0'], c.get('color1'), c.get('texcoord0') if wmo else None, c.get('texcoord0'), am) if 'color0' in c else None
 
 
 # ARMORMETAL (shadow_capture): the stock body's shadow factor multiplying the lit COLOR0 (M2 and WMO: `rA.xyz = rS.www *
@@ -619,7 +612,7 @@ def shadow_capture(body, c0, d=_GLSL):
     return body
 
 
-def pixel_splice(c0, c1, uv=None, uv0=None):
+def pixel_splice(c0, c1, uv=None, uv0=None, am=False):
     """The lines after the pixel module's prologue: COLOR0 (and COLOR1) lit per pixel; the face normal, and a
     MapObj module's normal-map frame (uv: its TEXCOORD0 input), are taken here, outside any branch."""
     s = ['    // the colour lit per pixel (bls/lighting.py)',
@@ -634,6 +627,8 @@ def pixel_splice(c0, c1, uv=None, uv0=None):
               '    vec2 gxDu1 = dFdx(%s.xy);' % uv,
               '    vec2 gxDu2 = dFdy(%s.xy);' % uv,
               '    float gxNStrength = gxGroundTint.w;']
+    if am:
+        s += ['    vec2 gxAu1 = dFdx(%s.xy);' % uv0, '    vec2 gxAu2 = dFdy(%s.xy);' % uv0]
     s += ['    if (gxLightFlags.x != 0u && regs.misc.y > 0.5 && gxF.x > 0.5 && gxP.w > 0.999) {']
     if uv:
         s += ['        if (gxNStrength > 0.0) {',
@@ -644,5 +639,9 @@ def pixel_splice(c0, c1, uv=None, uv0=None):
           '        %s = GxLightPixel(%s, gxC1, gxFlatN, gxNMap);' % (c0, c0)]
     if uv0:
         s.insert(-1, '        gxUv0 = %s.xy;' % uv0)
+    if am:
+        s[-1:-1] = ['        if (uint(max(regs.misc.y - 0.5, 0.0)) == 6u) {',
+                    '            gxArmMask = textureGrad(s%d, %s.xy, gxAu1, gxAu2);  // ARMORMASK' % (ARMOR_MASK_SLOT, uv0),
+                    '        }']
     s += (['        %s = gxC1;' % c1] if c1 else []) + ['    }', '']
     return s

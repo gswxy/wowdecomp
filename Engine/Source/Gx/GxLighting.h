@@ -39,12 +39,13 @@ enum EGxLightingMaterial : uint32_t {
     GxLightingMaterial_Cloth = 3,     // cloth and leather armour, capes (non-metal)
     GxLightingMaterial_Mail = 4,      // lightMetalMail
     GxLightingMaterial_Plate = 5,     // lightMetalPlate
-    GxLightingMaterial_Body = 6,      // the composite body skin: bits 3.. carry 2 bits per COMPONENT_SECTIONS section
-                                      // (0..7: 0 none, 1 mail, 2 plate); the shader picks the section from the uv
+    GxLightingMaterial_Masked = 6,    // ARMORMASK: a metal mask is bound on kArmorMaskStage (ArmorMask.h: R plate, G mail,
+                                      // B roughness; the composite body skin, a helm or shoulders)
 };
 
-// ARMORMETAL: CM2Model::m_pbrArmor = an attached item's category (bits 0-2, 0 none) | the body's section bits << 8
-#define GX_PBR_ARMOR_SECTIONS(armor) (((armor) >> 8) & 0xFFFFu)
+// ARMORMASK: the texture stage the armour metal mask rides (CM2SceneRender::DrawBatch); the translated lit M2 pixel
+// shaders declare sampler s11. Stages 4-7 are the ShadowCache maps', 10 the WMO normal map's (10-13 terrain heights).
+constexpr uint32_t kArmorMaskStage = 11;
 
 extern uint32_t g_gxLightingMaterial;
 

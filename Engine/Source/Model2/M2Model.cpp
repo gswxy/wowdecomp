@@ -3903,6 +3903,7 @@ CM2Model::CM2Model() {
     this->m_hitTestOwner = nullptr;
     this->m_hitTestGroup = 0;
     this->m_pbrArmor = 0;
+    this->m_pbrMask = nullptr;
 
     if (!CM2Model::s_transformVertices[0]) {
         CM2Model::s_transformVertices[0] = CM2Model::TransformVertices_cpp;
@@ -6634,6 +6635,11 @@ void CM2Model::ProcessCallbacksRecursive() {
 // VERIFY: d96ccadd manual
 // OFFSET: 0x00832640
 CM2Model::~CM2Model() {
+    if (this->m_pbrMask) {   // CUSTOM (ARMORMASK)
+        HandleClose(reinterpret_cast<HOBJECT>(this->m_pbrMask));
+        this->m_pbrMask = nullptr;
+    }
+
     CM2Model* model30 = this->m_model30;
 
     if (model30 && model30->m_refCount-- == 1) {

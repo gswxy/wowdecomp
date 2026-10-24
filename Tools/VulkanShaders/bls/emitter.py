@@ -654,6 +654,8 @@ class Emitter(object):
             self.litpix = lighting.pixel_colors(self)
             if self.litpix and self.litpix[2]:
                 self.samplers[lighting.WMO_NORMAL_SLOT] = '2d'   # WMONORMALS: the material's normal map
+            if self.litpix and self.litpix[4]:
+                self.samplers[lighting.ARMOR_MASK_SLOT] = '2d'   # ARMORMASK: the armour metal mask
             self.vconst = VCONST_SMALL
             # terrain height blend and parallax (terrainpom.py): the layer / blend reads, the height maps' samplers
             self.tp = terrainpom.layers(getattr(self.rec, 'names', None) or [], self.samplers)

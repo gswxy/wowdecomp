@@ -584,26 +584,34 @@ void CM2SceneRender::DrawBatch() {
 
     // CUSTOM (PBR-lite, GxLighting.h): the batch's material category from its first texture's type: skin, hair and
     // creature skins medium; item textures (blade, handle) and the models attached to another metal on grey texels.
-    // ARMORMETAL: an attached armour piece takes its item's category (CCharacterComponent::AddLink), the composite
-    // body skin its sections' armour, a character's own object skin (the cape) is cloth
+    // ARMORMETAL: an attached armour piece takes its item's category (CCharacterComponent::AddLink), a character's own
+    // object skin (the cape) is cloth. ARMORMASK: the composite body skin and attached mail / plate read their per-texel
+    // metal mask (CM2Model::m_pbrMask) on kArmorMaskStage, only where the shader lighting runs (not D3D9)
     g_gxLightingMaterial = GxLightingMaterial_Generic;
+    CTexture* mask = nullptr;
 
     if (this->m_curBatch->m_textureCount) {
         uint32_t combo = this->m_data->m_textureCombos[this->m_curBatch->m_textureComboIndex];
         uint32_t type = combo < this->m_data->m_textures.m_count ? this->m_data->m_textures[combo].m_type : 0;
-        uint32_t armor = this->m_curModel->m_pbrArmor;
+        uint32_t armor = this->m_curModel->m_pbrArmor & 7u;
         CM2Model* parent = this->m_curModel->m_attachParent;
+        CTexture* own = g_gxLighting ? this->m_curModel->m_pbrMask : nullptr;
 
         if (type == 1) {
-            uint32_t sections = GX_PBR_ARMOR_SECTIONS(armor);
-            g_gxLightingMaterial = sections ? GxLightingMaterial_Body | (sections << 3) : GxLightingMaterial_Skin;
+            mask = own;
+            g_gxLightingMaterial = mask ? GxLightingMaterial_Masked : GxLightingMaterial_Skin;
         } else if (type == 2 && !parent) {
             g_gxLightingMaterial = GxLightingMaterial_Cloth;
         } else if (type == 2 || type == 3 || type == 4 || (type == 0 && parent)) {
-            g_gxLightingMaterial = (armor & 7u) ? (armor & 7u) : GxLightingMaterial_Item;
+            mask = armor >= GxLightingMaterial_Mail ? own : nullptr;
+            g_gxLightingMaterial = mask ? GxLightingMaterial_Masked : (armor ? armor : GxLightingMaterial_Item);
         } else if ((type >= 6 && type <= 8) || (type >= 10 && type <= 13)) {
             g_gxLightingMaterial = GxLightingMaterial_Skin;
         }
+    }
+
+    if (mask) {
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + kArmorMaskStage), TextureGetGxTex(mask, 0, nullptr));
     }
 
     this->SetupLighting();
@@ -672,6 +680,10 @@ void CM2SceneRender::DrawBatch() {
         batch.m_minIndex = 0;
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
         g_theGxDevicePtr->Draw(&batch, 1);
+    }
+
+    if (mask) {   // CUSTOM (ARMORMASK): never leave the mask bound (it can go away with its model)
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + kArmorMaskStage), nullptr);
     }
 }
 

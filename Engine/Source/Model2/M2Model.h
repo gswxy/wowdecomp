@@ -220,7 +220,8 @@ class CM2Model {
     /* 02E0 */ void* m_hitTestOwner;
     /* 02E4 */ uint32_t m_hitTestGroup;
     /* 02E8 */ uint32_t m_handle;
-    /* 02EC */ uint32_t m_pbrArmor;   // CUSTOM (ARMORMETAL, unused in stock): GxLighting.h GX_PBR_ARMOR_SECTIONS
+    /* 02EC */ uint32_t m_pbrArmor;   // CUSTOM (ARMORMETAL, unused in stock): an attached item's GxLightingMaterial
+    CTexture* m_pbrMask;             // CUSTOM (ARMORMASK, appended): its metal mask (ArmorMask.h), own handle, or null
 
     static void (*s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
     static TSGrowableArray<M2ModelCallback> s_sequenceCallbacks;

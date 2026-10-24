@@ -47,6 +47,9 @@
 #include "WoW/Source/DB/Rec/HelmetGeosetVisDataRec.h"
 #include "WoW/Source/DB/Rec/ItemDisplayInfoRec.h"
 #include "WoW/Source/DB/Rec/ItemRec.h"
+#include "WoW/Common/ComponentCore/ArmorMask.h"
+#include "WoW/Common/TextureCache.h"
+#include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Gx/GxLighting.h"
 #include "WoW/Source/DB/Rec/ItemVisualEffectsRec.h"
 #include "WoW/Source/DB/Rec/ItemVisualsRec.h"
@@ -196,36 +199,25 @@ static uint32_t PbrArmorCategory(uint32_t displayId) {
     }
 
     auto it = s_category.find(displayId);
-    return it == s_category.end() ? 0u : it->second;
-}
 
-// CUSTOM (ARMORMETAL): the body model's composite sections' armour for the lit shaders (CM2Model::m_pbrArmor bits
-// 8..23, 2 bits per section: 0 none, 1 mail, 2 plate), from the topmost item layer of each section whose display is
-// known armour (a tabard or shirt on top keeps its cloth; skin with no item none). Called whenever the sections are
-// composited.
-static void PbrArmorSections(CCharacterComponent* component) {
-    CM2Model* model = component->m_data.m_model;
-
-    if (!model) {
-        return;
+    if (it != s_category.end()) {
+        return it->second;
     }
 
-    uint32_t bits = 0;
+    // ARMORMASK: a display no item uses (NPC gear from CreatureDisplayInfoExtra, the Stormwind guards' plate): the
+    // material its texture names start with (Plate_, Mail_; leather, cloth, robe, tabard otherwise)
+    ItemDisplayInfoRec rec;
+    bool found = g_itemDisplayInfoDB.GetRecord(static_cast<int32_t>(displayId), &rec) != 0;
 
-    for (int32_t section = 0; section <= SECTION_FOOT; section++) {
-        const CharacterSection& data = component->m_section[section];
+    for (int32_t i = 0; found && i < 8; i++) {
+        const char* name = rec.m_texture[i];
 
-        for (int32_t layer = 6; layer >= 0; layer--) {
-            uint32_t category = (data.m_layerMask & (1u << layer)) && data.m_layerItemDisplayId[layer] ? PbrArmorCategory(data.m_layerItemDisplayId[layer]) : 0u;
-
-            if (category) {
-                bits |= (category == GxLightingMaterial_Plate ? 2u : (category == GxLightingMaterial_Mail ? 1u : 0u)) << (2 * section);
-                break;
-            }
+        if (name && *name) {
+            return !SStrCmpI(name, "plate", 5) ? GxLightingMaterial_Plate : (!SStrCmpI(name, "mail", 4) ? GxLightingMaterial_Mail : 0u);
         }
     }
 
-    model->m_pbrArmor = (model->m_pbrArmor & 0xFFu) | (bits << 8);
+    return 0u;
 }
 
 // STATIC: 0x00B6B884
@@ -233,6 +225,85 @@ int32_t CCharacterComponent::s_bInRenderPrep;
 
 // STATIC: 0x00B6B888
 static CompSectionInfo s_sectionInfo[NUM_COMPONENT_SECTIONS];
+
+// CUSTOM (ARMORMASK): the composite body skin's metal mask (ArmorMask.h) at half the skin's size: each section's item
+// layers in the order RenderPrep pastes them, a texel taken by the topmost layer whose alpha covers it (>= 0.5): mail or
+// plate classified per texel (ArmorMaskClassify on the layer's own texels), any other item (shirt, tabard, cloth)
+// clears it, bare skin stays clear. No metal anywhere: no mask (the plain skin category). Called on the main thread
+// whenever the sections are composited (CreateComponentRequest, RenderPrepSections); the layers are loaded by then.
+static void PbrArmorMask(CCharacterComponent* component) {
+    CM2Model* model = component->m_data.m_model;
+
+    if (!model) {
+        return;
+    }
+
+    const uint32_t size = s_textureSize / 2;
+    const uint32_t clear = 0xFF0000FFu;   // no metal, rough
+    std::vector<uint32_t> texels(size * size, clear);
+    std::vector<uint8_t> bgra;
+    std::vector<float> metal, rough;
+    bool any = false;
+    bool robe = (component->m_flags & 0x20) != 0;
+    // the layers RenderPrepAU..FO paste per section ([first, last))
+    const int32_t first[8] = { 0, 0, 0, 0, 0, robe ? 1 : 0, robe ? 1 : 0, 0 };
+    const int32_t last[8] = { 2, 7, 1, 5, 7, robe ? 2 : 3, robe ? 4 : 6, 1 };
+
+    for (int32_t section = 0; section <= SECTION_FOOT; section++) {
+        const CharacterSection& data = component->m_section[section];
+        const CompSectionInfo& info = s_sectionInfo[section];
+        uint32_t x0 = info.m_pos.x / 2, y0 = info.m_pos.y / 2, w = info.m_size.x / 2, h = info.m_size.y / 2;
+
+        for (int32_t layer = first[section]; layer < last[section]; layer++) {
+            HTEXTURECACHE tex = data.m_layerTex[layer];
+
+            if (!((data.m_layerMask >> layer) & 1u) || !tex || !TextureCacheHasMips(tex) || !w || !h) {
+                continue;
+            }
+
+            bgra.resize(4 * w * h);
+
+            if (!ArmorMaskDecode(tex->m_data, w, h, bgra.data())) {
+                continue;
+            }
+
+            uint32_t category = data.m_layerItemDisplayId[layer] ? PbrArmorCategory(data.m_layerItemDisplayId[layer]) : 0u;
+            uint32_t kind = category == GxLightingMaterial_Plate ? 2u : (category == GxLightingMaterial_Mail ? 1u : 0u);
+
+            if (kind) {
+                metal.resize(w * h);
+                rough.resize(w * h);
+                ArmorMaskClassify(bgra.data(), w, h, metal.data(), rough.data());
+            }
+
+            for (uint32_t y = 0; y < h; y++) {
+                for (uint32_t x = 0; x < w; x++) {
+                    uint32_t i = y * w + x;
+
+                    if (bgra[4 * i + 3] < 128) {
+                        continue;
+                    }
+
+                    uint32_t out = clear;
+
+                    if (kind) {
+                        uint32_t m = static_cast<uint32_t>(metal[i] * 255.0f + 0.5f), r = static_cast<uint32_t>(rough[i] * 255.0f + 0.5f);
+                        out = 0xFF000000u | ((kind == 2 ? m : 0u) << 16) | ((kind == 1 ? m : 0u) << 8) | r;
+                        any = any || m > 0;
+                    }
+
+                    texels[(y0 + y) * size + x0 + x] = out;
+                }
+            }
+        }
+    }
+
+    if (any) {
+        component->m_pbrMaskId = ArmorMaskUpload(component->m_pbrMaskId, size, size, texels.data(), &component->m_pbrMask);
+    }
+
+    ArmorMaskSetModel(model, any ? component->m_pbrMask : nullptr);
+}
 
 // STATIC: 0x00B6B928
 CompSectionInfo CCharacterComponent::s_sectionInfoRaw[NUM_COMPONENT_SECTIONS] = {
@@ -2129,6 +2200,8 @@ void CCharacterComponent::AddLink(CM2Model* parent, GEOCOMPONENTLINKS link, cons
     model->ReplaceTexture(M2TEX_OBJECT_SKIN, texture);
     HandleClose(reinterpret_cast<HOBJECT>(texture));
     model->m_pbrArmor = displayRec ? PbrArmorCategory(displayRec->m_id) : 0u;   // CUSTOM (ARMORMETAL): helm, shoulders
+    // CUSTOM (ARMORMASK): mail and plate attachments' per-texel metal, from their own texture
+    ArmorMaskSetModel(model, model->m_pbrArmor >= GxLightingMaterial_Mail ? ArmorMaskForFile(texturePath, model->m_pbrArmor == GxLightingMaterial_Plate ? 2u : 1u) : nullptr);
 
     if (itemVisual > 0) {
         CCharacterComponent::ComponentUtilAddItemVisual(model, itemVisual);
@@ -3687,8 +3760,6 @@ void CCharacterComponent::RenderPrepAll() {
         (this->*CCharacterComponent::m_prepFunc[section])();
     }
 
-    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
-
     if (this->m_gxTexFormat == GxTex_Dxt1) {
         ComputeMipLevels(CCharacterComponent::s_textureBuffer, s_compressedTextureBuffer);
     }
@@ -4286,6 +4357,9 @@ CCharacterComponent::CCharacterComponent() {
 // VERIFY: 4f3c1a66 manual
 // OFFSET: 0x004EFCA0
 CCharacterComponent::~CCharacterComponent() {
+    ArmorMaskRelease(this->m_pbrMaskId, this->m_pbrMask);   // CUSTOM (ARMORMASK)
+    this->m_pbrMask = nullptr;
+
     if (this->m_request) {
         this->m_request->m_flags &= ~0x1;
         this->m_request = nullptr;
@@ -5175,7 +5249,7 @@ void CCharacterComponent::RenderPrepSections() {
     }
 
     this->PrepSections();
-    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
+    PbrArmorMask(this);   // CUSTOM (ARMORMASK)
     this->m_flags &= ~0x1;
     this->m_dirtySections = 0;
     this->DestroyRenderTextures();
@@ -5288,7 +5362,7 @@ int32_t CCharacterComponent::ThreadInitialize() {
 // VERIFY: 672afabf manual
 // OFFSET: 0x004F1790
 void CCharacterComponent::CreateComponentRequest() {
-    PbrArmorSections(this);   // CUSTOM (ARMORMETAL)
+    PbrArmorMask(this);   // CUSTOM (ARMORMASK)
     this->m_request = CCharacterComponent::AllocComponentRequest();
     this->m_request->m_format = this->m_gxTexFormat;
 

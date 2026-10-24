@@ -158,6 +158,8 @@ class CCharacterComponent {
     /* 0458 */ uint32_t m_handItemDisplayID [3];
     /* 0464 */ int32_t m_itemSlotForAttachSlot [50];
     /* 052C */ CComponentRequest* m_request;
+    CTexture* m_pbrMask = nullptr;   // CUSTOM (ARMORMASK, appended): the body's metal mask (ArmorMask.h), or null
+    uint32_t m_pbrMaskId = 0;
 
     CCharacterComponent();
     ~CCharacterComponent();

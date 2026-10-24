@@ -1731,7 +1731,7 @@ void CWorld::Initialize() {
     }
 
     World::idMat.Identity();
-    CWorld::s_worldPoolUsage = 1;
+    CWorld::s_worldPoolUsage = GxPoolUsage_Dynamic;
     CWorld::shadowColor = 0xFFFFFFFF;
     CWorld::detailDoodadAlphaRef = 128;
     CWorld::detailDoodadTest = 0;

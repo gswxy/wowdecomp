@@ -25,7 +25,7 @@ static const GLenum s_glBufferTarget[GxPoolTargets_Last] = { GL_ARRAY_BUFFER_ARB
 static const CGxDeviceOpenGl::EDeviceState s_bufferState[GxPoolTargets_Last] = { CGxDeviceOpenGl::Ds_ArrayBuffer, CGxDeviceOpenGl::Ds_ElementArrayBuffer };
 
 // STATIC: 0x00A2E010
-static const GLenum s_glBufferUsage[3] = { GL_STATIC_DRAW_ARB, GL_DYNAMIC_DRAW_ARB, GL_STREAM_DRAW_ARB };
+static const GLenum s_glBufferUsage[GxPoolUsages_Last] = { GL_STATIC_DRAW_ARB, GL_DYNAMIC_DRAW_ARB, GL_STREAM_DRAW_ARB };
 
 // STATIC: 0x00A2E05C
 static const GLenum s_glTexTarget[4] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP_ARB, GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_2D };
@@ -148,7 +148,7 @@ CGxDeviceOpenGl::CGxDeviceOpenGl() {
     this->m_sphereMapMode = GL_SPHERE_MAP;
 
     for (uint32_t target = 0; target < GxPoolTargets_Last; target++) {
-        for (uint32_t usage = 0; usage < 3; usage++) {
+        for (uint32_t usage = 0; usage < GxPoolUsages_Last; usage++) {
             this->m_useVbo[target][usage] = 1;
             this->m_useVboBroker[target][usage] = 0;
         }

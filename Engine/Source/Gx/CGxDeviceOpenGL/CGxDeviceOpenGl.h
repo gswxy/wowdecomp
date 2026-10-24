@@ -73,8 +73,8 @@ class CGxDeviceOpenGl : public CGxDevice {
     /* 3B54 */ uintptr_t m_indexPtr;
     /* 3B58 */ int32_t m_viewDirty;
     /* 3B5C */ uint32_t unused_3B5C;
-    /* 3B60 */ int32_t m_useVboBroker [2][3];
-    /* 3B78 */ int32_t m_useVbo [2][3];
+    /* 3B60 */ int32_t m_useVboBroker [2][GxPoolUsages_Last];
+    /* 3B78 */ int32_t m_useVbo [2][GxPoolUsages_Last];
     /* 3B90 */ GLuint m_boundTexture;
     /* 3B94 */ GLuint m_fbo;
     /* 3B98 */ GLuint m_boundFbo;

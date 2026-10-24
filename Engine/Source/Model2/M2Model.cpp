@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include <cfloat>
 #include <cmath>
 #include <cstdlib>
@@ -4580,7 +4581,8 @@ void CM2Model::RenderModelBatchesShadowMap(const CModelBatchList& untextured, co
     CShaderEffect::SetAlphaRef(0.0f);
     CShaderEffect::SetDefaultShaders(0);
     CM2Model::RenderModelBatchListShadowMap(1, untextured);
-    CShaderEffect::SetAlphaRef(0.50196081f);
+    // (shadowAlphaMatch: the colour pass cuts at element alpha x 224/255, so 0.502 cast leaf shadows bigger than the leaves)
+    CShaderEffect::SetAlphaRef(CShadowCache::s_alphaMatch ? 0.87843138f : 0.50196081f);
     CShaderEffect::SetDefaultShaders(0);
     CM2Model::RenderModelBatchListShadowMap(0, textured);
 }

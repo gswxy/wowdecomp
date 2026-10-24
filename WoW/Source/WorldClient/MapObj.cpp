@@ -3223,8 +3223,14 @@ void CMapObj::RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* gr
                 continue;
             }
 
+            // shadowAlphaMatch: alpha-blended batches (2) cast where they are near opaque, as alpha-keyed ones do;
+            // additive and modulated ones (3+) do not cast (stock: everything but blend 1 cast as opaque)
+            if (CShadowCache::s_alphaMatch && material.m_blendMode >= 3) {
+                continue;
+            }
+
             g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex);
-            constants[3] = material.m_blendMode == 1 ? 0.87843138f : 0.0f;
+            constants[3] = material.m_blendMode == 1 || (CShadowCache::s_alphaMatch && material.m_blendMode == 2) ? 0.87843138f : 0.0f;
             g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 2, constants, 1);
             CGxBatch batch;
             batch.m_primType = GxPrim_Triangles;

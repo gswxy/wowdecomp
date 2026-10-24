@@ -59,6 +59,8 @@ C3Vector CShadowCache::s_bandCentre;
 uint32_t CShadowCache::s_sizeOverride;
 float CShadowCache::s_pcfScale = 1.0f;
 int32_t CShadowCache::s_cascadeReuse;
+int32_t CShadowCache::s_bandDoodads;
+int32_t CShadowCache::s_alphaMatch;
 
 /// Not stock (shadowCascadeReuse, after Badgermilk0's 5c8a872b): what each VERY_HIGH cascade was last drawn for.
 struct CascadeRender {
@@ -642,7 +644,9 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
                 data.m_useCullFrustum[i] = 0;
             }
 
-            data.m_queryFlags[i] = 8;
+            // (stock 8 only: billboard-bone doodads and "0x400" WMO defs reached only the 20 yd unit map. Units stay
+            // out, a cached band would keep them where they stood.)
+            data.m_queryFlags[i] = CShadowCache::s_bandDoodads ? 12 : 8;
 
             float bounds[4];
             bounds[0] = data.m_bounds[i][0];

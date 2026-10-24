@@ -53,6 +53,10 @@ static CVar* s_cvShadowMapSize;
 static CVar* s_cvShadowSoftness;
 static CVar* s_cvShadowCascadeReuse;
 static CVar* s_cvShadowTerrainCast;
+// Not stock (shadow overhaul step 1): shadowCasterMinTexels.
+static CVar* s_cvShadowCasterMinTexels;
+static CVar* s_cvShadowBandDoodads;
+static CVar* s_cvShadowAlphaMatch;
 
 #if defined(_WIN64)
 static const char* const kShadowMapSizeDefault = "4096";   // ~600 MB of maps at extShadowQuality 3-4
@@ -116,6 +120,9 @@ void CShadowQuery::Initialize() {
     s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSoftness = CVar::Register("shadowSoftness", "Scales the shadow PCF filter, 0.25 to 4 (1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowTerrainCast = CVar::Register("shadowTerrainCast", "ADT terrain casts into the sun shadow maps (0 = stock: models and WMOs only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowCasterMinTexels = CVar::Register("shadowCasterMinTexels", "Smallest caster in the 320/1280 yd shadow bands, in band texels of radius (0 = stock 2/10 yd)", 1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowBandDoodads = CVar::Register("shadowBandDoodads", "extShadowQuality 3-4: billboard doodads and interior-flagged WMOs cast into the far shadow bands (0 = stock: the 20 yd unit map only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowAlphaMatch = CVar::Register("shadowAlphaMatch", "Leaf and alpha-blended surfaces cast exactly where they draw (0 = stock: M2 cut at half alpha, WMO glass and glow cast solid)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCascadeReuse = CVar::Register("shadowCascadeReuse", "extShadowQuality 5: redraw the 320 yd cascade every 2nd frame and the 1280 yd one every 4th (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // (before CShadowCache::Initialize creates the maps, so a saved size needs no second Init)
@@ -352,6 +359,17 @@ void CShadowQuery::Update() {
     GetViewerPosition(&viewer);
 
     CShadowCache::s_texelSnap = s_cvShadowSnap && s_cvShadowSnap->m_intValue;
+    CShadowCache::s_bandDoodads = s_cvShadowBandDoodads && s_cvShadowBandDoodads->m_intValue;
+    CShadowCache::s_alphaMatch = s_cvShadowAlphaMatch && s_cvShadowAlphaMatch->m_intValue;
+
+    // (a change of caster set redraws the cached bands)
+    static float s_lastCasterKey = -1.0f;
+    const float casterKey = CShadowCache::s_bandDoodads + 2.0f * CShadowCache::s_alphaMatch + 4.0f * (s_cvShadowCasterMinTexels ? s_cvShadowCasterMinTexels->m_floatValue : 0.0f);
+
+    if (casterKey != s_lastCasterKey) {
+        s_lastCasterKey = casterKey;
+        CShadowCache::s_bandRedraw |= 7u;
+    }
     CShadowCache::s_cascadeReuse = s_cvShadowCascadeReuse && s_cvShadowCascadeReuse->m_intValue;
 
     // shadowMapSize / shadowSoftness, live: CShadowCache::Update rebuilds the maps at a new size this frame.
@@ -945,6 +963,20 @@ int32_t CShadowQuery::RenderCallback(CShadowCacheQueryData& data, int32_t band, 
     return 1;
 }
 
+/// Not stock (shadowCasterMinTexels): the stock minimum caster radius of bands 1-2 (2 and 10 yd) drops whole
+/// houses' worth of fences, carts and bushes that still span several texels; the minimum is that many band
+/// texels instead, never above stock.
+static float CasterMinRadius(int32_t band, float stock) {
+    float texels = s_cvShadowCasterMinTexels ? s_cvShadowCasterMinTexels->m_floatValue : 0.0f;
+
+    if (band <= 0 || texels <= 0.0f || !CShadowCache::s_shadowSize) {
+        return stock;
+    }
+
+    float minimum = texels * 2.0f * CShadowCache::s_extShadowBands[band].m_radius / CShadowCache::s_shadowSize;
+    return minimum < stock ? minimum : stock;
+}
+
 // VERIFY: f464b8c3 manual
 // OFFSET: 0x007BB9D0
 void CShadowQuery::GatherShadowCasters(CShadowCacheQueryData& data, int32_t firstBand, int32_t lastBand) {
@@ -958,9 +990,9 @@ void CShadowQuery::GatherShadowCasters(CShadowCacheQueryData& data, int32_t firs
 
     minRadius[0] = 0.25f;
     maxRadius[1] = 10000.0f;
-    minRadius[1] = 2.0f;
+    minRadius[1] = CasterMinRadius(1, 2.0f);
     maxRadius[2] = 10000.0f;
-    minRadius[2] = 10.0f;
+    minRadius[2] = CasterMinRadius(2, 10.0f);
 
     for (CMapEntity* entity = CMap::entityList.Head(); entity; entity = CMap::entityList.Next(entity)) {
         if (entity->m_staticFlags & 0x4) {
@@ -1080,7 +1112,7 @@ void CShadowQuery::GetSize(CShadowCacheQueryData& data, int32_t band, float* min
         return;
     }
 
-    *minSize = band >= 2 ? 10.0f : 2.0f;
+    *minSize = CasterMinRadius(band, band >= 2 ? 10.0f : 2.0f);
 }
 
 // VERIFY: 69b3a5e2 auto

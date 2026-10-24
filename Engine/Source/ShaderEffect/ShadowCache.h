@@ -94,6 +94,8 @@ class CShadowCache {
     static uint32_t s_sizeOverride;   // texels per map side, 0 = stock (1024, 2048 from MEDIUM and HIGH up); PCF only
     static float s_pcfScale;          // scales the PCF tap offsets, 1 = stock (a kernel of about two texels)
     static int32_t s_cascadeReuse;    // VERY_HIGH: band 1 redrawn every 2nd frame, band 2 every 4th, sooner on a move
+    static int32_t s_bandDoodads;     // not stock (shadowBandDoodads): extShadowQuality 3-4 bands take query flag 4 too
+    static int32_t s_alphaMatch;      // not stock (shadowAlphaMatch): casters alpha-test as their receivers draw (224/255)
     static C4Vector s_pcfOffsets[8];
     static int32_t s_publishedRead;    // set by GetPublished, consumed by GatherBands (band 1 keeps band 0's casters)
     static C44Matrix s_publishedView;  // S3: PostUpdate's Gx view, for GetPublished

@@ -105,6 +105,7 @@ struct FrameInputs {
     float fogEnd;
     float zoneFogDistance;          // m_bands.m_fogEnd
     float farClip;                  // World::s_farClip
+    float fogCap;                   // FarLand::FogCap(farClip): the fog end cap, stretched toward the far land's reach
     float clientGlowAmount;         // m_bands.m_glow (0 when FFX glow is off)
     float interiorBlend;            // DNInfo m_interiorFogBlend (camera WMO blend)
     bool inLiquid;
@@ -164,6 +165,7 @@ struct FogParams {
     float maxDistance;
     float horizonStart;
     float farClip;
+    float horizonEnd;               // where far-slice pixels finish blending to the sky distance (farclip, or the far land's reach)
     float referenceZ;
     float farLimit;
     bool linear;

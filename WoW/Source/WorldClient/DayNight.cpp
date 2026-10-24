@@ -1,5 +1,6 @@
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/SkyClouds.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include <cmath>
@@ -2203,8 +2204,15 @@ void DayNight::UpdateFog() {
         info.m_fog.m_start = end * s_overrideFogStart;
         info.m_fog.m_density = s_overrideFogRate;
     } else {
-        if (info.m_bands.m_fogEnd < end) {
-            end = info.m_bands.m_fogEnd;
+        // FARVIEW: not in 12340. With far land drawing, the zone's curve is stretched by as much as the land reaches
+        // past the view distance (wxl-farfield game_fog: end = min(E * reach / farclip, reach)), so it fades into the
+        // haze instead of being fog colour past farclip. FogCap(end) == end when farLand or farFogReach is off.
+        const float cap = FarLand::FogCap(end);
+        const float bandsEnd = end > 0.0f ? info.m_bands.m_fogEnd * (cap / end) : info.m_bands.m_fogEnd;
+        end = cap;
+
+        if (bandsEnd < end) {
+            end = bandsEnd;
         }
 
         info.m_fog.m_end = end;

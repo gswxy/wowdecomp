@@ -55,7 +55,8 @@ constexpr float kRetryMs = 60000.0f;       // a failed tile (no ADT, a read erro
 constexpr float kContestMs = 2000.0f;      // a tile whose slot a nearer visible tile holds is asked again after this
 constexpr float kIdleMs = 2000.0f;         // no horizon pass this long (character select, a loading screen): drop the queue
 
-int32_t s_enabled = 0;
+int32_t s_enabled = 1;
+float s_fogReach = 1.0f;   // farFogReach
 int32_t s_uploads = 4;
 
 CGxShader* s_vs = nullptr;
@@ -436,7 +437,7 @@ void PassConstants() {
 } // namespace
 
 void RegisterCVars() {
-    CVar::Register("farLand", "Far land past the view distance in its real ground colour, lit by the sun (baked in the background, cached in Cache\\FarLand): 1 = on, 0 = stock fog-coloured horizon (default)", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+    CVar::Register("farLand", "Far land past the view distance in its real ground colour, lit by the sun (baked in the background, cached in Cache\\FarLand): 1 = on (default), 0 = stock fog-coloured horizon", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -444,6 +445,15 @@ void RegisterCVars() {
         s_uploads = std::min(std::max(SStrToInt(value), 1), 32);
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farFogReach", "farLand: how far the fog end is stretched past the view distance toward the far land's reach (0 = stock, fog ends at farclip; 1 = at horizonFarclipScale x farclip, default)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        s_fogReach = std::min(std::max(SStrToFloat(value), 0.0f), 1.0f);
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+}
+
+float FogCap(float farClip) {
+    if (!s_enabled || s_shaderFailed) return farClip;
+    return farClip * (1.0f + s_fogReach * (std::max(World::s_horizonFarClipScale, 1.0f) - 1.0f));
 }
 
 void BeginPass() {

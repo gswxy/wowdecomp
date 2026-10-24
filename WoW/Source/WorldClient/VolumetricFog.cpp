@@ -24,6 +24,7 @@
 #include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
@@ -306,6 +307,7 @@ void ReadDayNightInputs(FrameInputs& in) {
     in.sunColor = Argb(info.m_bands.m_sunCloudColors[0]);
     in.zoneFogDistance = info.m_bands.m_fogEnd;
     in.farClip = World::s_farClip;
+    in.fogCap = FarLand::FogCap(in.farClip);
     in.inLiquid = false;
     in.clientGlowAmount = GlowScreenEffectRuns() ? Clamp01(info.m_bands.m_glow) : 0.0f;
     in.interiorBlend = CameraInInteriorGroup() ? Clamp01(info.m_interiorFogBlend) : 0.0f;

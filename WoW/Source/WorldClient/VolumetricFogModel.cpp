@@ -353,10 +353,14 @@ FogParams BuildFogParamsFrom(const FrameInputs& in, const Config& cfg, const Aut
     p.lightAboveHorizon = SmoothStep(-kLightSettingHalfWidth, kLightSettingHalfWidth, in.toLight[2]);
     p.farClip = in.farClip;
     p.maxDistance = std::max(cfg.maxDistance, in.farClip);
-    p.horizonStart = in.farClip * 0.85f;
+    // FARVIEW: with far land drawing (fogCap past farclip), the horizon band keeps its real distance out to 85 % of
+    // the land's reach, as wxl-vfog's far slice did, instead of being fogged as sky from 0.85 x farclip; and the
+    // distance layer ends at the stretched stock end (DayNight::UpdateFog), not at farclip.
+    const float fogCap = std::max(in.fogCap, in.farClip);
+    p.horizonEnd = fogCap > in.farClip && in.horizonBand[3] > in.farClip ? in.horizonBand[3] : in.farClip;
+    p.horizonStart = p.horizonEnd * 0.85f;
     p.referenceZ = ReferenceZ(in);
-    // No FogStretch natively: the unstretched stock end, exactly as coa (docs/VFOG_PORT.md section 7).
-    p.farLimit = std::clamp(in.fogEnd, 100.0f, in.farClip);
+    p.farLimit = std::clamp(in.fogEnd, 100.0f, fogCap);
 
     float fogDistance = in.zoneFogDistance > 50.0f && in.zoneFogDistance < 20000.0f ? in.zoneFogDistance : in.fogEnd;
     fogDistance = std::clamp(fogDistance, 50.0f, 5000.0f);

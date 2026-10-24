@@ -67,7 +67,7 @@ CGxPool* CParticleEmitter2::s_indexPool;
 thread_local float CParticleEmitter2::s_viewDist;
 
 // STATIC: 0x00DCE690
-float CParticleEmitter2::s_rndTable[128];
+float CParticleEmitter2::s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
 
 // STATIC: 0x00DCE890
 uint8_t CParticleEmitter2::s_noIndexBuffer;
@@ -901,7 +901,7 @@ int32_t CParticleEmitter2::RenderParticle(CParticle2_Model& particle, const C44M
     uint32_t twinkle = 0;
 
     if (this->m_twinkleOnOff < 1.0f || 0.0f != this->m_twinkleScaleSpan) {
-        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
+        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
     if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
@@ -1109,9 +1109,9 @@ static void RecursiveEmitterModelLoaded(CM2Model* model, void* arg) {
         model->WaitForLoad(nullptr);
     }
 
-    uint32_t count = 4;
+    uint32_t count = CParticleEmitter2::MAX_CHILD_EMITTERS;
 
-    if (model->m_shared->m_data->m_particles.m_count < 4) {
+    if (model->m_shared->m_data->m_particles.m_count < CParticleEmitter2::MAX_CHILD_EMITTERS) {
         if (!(model->m_fFlags & 1)) {
             model->WaitForLoad(nullptr);
         }
@@ -1568,7 +1568,7 @@ int32_t CParticleEmitter2::BuildVertex(const CParticle2& particle, ParticleVerte
     uint32_t twinkle = 0;
 
     if (this->m_twinkleOnOff < 1.0f || 0.0f != this->m_twinkleScaleSpan) {
-        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
+        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
     if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
@@ -2092,7 +2092,7 @@ void CParticleEmitter2::DetermineIfSimple() {
         return;
     }
 
-    this->m_params.m_simpleKeys = new (__FILE__, __LINE__) SimpleKey[2];
+    this->m_params.m_simpleKeys = new (__FILE__, __LINE__) SimpleKey[CParticleEmitter2::NUM_PARTICLE_KEYS];
 
     if (!this->m_params.m_simpleKeys) {
         return;
@@ -2435,7 +2435,7 @@ CParticleEmitter2::CParticleEmitter2() : m_random(0) {
     this->m_textureCellHeight = 1.0f;
     this->m_renderedParticles = 0;
     this->m_emitterType = PET_BASE_EMITTER;
-    this->m_childEmitterCount = 4;
+    this->m_childEmitterCount = CParticleEmitter2::MAX_CHILD_EMITTERS;
     this->m_model = nullptr;
     this->m_childModel = nullptr;
     this->m_vertsPerParticle = 0;
@@ -2872,8 +2872,8 @@ void CParticleEmitter2::Sync() {
         CParticleEmitter2* child = this->m_childEmitters[i];
         uint32_t childCount = static_cast<uint32_t>(count * ((child->m_params.m_lifeVariation + child->m_params.m_life) * (child->m_params.m_emissionRateVariation + child->m_params.m_emissionRate) * 1.15f));
 
-        if (childCount > 0x1000) {
-            childCount = 0x1000;
+        if (childCount > CParticleEmitter2::MAX_RECURSIVE_PARTICLES) {
+            childCount = CParticleEmitter2::MAX_RECURSIVE_PARTICLES;
         }
 
         child->SyncAllocation(childCount);
@@ -2890,7 +2890,7 @@ CParticleEmitter2::CParticleEmitter2(const CParticleEmitter2& source, int32_t co
     this->m_textureCellHeight = source.m_textureCellHeight;
     this->m_priorityPlane = source.m_priorityPlane;
     this->m_emitterType = source.m_emitterType;
-    this->m_childEmitterCount = 4;
+    this->m_childEmitterCount = CParticleEmitter2::MAX_CHILD_EMITTERS;
     this->m_vertsPerParticle = source.m_vertsPerParticle;
     this->m_indicesPerParticle = source.m_indicesPerParticle;
     this->m_textureRows = source.m_textureRows;

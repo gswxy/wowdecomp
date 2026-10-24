@@ -82,6 +82,17 @@ class CParticleEmitter2 {
         PET_NUMS_PETS = 4,
     };
 
+    enum : uint32_t {
+        NUM_PARTICLE_KEYS = 2,
+        MAX_CHILD_EMITTERS = 4,
+    };
+
+    enum : uint32_t {
+        MAX_RECURSIVE_PARTICLES = 0x1000,
+        RND_TABLE_SIZE = 128,
+        RND_TABLE_MASK = 0x7F,
+    };
+
     enum PARTICLE_TYPE : uint32_t {
         PT_QUAD = 0,
         PT_MODEL = 1,
@@ -152,7 +163,7 @@ class CParticleEmitter2 {
     static uint8_t s_noIndexBuffer;
     // Not stock: per thread, since CM2SceneRender::Draw builds particle vertices on the Model2 workers
     static thread_local CSortableParticleQueue s_pq;
-    static float s_rndTable[128];
+    static float s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
     // Not stock: per thread, since CM2Scene::Animate updates emitters on the Model2 workers (set in Update, read in
     // EmitNewParticles of the same emitter tree)
     static thread_local float s_viewDist;
@@ -199,7 +210,7 @@ class CParticleEmitter2 {
     /* 004C */ TSGrowableArray<uint32_t> m_liveList;
     /* 005C */ TSGrowableArray<uint32_t> m_freeList;
     /* 006C */ uint32_t m_childEmitterCount;
-    /* 0070 */ CParticleEmitter2* m_childEmitters [4];
+    /* 0070 */ CParticleEmitter2* m_childEmitters [CParticleEmitter2::MAX_CHILD_EMITTERS];
     /* 0080 */ CM2Model* m_model;
     /* 0084 */ CM2Scene* m_scene;
     /* 0088 */ CM2Model* m_childModel;

@@ -41,6 +41,11 @@ class FrameScriptFunctionRef : public XMLNodeData {
 
 class CSimpleFrame : public CScriptRegion {
     public:
+    enum : uint32_t {
+        STATE_INITIALIZED = 1,
+        STATE_DELETED = 3,
+    };
+
     static CDataAllocator s_allocator;
     static int32_t s_frameCount;
     static int32_t s_metatable;

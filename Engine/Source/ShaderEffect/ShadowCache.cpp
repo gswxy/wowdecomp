@@ -61,6 +61,7 @@ float CShadowCache::s_pcfScale = 1.0f;
 int32_t CShadowCache::s_cascadeReuse;
 int32_t CShadowCache::s_bandDoodads;
 int32_t CShadowCache::s_alphaMatch;
+int32_t CShadowCache::s_wmoInterior;
 
 /// Not stock (shadowCascadeReuse, after Badgermilk0's 5c8a872b): what each VERY_HIGH cascade was last drawn for.
 struct CascadeRender {

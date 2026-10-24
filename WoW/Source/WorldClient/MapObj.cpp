@@ -3219,7 +3219,12 @@ void CMapObj::RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* gr
             SMOMaterial& material = mapObj->m_materialList[smoBatch.m_texture];
             CGxTex* gxTex = TextureGetGxTex(material.Textures()[0], 0, nullptr);
 
-            if (!gxTex) {
+            // shadowWmoInterior: an opaque batch whose texture is still loading casts solid and untextured, as the
+            // untextured groups above do, so a wall's shadow does not pop in late (stock: skipped). A cut-out (blend
+            // 1+) still waits: a solid leaf or grate card would cast a block.
+            const bool untextured = !gxTex && CShadowCache::s_wmoInterior && material.m_blendMode == 0;
+
+            if (!gxTex && !untextured) {
                 continue;
             }
 
@@ -3227,6 +3232,10 @@ void CMapObj::RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* gr
             // additive and modulated ones (3+) do not cast (stock: everything but blend 1 cast as opaque)
             if (CShadowCache::s_alphaMatch && material.m_blendMode >= 3) {
                 continue;
+            }
+
+            if (untextured) {
+                CShaderEffect::SetAlphaRef(0.0f);
             }
 
             g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex);
@@ -3239,6 +3248,10 @@ void CMapObj::RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* gr
             batch.m_minIndex = smoBatch.m_vertexStart;
             batch.m_maxIndex = smoBatch.m_vertexEnd;
             g_theGxDevicePtr->Draw(&batch, 1);
+
+            if (untextured) {
+                CShaderEffect::SetAlphaRef(0.87843138f);
+            }
         }
     }
 

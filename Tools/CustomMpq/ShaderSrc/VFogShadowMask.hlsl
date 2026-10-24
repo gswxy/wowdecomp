@@ -188,10 +188,13 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     n *= dot(n, p) > 0 ? -1 : 1;    // toward the camera
     n = normalize(ViewToWorldDirection(GBufferNormal(pixel, p, normalize(n))));
     float ndl = saturate(dot(n, cMaskLight.xyz));
-    // Both shadows lift at the terminator as the receivers' cascade term does, each for its own light, so a back face in
-    // the land's shadow is no darker than one outside it. (Terrain3 has no such fade; the mask cannot tell terrain apart.)
+    // The cascade term lifts at the terminator as the receivers' does. The land term does not: lifting it too (step 1)
+    // erased a mountain's shadow on every surface under 0.2 N.L, all flat ground once the sun is under 11.5 deg, which
+    // is when a mountain shades a valley, and left a tree's cascade shadow on that floor alone (2026-10-24). A back face
+    // to the land's light gets no sun inside the land's shadow or out of it, so there the receivers' own result stands
+    // (land 1); at N.L 0 both sides give a ratio of 1, so the cut does not show.
     float liftCascade = TerminatorFade(n, cMaskCascadeLight.xyz);
-    land = lerp(land, 1, TerminatorFade(n, cMaskLandLight.xyz));
+    land = dot(n, cMaskLandLight.xyz) <= 0 ? 1 : land;
 
     float which;
     float cascade = lerp(ReceiverShadow(p, which), 1, liftCascade);

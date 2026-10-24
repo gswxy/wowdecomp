@@ -579,7 +579,7 @@ bool Enabled() {
 
 bool Update(const float trueLight[3], const float camPos[3], CGxTex*& tex, float row[4]) {
     tex = nullptr;
-    // gfxSunShadows: the cascades' latched light (elevation 12-70 deg), so a mountain's shadow and a tree's next to it
+    // gfxSunShadows: the cascades' latched light (elevation 4-70 deg), so a mountain's shadow and a tree's next to it
     // have the same length and side; stock light otherwise. The latch moves in steps far under kTurnCos, so they
     // add up to a rebuild here (the land lags the cascades by at most that), and its 5 deg jumps fade (kSnapCos).
     C3Vector latched;

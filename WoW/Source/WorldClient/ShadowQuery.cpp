@@ -57,6 +57,8 @@ static CVar* s_cvShadowTerrainCast;
 static CVar* s_cvShadowCasterMinTexels;
 static CVar* s_cvShadowBandDoodads;
 static CVar* s_cvShadowAlphaMatch;
+// Not stock (shadow overhaul step 2): shadowWmoInterior.
+static CVar* s_cvShadowWmoInterior;
 
 #if defined(_WIN64)
 static const char* const kShadowMapSizeDefault = "4096";   // ~600 MB of maps at extShadowQuality 3-4
@@ -123,6 +125,7 @@ void CShadowQuery::Initialize() {
     s_cvShadowCasterMinTexels = CVar::Register("shadowCasterMinTexels", "Smallest caster in the 320/1280 yd shadow bands, in band texels of radius (0 = stock 2/10 yd)", 1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowBandDoodads = CVar::Register("shadowBandDoodads", "extShadowQuality 3-4: billboard doodads and interior-flagged WMOs cast into the far shadow bands (0 = stock: the 20 yd unit map only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowAlphaMatch = CVar::Register("shadowAlphaMatch", "Leaf and alpha-blended surfaces cast exactly where they draw (0 = stock: M2 cut at half alpha, WMO glass and glow cast solid)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowWmoInterior = CVar::Register("shadowWmoInterior", "Interior-flagged WMO groups (walls, roofs, towers seen from outside) cast the sun shadow, and WMO walls cast before their textures load (0 = stock: exterior groups only, loaded textures only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCascadeReuse = CVar::Register("shadowCascadeReuse", "extShadowQuality 5: redraw the 320 yd cascade every 2nd frame and the 1280 yd one every 4th (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // (before CShadowCache::Initialize creates the maps, so a saved size needs no second Init)
@@ -170,7 +173,12 @@ static void GetViewerPosition(C3Vector* position) {
 // noon is flat. (Re-applied from e258860; gfxSunArc, in DayNight, is its arc. Without it the stock sun and moon share one bearing, 45 deg,
 // the same as the stock world light's, so the shading and the shadows agree on the side and only the length
 // follows the clock.)
-static const float kShadowMinElev = 12.0f, kShadowMaxElev = 70.0f;   // degrees
+// The floor was 12 deg until 2026-10-24: from 18:36 to sunset (gfxSunArc) the cascades and the land shadow then held
+// the sun at twice its height, so a mesa's shadow fell short of a valley floor the sky showed in its shade while a
+// tree's (just as short, but on the floor) lay across it (Durotar video, 2026-10-24). 4 deg: shadows 14x a caster's
+// height, inside band 2. Terrain casts only its back faces and the M2/WMO receivers lift |N.L| < 0.2, so the
+// lit ground under a grazing sun has nothing to acne against.
+static const float kShadowMinElev = 4.0f, kShadowMaxElev = 70.0f;   // degrees
 // Degrees the light may move before the cached maps are redrawn, at 30 degrees up; scaled by sin^2 so a low sun
 // steps finer, never under kLatchFloor. (At 0.25 each step was a visible shift of every shadow, the user,
 // 2026-10-06; at 0.01 the light steps every two or three seconds by a twenty-fifth of that.)
@@ -374,10 +382,11 @@ void CShadowQuery::Update() {
     CShadowCache::s_texelSnap = s_cvShadowSnap && s_cvShadowSnap->m_intValue;
     CShadowCache::s_bandDoodads = s_cvShadowBandDoodads && s_cvShadowBandDoodads->m_intValue;
     CShadowCache::s_alphaMatch = s_cvShadowAlphaMatch && s_cvShadowAlphaMatch->m_intValue;
+    CShadowCache::s_wmoInterior = s_cvShadowWmoInterior && s_cvShadowWmoInterior->m_intValue;
 
     // (a change of caster set redraws the cached bands)
     static float s_lastCasterKey = -1.0f;
-    const float casterKey = CShadowCache::s_bandDoodads + 2.0f * CShadowCache::s_alphaMatch + 4.0f * (s_cvShadowCasterMinTexels ? s_cvShadowCasterMinTexels->m_floatValue : 0.0f);
+    const float casterKey = CShadowCache::s_bandDoodads + 2.0f * CShadowCache::s_alphaMatch + 4.0f * CShadowCache::s_wmoInterior + 8.0f * (s_cvShadowCasterMinTexels ? s_cvShadowCasterMinTexels->m_floatValue : 0.0f);
 
     if (casterKey != s_lastCasterKey) {
         s_lastCasterKey = casterKey;
@@ -553,6 +562,10 @@ void CShadowQuery::FrustumCallback(CFrustum& frustum, C44Matrix& matrix, const C
     }
 }
 
+// Per band caps (stock 0x800 groups, 0x2000 M2 batches; past them casters drop out at random). Raised with
+// shadowWmoInterior adding interior groups: a q5 band 2 (640 yd) over a city holds thousands. About 1 MB a band.
+static const uint32_t kShadowGroupCap = 0x2000, kShadowBatchCap = 0x8000;
+
 // VERIFY: dc5e2519 manual
 // OFFSET: 0x007BA840
 void CShadowQuery::AllocBuffers() {
@@ -560,24 +573,24 @@ void CShadowQuery::AllocBuffers() {
         ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[i];
         buffers.m_groupCount = 0;
         buffers.m_untextured.m_count = 0;
-        buffers.m_untextured.m_maxCount = 0x2000;
+        buffers.m_untextured.m_maxCount = kShadowBatchCap;
         buffers.m_textured.m_count = 0;
-        buffers.m_textured.m_maxCount = 0x2000;
+        buffers.m_textured.m_maxCount = kShadowBatchCap;
 
         if (!buffers.m_groups) {
-            buffers.m_groups = SMemAlloc(0x800 * sizeof(CMapObjGroup*), __FILE__, __LINE__, 0);
+            buffers.m_groups = SMemAlloc(kShadowGroupCap * sizeof(CMapObjGroup*), __FILE__, __LINE__, 0);
         }
 
         if (!buffers.m_groupData) {
-            buffers.m_groupData = SMemAlloc(0x800 * sizeof(C44Matrix*), __FILE__, __LINE__, 0);
+            buffers.m_groupData = SMemAlloc(kShadowGroupCap * sizeof(C44Matrix*), __FILE__, __LINE__, 0);
         }
 
         if (!buffers.m_untextured.m_batches) {
-            buffers.m_untextured.m_batches = static_cast<CModelBatch*>(SMemAlloc(sizeof(CModelBatch) * 0x2000, __FILE__, __LINE__, 0));
+            buffers.m_untextured.m_batches = static_cast<CModelBatch*>(SMemAlloc(sizeof(CModelBatch) * kShadowBatchCap, __FILE__, __LINE__, 0));
         }
 
         if (!buffers.m_textured.m_batches) {
-            buffers.m_textured.m_batches = static_cast<CModelBatch*>(SMemAlloc(sizeof(CModelBatch) * 0x2000, __FILE__, __LINE__, 0));
+            buffers.m_textured.m_batches = static_cast<CModelBatch*>(SMemAlloc(sizeof(CModelBatch) * kShadowBatchCap, __FILE__, __LINE__, 0));
         }
     }
 }
@@ -1227,7 +1240,12 @@ void CShadowQuery::QueryMapObjDefsBand(CShadowCacheQueryData& data, int32_t band
             CMapObjDefGroup* defGroup = def->m_defGroups[i];
             CMapObjGroup* group = def->m_owner->GetGroup(i, 0);
 
-            if (!group || !(group->m_flags & 0x48)) {
+            // shadowWmoInterior: interior-only groups cast too (outside walls, roofs and towers are often flagged
+            // interior; caves lie under the terrain, which shadows them anyway), but their doodads do not (furniture
+            // inside a closed shell adds batches and no shadow). Stock: exterior (0x8) and exterior-lit (0x40) only.
+            const bool interiorGroup = group && !(group->m_flags & 0x48);
+
+            if (!group || (interiorGroup && !CShadowCache::s_wmoInterior)) {
                 continue;
             }
 
@@ -1242,12 +1260,16 @@ void CShadowQuery::QueryMapObjDefsBand(CShadowCacheQueryData& data, int32_t band
             if (interior ? (data.m_queryFlags[band] & 0x4) : (data.m_queryFlags[band] & 0x8)) {
                 ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
 
-                if (buffers.m_groupCount >= 0x800) {
+                if (buffers.m_groupCount >= kShadowGroupCap) {
                     break;
                 }
 
                 static_cast<C44Matrix**>(buffers.m_groupData)[buffers.m_groupCount] = &def->m_mat;
                 static_cast<CMapObjGroup**>(buffers.m_groups)[buffers.m_groupCount++] = group;
+            }
+
+            if (interiorGroup) {
+                continue;
             }
 
             for (CMapBaseObjLink* link = defGroup->m_doodadDefLinkList.Head(); link; link = defGroup->m_doodadDefLinkList.Next(link)) {
@@ -1300,7 +1322,12 @@ void CShadowQuery::QueryMapObjDefs(CShadowCacheQueryData& data, int32_t firstBan
             CMapObjDefGroup* defGroup = def->m_defGroups[i];
             CMapObjGroup* group = def->m_owner->GetGroup(i, 0);
 
-            if (!group || !(group->m_flags & 0x48)) {
+            // shadowWmoInterior: interior-only groups cast too (outside walls, roofs and towers are often flagged
+            // interior; caves lie under the terrain, which shadows them anyway), but their doodads do not (furniture
+            // inside a closed shell adds batches and no shadow). Stock: exterior (0x8) and exterior-lit (0x40) only.
+            const bool interiorGroup = group && !(group->m_flags & 0x48);
+
+            if (!group || (interiorGroup && !CShadowCache::s_wmoInterior)) {
                 continue;
             }
 
@@ -1313,13 +1340,17 @@ void CShadowQuery::QueryMapObjDefs(CShadowCacheQueryData& data, int32_t firstBan
                 if (data.m_queryFlags[band] && data.m_extents[band].Intersects(defGroup->m_bbox) && data.m_bandFrustums[band].Cull(defGroup->m_bbox) && (!data.m_useCullFrustum[band] || data.m_cullFrustums[band].CullInv(defGroup->m_bbox) != WorldCull_notOutside)) {
                     ShadowQueryBuffers& buffers = CShadowQuery::s_bandBuffers[band];
 
-                    if (buffers.m_groupCount >= 0x800) {
+                    if (buffers.m_groupCount >= kShadowGroupCap) {
                         break;
                     }
 
                     static_cast<C44Matrix**>(buffers.m_groupData)[buffers.m_groupCount] = &def->m_mat;
                     static_cast<CMapObjGroup**>(buffers.m_groups)[buffers.m_groupCount++] = group;
                 }
+            }
+
+            if (interiorGroup) {
+                continue;
             }
 
             for (CMapBaseObjLink* link = defGroup->m_doodadDefLinkList.Head(); link; link = defGroup->m_doodadDefLinkList.Next(link)) {

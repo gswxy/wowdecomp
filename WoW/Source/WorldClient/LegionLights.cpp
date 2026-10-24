@@ -29,6 +29,11 @@ using namespace VolumetricFog;
 constexpr int kLightsPerPass = 16;          // LegionLights.hlsl kLights
 constexpr int kMaxLights = 128;             // Legion maxLightCount's range
 constexpr uint32_t kControlRegister = 10;   // c10 control, c11.. three registers a light
+constexpr uint32_t kShadowRegister = 59;    // c59 shadows (LIGHTOCC)
+constexpr float kShadowDarkness = 0.85f;    // a fully blocked lamp keeps 15 % of its light (soft, never black)
+constexpr float kShadowMarch = 12.0f;       // yd: longest ray toward a lamp
+constexpr float kShadowThickness = 2.5f;    // yd: what the depth buffer's front surfaces are taken to be deep
+constexpr float kShadowDist = 120.0f;       // yd: no shadow rays past this
 constexpr float kMaxRadius = 40.0f;         // yd
 constexpr float kCutoff = 1.0f / 32.0f;     // the radius: where the stock attenuation leaves 1/32 of the colour
 constexpr float kMaxColour = 4.0f;
@@ -39,6 +44,7 @@ CVar* s_count;
 CVar* s_dist;
 CVar* s_intensity;
 CVar* s_normalBuffer;
+CVar* s_shadows;
 CGxShader* s_shader;    // ponytail: not destroyed at device shutdown (one shader, the device goes with the process)
 bool s_noShader;        // LegionLights.bls failed to load: the stock per-vertex lights stay
 
@@ -109,6 +115,9 @@ void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
     GxRsSet(GxRs_ColorWrite, 7);
     SetPs(0, &common[0][0], 4);
     SetPs(kControlRegister, control, 1);
+    // LIGHTOCC: screen-space shadow rays toward each lamp (LegionLights.hlsl LightVisibility)
+    const float shadow[4] = { kShadowDarkness * Var(s_shadows, 1.0f, 0.0f, 1.0f), kShadowMarch, kShadowThickness, kShadowDist };
+    SetPs(kShadowRegister, shadow, 1);
     Bind(0, depth);
     BindNormalBuffer();
     device->RsSet(GxRs_PixelShader, s_shader);
@@ -137,11 +146,12 @@ void RegisterCVars() {
     const auto reg = [](const char* name, const char* help, const char* value) {
         return CVar::Register(name, help, 1, value, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     };
-    s_mode = reg("lightMode", "Lamps and torches light the world around them per pixel: 0 = off (the stock per-vertex light on ground and buildings), 1 = ground and buildings, 2 = also creatures, characters and grass", "1");
+    s_mode = reg("lightMode", "Lamps and torches light the world around them per pixel: 0 = off (the stock per-vertex light on ground and buildings), 1 = ground and buildings, 2 = also creatures, characters and grass (default)", "2");
     s_count = reg("maxLightCount", "Most lamps that light the world at once, nearest first, 1..128", "32");
     s_dist = reg("maxLightDist", "Distance in yards out to which lamps light the world (fades out over the last quarter), 20..2048", "200");
     s_normalBuffer = reg("gxNormalBuffer", "The world's models, buildings and ground also write their smooth normals, which the lamps (lightMode), the mountains' shadow (shadowMask) and SSAO light by: 1 = on (default), 0 = rebuild them from the depth (faceted)", "1");
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");
+    s_shadows = reg("lightShadows", "Things standing between a lamp and a surface block its light (screen-space shadow rays): 0 = off, 1 = full (default), between = lighter shadows", "1");
 }
 
 bool LightsWorldGeometry() {
@@ -157,6 +167,10 @@ void OnWorld(bool solidDone) {
     }
     CM2Scene* scene = World::s_m2Scene;
     CGxDevice* device = g_theGxDevicePtr;
+    if (!solidDone) {
+        // lightMode 2: the models' stock per-vertex point lights give way to the pass (CM2Model::SetupLighting)
+        g_m2PixelLitScene = mode == 2 && LightsWorldGeometry() ? scene : nullptr;
+    }
     // POINTLIGHT: the forward lightDynamic (D3D11/Vulkan shaderLighting) owns the lights: one per-pixel light is enough
     if (mode < 1 || mode > 2 || (mode == 2) != solidDone || !scene || !scene->m_lightGrid || !device || g_m2ShaderOwnedLightScene) {
         return;

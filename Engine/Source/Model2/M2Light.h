@@ -91,5 +91,8 @@ extern CM2Scene* g_m2ShaderOwnedLightScene;
 // (lightMode) lights them per pixel instead: CM2Lighting::AddLight then takes no point lights (the stock vertex
 // shaders lit them per vertex, a patchwork of triangles under a torch)
 extern bool g_m2SkipPointLights;
+// LEGION lights (not in 12340): the scene whose models' point lights the LegionLights pass lights per pixel
+// (lightMode 2); CM2Model::SetupLighting sets g_m2SkipPointLights for that scene's models
+extern CM2Scene* g_m2PixelLitScene;
 
 #endif

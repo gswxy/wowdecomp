@@ -281,12 +281,14 @@ vertex (corrected 2026-10-24, fix/pointlight: an earlier note here said never te
 floors of 5 sq yd triangles with leaning MONR normals, a torch draws a patchwork of triangles. So while the pass
 lights terrain and WMOs (`LegionLights::LightsWorldGeometry`), their stock point lights are left out
 (`g_m2SkipPointLights`, M2Light.h) and the pass replaces them per pixel.
-- `lightMode 1` (default since 2026-10-24) runs right after `CWorld::Render` (terrain, WMO groups, horizon, sky) and before
+- `lightMode 1` (the default for the morning of 2026-10-24, then 2) runs right after `CWorld::Render` (terrain, WMO groups, horizon, sky) and before
   `scene->Draw(M2PASS_0)`: the depth then holds only terrain and WMO, and every model drawn after covers its pixels
   with its own stock-lit colour. So models are never double lit.
 - `lightMode 2` runs after the solid world (after `VolumetricFog::OnSolidDone`, so after the shadow mask): models
-  and grass take the lamps too, on top of their stock point lights (brighter near lamps). For a look closer to
-  Legion's "everything lit"; not the default choice.
+  and grass take the lamps too. Since 2026-10-24 (lightocc) the models' stock per-vertex point lights are left out
+  (`g_m2PixelLitScene`, set by `OnWorld(false)`, read in `CM2Model::SetupLighting`), so nothing is lit twice, and
+  this is the default: only with the models in the depth can a post or a palisade block a lamp. Ceiling: models
+  drawn after the pass (blended batches, M2PASS_1) get no lamp light at all.
 - With the forward `lightDynamic` owning the lights (D3D11/Vulkan shaderLighting, `g_m2ShaderOwnedLightScene`) the pass
   stays off, so nothing is lit twice.
 - Ceiling: `GxBlend_ModAdd` on an 8-bit target at most doubles a pixel, where stock's per-vertex light could reach
@@ -296,10 +298,23 @@ Both run before liquids, transparents and the fog composite, so the fog fogs the
 **CVars** (LegionLights.cpp, Video Options > Advanced > Lights, "Lamps & Torches"):
 | CVar | Range | Default | |
 |---|---|---|---|
-| `lightMode` | 0/1/2 | 1 | 0 off (stock per-vertex lamps), 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
+| `lightMode` | 0/1/2 | 2 | 0 off (stock per-vertex lamps), 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
 | `maxLightCount` | 1..128 | 32 | nearest lights kept (Legion 128); 16 a pass, so 32 = 2 passes |
 | `maxLightDist` | 20..2048 | 200 | yd; lights farther than this plus their radius are dropped, the light fades over the last quarter (Legion 2048) |
 | `lightIntensity` | 0..4 | 1 | scale on the added light |
+| `lightShadows` | 0..1 | 1 | screen-space shadow rays toward each lamp; a fully blocked lamp keeps 1 - 0.85 x this of its light |
+
+**Shadows** (2026-10-24, lightocc; `LegionLights.hlsl` `LightVisibility`, docs/shadow-research/03-screenspace-cheap.md
+1a, Bend-style contact shadows as a plain tap loop). For each pixel and each lamp that reaches it (more than 1/512 of
+light), a ray from just off the surface toward the lamp, in view space, ending 0.75 yd short of the lamp (its own
+fire and holder) and capped at 12 yd; a lamp behind the camera is marched toward until the ray reaches view depth
+0.5 yd, and a ray that leaves the viewport stops (counted open). 12 taps up to ~25 yd, down to 6 at 100 yd, none past
+120 yd, one interleaved-gradient jitter a pixel. A tap is blocked when it lies behind the depth there by more than
+0.03 + 0.003 z and less than 2.5 yd (thickness: a character in front of a wall does not shadow the wall), ramped
+both ways; the light is scaled by 1 - max(blocked) x 0.85 x `lightShadows`. Constants c59. Cost estimate: 6-12
+depth taps + ~20 ALU per tap per lit lamp per pixel; a pixel near one or two lamps pays 12-24 taps, about
+0.2-0.5 ms at 1440p in a lamp-heavy town on a mid GPU, nothing where no lamp reaches. ps_3_0 31 KB (fxc accepts the
+slot count; D3D9 runs it too).
 
 Default on since 2026-10-24 (it replaces the stock per-vertex lamps on terrain and WMOs); cost not measured (no rig by the rules). Estimate:
 per pass 5 depth taps and ~16 x 14 ALU a pixel over the world viewport, about 0.2-0.4 ms a pass at 1440p on a mid GPU

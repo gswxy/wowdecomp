@@ -6294,7 +6294,9 @@ void CM2Model::SetupLighting() {
         sphere.c = center;
 
         this->m_lighting.Initialize(this->m_scene, sphere);
+        g_m2SkipPointLights = g_m2PixelLitScene && this->m_scene == g_m2PixelLitScene;   // LEGION lights: lit per pixel (lightMode 2)
         this->m_scene->SelectLights(&this->m_lighting);
+        g_m2SkipPointLights = false;
 
         if (this->m_lightingCallback) {
             this->m_lightingCallback(this, &this->m_lighting, this->m_lightingArg);

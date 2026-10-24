@@ -213,6 +213,7 @@ void CM2Lighting::AddDiffuse(const C3Vector& color, const C3Vector& dir) {
 
 CM2Scene* g_m2ShaderOwnedLightScene = nullptr;
 bool g_m2SkipPointLights = false;
+CM2Scene* g_m2PixelLitScene = nullptr;
 
 // VERIFY: 7d1db3b8 manual
 // OFFSET: 0x00834F60

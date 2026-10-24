@@ -1041,7 +1041,7 @@ void CSimpleTop::UnregisterForEvent(CSimpleFrame* frame, CSimpleEventType event,
                 this->m_mouseFocus = nullptr;
                 this->m_checkFocus = 1;
 
-                if (frame->m_lifecycleState != CSimpleFrame::STATE_DELETED) {
+                if (frame->m_initialized_state != CSimpleFrame::INITIALIZED_STATE::STATE_DELETED) {
                     frame->OnLayerCursorExit(0, 1);
                 }
             }

@@ -41,7 +41,8 @@ class FrameScriptFunctionRef : public XMLNodeData {
 
 class CSimpleFrame : public CScriptRegion {
     public:
-    enum : uint32_t {
+    enum INITIALIZED_STATE : uint32_t {
+        // STATE_UNKNOWN = 0,
         STATE_INITIALIZED = 1,
         STATE_DELETED = 3,
     };
@@ -61,7 +62,7 @@ class CSimpleFrame : public CScriptRegion {
     /* 00A0 */ CSimpleTop* m_simpleTop;
     /* 00A4 */ CSimpleFrame* m_hoverFrame;
     /* 00A8 */ CScriptRegion* m_titleRegion;
-    /* 00AC */ uint32_t m_lifecycleState;
+    /* 00AC */ INITIALIZED_STATE m_initialized_state;
     /* 00B0 */ int32_t m_id;
     /* 00B4 */ uint32_t m_frameFlags;
     /* 00B8 */ float m_frameScale;

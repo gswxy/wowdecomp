@@ -196,7 +196,7 @@ CSimpleFrame::CSimpleFrame(CSimpleFrame* parent) {
     this->m_alpha = 0xFF;
     this->m_parentAlpha = 0xFF;
     this->m_animSavedAlpha = 0xFF;
-    this->m_lifecycleState = CSimpleFrame::STATE_INITIALIZED;
+    this->m_initialized_state = INITIALIZED_STATE::STATE_INITIALIZED;
     this->m_hitRect = { 0.0f, 0.0f, 0.0f, 0.0f };
     this->m_hitRectInsets = { 0.0f, 0.0f, 0.0f, 0.0f };
     this->m_clampRectInsets = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -234,7 +234,7 @@ CSimpleFrame::CSimpleFrame(CSimpleFrame* parent) {
 // VERIFY: e1a5b71b manual
 // OFFSET: [0x00492770, 0x004926B0, 0x00492E40]
 CSimpleFrame::~CSimpleFrame() {
-    this->m_lifecycleState = CSimpleFrame::STATE_DELETED;
+    this->m_initialized_state = INITIALIZED_STATE::STATE_DELETED;
     this->m_simpleTop->UnregisterFrame(this);
     this->m_simpleTop->ValidateDeletedFrame(this);
     this->m_simpleTop = nullptr;
@@ -1155,7 +1155,7 @@ void CSimpleFrame::NotifyScrollParent() {
 
     CSimpleScrollFrame* scrollFrame = static_cast<CSimpleScrollFrame*>(frame->m_parent);
 
-    if (scrollFrame && scrollFrame->m_lifecycleState != CSimpleFrame::STATE_DELETED) {
+    if (scrollFrame && scrollFrame->m_initialized_state != INITIALIZED_STATE::STATE_DELETED) {
         scrollFrame->m_scrollChildUpdate = 1;
     }
 }

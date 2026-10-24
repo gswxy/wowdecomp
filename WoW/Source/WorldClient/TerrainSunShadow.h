@@ -16,6 +16,7 @@ namespace TerrainSunShadow {
 
 void RegisterCVars();
 bool Enabled();
+bool UnifiedWanted();       // shadowUnified (and MaskWanted): the mask takes the exterior receivers' cascade term
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height
 int DebugMode();            // shadowDebug 0..7: the mask pass draws a view of the sun shadow instead of darkening

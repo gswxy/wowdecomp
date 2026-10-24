@@ -169,7 +169,7 @@ int32_t CDetailDoodadInst::HasBatches() {
 // VERIFY: e98d17d0 auto
 // OFFSET: 0x007B10E0
 void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
-    uint32_t shadow = CShadowCache::GetShadowValue();
+    uint32_t shadow = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
 
     if (shadow > 2) {
         shadow = 2;
@@ -899,7 +899,7 @@ int32_t CDetailDoodad::InitializeRenderState() {
     GxRsSet(GxRs_DepthWrite, 1);
 
     if (CDetailDoodad::s_bUseShaders) {
-        uint32_t shadow = CShadowCache::GetShadowValue();
+        uint32_t shadow = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());
         g_theGxDevicePtr->RsSet(GxRs_PixelShader, CDetailDoodad::s_pixelShader[4 * ((CWorld::enables2 >> 1) & 1) + shadow]);
         CDetailDoodad::InitializeShaderConstants();
         CShadowCache::SetShadowMapDetailDoodad();

@@ -2216,7 +2216,7 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
 
     consts.m_texScale[layerCount] = alphaScale;
 
-    CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::GetShadowValue());
+    CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::ReceiverValue(CShadowCache::GetShadowValue()));
     g_theGxDevicePtr->RsSet(GxRs_VertexShader, shader);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&consts), sizeof(SVertexShaderConstants) / sizeof(C4Vector));
 }
@@ -2883,7 +2883,7 @@ void CMapRenderChunk::SetShaders(int32_t a1, int32_t a2) {
     }
 
     int32_t bigAlpha = (CMap::header.m_flags >> 2) & 1;
-    int32_t shadowMode = CShadowCache::GetShadowValue();
+    int32_t shadowMode = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified: Terrain1 + the mask
     CMapRenderChunk::s_pixelShader[1] = CMap::GetPixelShader(bigAlpha, true, a1);
     CMapRenderChunk::s_pixelShader[0] = CMap::GetPixelShader(bigAlpha, false, a1);
 

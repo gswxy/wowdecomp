@@ -1008,7 +1008,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
                 if (s_shadowInterior) {
                     s_shadowInterior = 0;
                     CShadowCache::SetShadowMapGenericInterior(0);
-                    CShaderEffect::s_shadowValue = CShadowCache::GetShadowValue();
+                    CShaderEffect::s_shadowValue = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
                 }
 
                 SetShaderFogFromDayNight(2);
@@ -1045,7 +1045,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
         if (s_shadowInterior) {
             s_shadowInterior = 0;
             CShadowCache::SetShadowMapGenericInterior(0);
-            CShaderEffect::s_shadowValue = CShadowCache::GetShadowValue();
+            CShaderEffect::s_shadowValue = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
         }
 
         if (CShaderEffect::s_enableShaders) {
@@ -1415,7 +1415,7 @@ void CMapObj::ExteriorRender(CMapObjGroup* group, uint32_t index) {
             if (s_shadowInterior) {
                 s_shadowInterior = 0;
                 CShadowCache::SetShadowMapGenericInterior(0);
-                CShaderEffect::s_shadowValue = CShadowCache::GetShadowValue();
+                CShaderEffect::s_shadowValue = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
             }
         } else {
             if (s_shadowInterior != 1) {
@@ -1579,7 +1579,7 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
         if (s_shadowInterior) {
             s_shadowInterior = 0;
             CShadowCache::SetShadowMapGenericInterior(0);
-            CShaderEffect::s_shadowValue = CShadowCache::GetShadowValue();
+            CShaderEffect::s_shadowValue = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
         }
 
         CMapObjGroup::SetLighting(group, ((material.m_flags & 0x20) != 0) + 1);

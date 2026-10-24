@@ -144,8 +144,11 @@ def _vs_capture(sh):
     return None
 
 
-def inject(code, kind_hint=None):
-    """The rewritten token stream, or None when the record is left alone (SM2, or refused)."""
+def inject(code, kind_hint=None, shadow_sampler=None):
+    """The rewritten token stream, or None when the record is left alone (SM2, or refused).
+    shadow_sampler: the sampler a pixel record reads the shadow maps from (4 M2 / WMO / grass, 5 terrain); a record
+    that declares it shades itself with the cascades and writes a = 0.25 + 0.5 w instead of w (shadowUnified: the
+    shadow mask leaves its cascade term alone; a > 0.5 still means a normal is there)."""
     global _TOKS
     sh = ir.decode(code)
     if sh.major != 3:
@@ -185,11 +188,14 @@ def inject(code, kind_hint=None):
     if _max_index(sh, ir.RT_COLOROUT) > 0:
         raise Refused('already MRT')
     c = _free_const(sh, 224)
-    decl = dcl(TEXCOORD, USAGE_INDEX, dst(ir.RT_INPUT, v)) + define(c, (0.5, 0.5, 0.5, 0.5))
+    self_shadowed = shadow_sampler is not None and any(
+        ins.op == OP_DCL and ins.dst.rtype == ir.RT_SAMPLER and ins.dst.index == shadow_sampler for ins in sh.insts)
+    decl = dcl(TEXCOORD, USAGE_INDEX, dst(ir.RT_INPUT, v)) + define(c, (0.5, 0.5, 0.5, 0.25 if self_shadowed else 0.5))
+    alpha = inst(OP_MAD, dst(ir.RT_TEMP, r, 0x8), src(ir.RT_INPUT, v), src(ir.RT_CONST, c, 0x00), src(ir.RT_CONST, c, 0xFF)) \
+        if self_shadowed else inst(OP_MOV, dst(ir.RT_TEMP, r, 0x8), src(ir.RT_INPUT, v))     # .w * 0.5 + 0.25
     body = inst(OP_NRM, dst(ir.RT_TEMP, r, 0x7), src(ir.RT_INPUT, v)) + \
         inst(OP_MAD, dst(ir.RT_TEMP, r, 0x7), src(ir.RT_TEMP, r), src(ir.RT_CONST, c), src(ir.RT_CONST, c)) + \
-        inst(OP_MOV, dst(ir.RT_TEMP, r, 0x8), src(ir.RT_INPUT, v)) + \
-        inst(OP_MOV, dst(ir.RT_COLOROUT, 1), src(ir.RT_TEMP, r))
+        alpha + inst(OP_MOV, dst(ir.RT_COLOROUT, 1), src(ir.RT_TEMP, r))
     out = toks[:head] + decl + toks[head:end] + body + toks[end:]
     return struct.pack('<%dI' % len(out), *out), True
 
@@ -206,8 +212,9 @@ def rewrite_record(name, kind, code):
     """translate.py's hook: the record's code with the normal plumbing, or the code unchanged."""
     if not wanted(name, kind):
         return code
+    shadow = None if kind != 'ps' else 5 if os.path.basename(name).lower().startswith('terrain') else 4
     try:
-        r = inject(code)
+        r = inject(code, shadow_sampler=shadow)
     except Refused:
         return code
     return r[0] if r else code

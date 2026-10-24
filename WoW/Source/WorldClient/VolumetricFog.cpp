@@ -1,6 +1,7 @@
 // VFOG WP7: frame driver, CVars and engine inputs (port of coa-vfog src/hooks.cpp, src/engine.cpp,
 // src/engine_lights.cpp onto the decomp's own symbols). Not in the 3.3.5a binary; docs/VFOG_PORT.md sections 1, 7, 8.
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
+#include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
 #include <algorithm>
 #include <cmath>
@@ -1069,16 +1070,23 @@ void OnOpaqueDone() {
     s_opaqueValid = viewValid && std::isfinite(in.fogStart) && std::isfinite(in.fogEnd);
     // vfog38 (shadow audit L4): no land shadow indoors (strength 0): skip the pass and its depth copy, unless shadowDebug
     // wants the interior's unit map shown.
-    s_maskPending = mask && s_opaqueValid && (in.interiorBlend < 1.0f || TerrainSunShadow::DebugMode() > 0);
+    // shadowUnified: indoors too while the exterior receivers left their cascade term to the mask (strength 0 for the
+    // land, the cascades kept), else the outdoors seen from inside would be unshadowed.
+    s_maskPending = mask && s_opaqueValid && (in.interiorBlend < 1.0f || TerrainSunShadow::DebugMode() > 0 || CShadowCache::s_receiversUnified);
     CGxDevice::SetDepthUser(CGxDevice::DepthUser_ShadowMask, s_maskPending);
     s_ssaoPending = ssao && s_opaqueValid;
 }
 
 void OnSolidDone() {
+    // shadowUnified: decided again by this frame's mask; the draws after it (blended models, liquids) shade themselves.
+    CShadowCache::s_unifiedNext = 0;
     if (s_maskPending) {
         s_maskPending = false;
-        RenderShadowMask(s_in, TerrainSunShadow::MaskSoftYards(), !s_pushed);
+        if (!RenderShadowMask(s_in, TerrainSunShadow::MaskSoftYards(), !s_pushed)) {
+            CShadowCache::s_unifiedNext = 0;
+        }
     }
+    CShadowCache::s_receiversUnified = 0;
     if (s_ssaoPending) {
         s_ssaoPending = false;
         RenderSsao(s_in, std::clamp(CVarInt(s_ssaoCVars.mode, 0), 1, 2), std::clamp(CVarInt(s_ssaoCVars.blur, 2), 0, 2),

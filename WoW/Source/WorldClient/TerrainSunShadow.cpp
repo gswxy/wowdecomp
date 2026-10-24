@@ -81,6 +81,7 @@ CVar* s_maskCvar;       // shadowMask (Legion survey 2.7)
 CVar* s_softCvar;       // shadowSoft
 CVar* s_fineCvar;       // shadowMaskFine
 CVar* s_debugCvar;      // shadowDebug
+CVar* s_unifiedCvar;    // shadowUnified (docs/shadow-research/05-step2-consolidation.md)
 Level s_coarse(kSize, kCell, kGridOrigin, true);
 Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
 // The fine level's land, (kFineSize + 2)^2 from (r0 - 1, c0 - 1): ADT heights where loaded, WDL beyond, kNone in holes.
@@ -512,7 +513,8 @@ void RegisterCVars() {
     s_cvar = CVar::Register("gfxTerrainShadow", "The land (near terrain and the far WDL horizon) blocks the sun for the volumetric fog's sun shafts and glow and for the sun glare: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_maskCvar = CVar::Register("shadowMask", "Mountains (near terrain and the far WDL horizon) cast the sun's shadow onto the world: terrain, buildings and models (needs gfxTerrainShadow): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_softCvar = CVar::Register("shadowSoft", "Softness of the mountains' shadow edge (shadowMask), 0 = hard .. 4 = very soft, default 1", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_debugCvar = CVar::Register("shadowDebug", "Shows the sun shadow through the shadow mask pass (any shadowMask): 1 = which map each pixel reads (yellow unit map, green band 0, blue band 1, orange band 2, red none), 2 = the sun's visibility in grey (cascades and land), 3 = magenta where no cascade is read; grey visibility of one term alone: 4 = land heightfield (fine/coarse), 5 = bands 0-2, 6 = back-face rule, 7 = unit map; 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_debugCvar = CVar::Register("shadowDebug", "Shows the sun shadow through the shadow mask pass (any shadowMask): 1 = which map each pixel reads (yellow unit map, green band 0, blue band 1, orange band 2, red none), 2 = the sun's visibility in grey (cascades and land; under shadowUnified the multiplier the mask lays on each surface), 3 = magenta where no cascade is read; grey visibility of one term alone: 4 = land heightfield (fine/coarse), 5 = bands 0-2, 6 = back-face rule, 7 = unit map; 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_unifiedCvar = CVar::Register("shadowUnified", "One sun shadow answer per pixel (needs shadowMask): outdoor terrain, buildings and models leave their shadow-map term to the shadow mask, which combines it with the mountains' shadow (darker of the two, one fade into the fog, the same low-sun lift on ground and models): 1 = on (default), 0 = each surface shades its own shadow maps (old)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_fineCvar = CVar::Register("shadowMaskFine", "The mountains' shadow (shadowMask) from the loaded terrain's own heights (4 yd) within 1 km of the camera, the far WDL (33 yd) beyond: 1 = on (default), 0 = WDL only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
@@ -522,6 +524,10 @@ int DebugMode() {
 
 const float* LightDir() {
     return s_light;
+}
+
+bool UnifiedWanted() {
+    return (!s_unifiedCvar || s_unifiedCvar->m_intValue != 0) && MaskWanted();
 }
 
 bool MaskWanted() {

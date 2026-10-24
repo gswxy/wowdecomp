@@ -190,6 +190,7 @@ static const uint32_t kLatchWaitMs = 2000;     // a step waits for the near maps
 static C3Vector s_latch(0.0f, 0.0f, 1.0f);     // toward the light, as the shadow maps have it
 static int32_t s_haveLatch;
 static uint32_t s_latchMs;
+static bool s_indoors;              // the camera's interior blend, with hysteresis (SunShadowDir, CameraIndoors)
 static uint32_t s_latchSeenMs;     // the last frame SunShadowDir took the latch (SunLatched)
 
 /// Toward the sun or moon (unit) and its height in degrees, as DayNight::SetPlanets placed the discs. (Kept from
@@ -225,7 +226,6 @@ static bool SunShadowDir(C3Vector& out) {
 
     // Camera in a WMO interior: the stock steep light, so a low sun does not throw unit shadows across the interior
     // dynamic map onto the walls (Ratchet inn, AUDIT-2026-10-23 bug 1). Hysteresis so a doorway does not flap.
-    static bool s_indoors;
     float blend = VolumetricFog::CameraInteriorBlend();
     s_indoors = s_indoors ? blend > 0.4f : blend >= 0.6f;
 
@@ -295,6 +295,10 @@ static bool SunShadowDir(C3Vector& out) {
 
 // Toward the light the cascades were drawn for, while gfxSunShadows latches it. "Recently" rather than "this frame":
 // the one LOWEST frame of a map recreate must not flip the land shadow (TerrainSunShadow) to the true sun and back.
+bool CShadowQuery::CameraIndoors() {
+    return s_indoors;
+}
+
 bool CShadowQuery::SunLatched(C3Vector& toward) {
     if (!s_haveLatch || OsGetAsyncTimeMs() - s_latchSeenMs > 1000u) {
         return false;

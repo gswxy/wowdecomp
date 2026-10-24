@@ -16,6 +16,11 @@
 // start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on), c72 the fine level, c73 its fade,
 // c74-c75 the receivers' PCF offsets in uv (CShadowCache::s_pcfOffsets 0, 2 / 4, 6), c76 (toward the cascades' light
 // world, shadowDebug), c77 (toward the land's light world, 0).
+// shadowUnified (c71.z, docs/shadow-research/05-step2-consolidation.md): the exterior receivers drew without their
+// cascade term (shadow value 0 permutations until this pass), so this pass is the sun's one visibility answer for them:
+// ratio = min(cascade target, land target) / lit, both terms lifted at the terminator the M2/WMO way (terrain too
+// now), one fog rule. Receivers that still shaded themselves (interior groups and models, q1-2: their pixel shaders
+// declare the shadow sampler) tag the G-buffer alpha 0.25 / 0.75 (normals.py) and keep the ratio above.
 // VFogShadowMaskPoint is this source built with no hardware-compare slots, for D3D11 with R32F maps (hwPCF 0), whose
 // compare slots would need the comparison sampler only depth maps get (build_shaders.py compare_slots).
 #include "vf_common.hlsli"
@@ -126,6 +131,14 @@ float TerminatorFade(float3 n, float3 toLight)
     return saturate(t * t);
 }
 
+// A receiver that shaded itself with the cascades (normals.py: G-buffer a = 0.25 / 0.75; 0 / 1 for the rest and
+// unwritten pixels). Without a G-buffer the host leaves shadowUnified off (c71.z 0).
+bool SelfShadowed(float2 pixel)
+{
+    float a = tex2Dlod(sNormal, float4(pixel * DepthTexelSize(), 0, 0)).a;
+    return a > 0.125 && a < 0.875;
+}
+
 float3 ViewAt(float2 pixel)
 {
     return ViewRayAtUnitDepth(pixel) * LinearDepth(SampleDepth(sDepth, pixel));
@@ -136,7 +149,8 @@ float3 Nearer(float3 p, float3 a, float3 b)
     return abs(a.z - p.z) < abs(b.z - p.z) ? a - p : p - b;
 }
 
-// shadowDebug, drawn with alpha blending over the scene: 1 the map read, at half strength; 2 the sun's visibility;
+// shadowDebug, drawn with alpha blending over the scene: 1 the map read, at half strength; 2 the sun's visibility
+// (shadowUnified pixels: the multiplier this pass lays on them, fog included, i.e. what the receiver shows);
 // 3 magenta where no cascade is read (outside them all, or no world shader wrote the G-buffer: water, fixed function);
 // 4-7 one term alone in grey, unlifted (terms.x land heightfield, y bands 0-2, z back-face rule, w unit map).
 float4 DebugView(float mode, float which, float visibility, float4 terms, float2 pixel)
@@ -203,16 +217,30 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     float landHeights = land;
     float facing = dot(n, cMaskLandLight.xyz) <= 0 ? 0 : 1;
     land *= facing;
-    [branch] if (land >= 1 && debug <= 0)
+    bool unified = cMaskMaps.z > 0 && !SelfShadowed(pixel);
+    [branch] if (land >= 1 && debug <= 0 && !unified)
         return 1;
 
     float which, unitOnly, bandOnly;
     float cascade = lerp(ReceiverShadow(p, which, unitOnly, bandOnly), 1, liftCascade);
+    float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;
+    float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
+    [branch] if (unified)
+    {
+        // Both terms as a fraction of the receiver's own light (stock: lit x (1 - k (1 - S))), combined with min: a
+        // tree's shadow inside a mountain's lands on the mountain's colour; the land term fades indoors and with
+        // gfxShadowFade (c10.w), the cascade term with gfxShadowFade alone (k), as the receivers' did. One fog rule.
+        float shadowed = 1 - cMaskDiffuse.w * (1 - liftCascade);
+        float3 landRatio = lerp(1, lerp(min(cMaskAmbient.rgb / max(lit, 1.0 / 255), shadowed), 1, land), cMaskLight.w);
+        float3 ratio = lerp(1, min(1 - cMaskDiffuse.w * (1 - cascade), saturate(landRatio)), 1 - fog);
+        [branch] if (debug > 0)
+            return DebugView(debug, which, dot(ratio, 1.0 / 3), float4(landHeights, bandOnly, facing, unitOnly), pixel);
+        return float4(ratio, 1);
+    }
     [branch] if (debug > 0)
         return DebugView(debug, which, min(cascade, land), float4(landHeights, bandOnly, facing, unitOnly), pixel);
     // Terrain's own min with its baked MCSH is not modelled: MCSH is per chunk, baked for another sun, and the depth
     // does not say which pixels are terrain, so MCSH-dark ground in the land's shadow still darkens twice.
-    float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;
     float3 stock = lit * (1 - cMaskDiffuse.w * (1 - cascade));
     // Shadows combine as min: in the land's shadow the target is the darker of the ambient and a full cascade shadow
     // (as lifted at the terminator), so a model's cascade shadow inside the land's shadow (stock < A, which this
@@ -220,6 +248,5 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     float3 target = min(cMaskAmbient.rgb, lit * (1 - cMaskDiffuse.w * (1 - liftCascade)));
     float3 ratio = lerp(saturate(target / max(stock, 1.0 / 255)), 1, land);
     // The stock fog is in the colour when the volumetric fog did not push it out: fogged pixels keep their colour.
-    float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
     return float4(lerp(1, saturate(ratio), cMaskLight.w * (1 - fog)), 1);
 }

@@ -20,6 +20,7 @@
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
+#include "WoW/Source/WorldClient/ShadowQuery.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -443,11 +444,12 @@ void Bind(int stage, CGxTex* tex) {
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + stage), tex);
 }
 
-void BindNormalBuffer() {
+bool BindNormalBuffer() {
     CGxTex* normals = g_theGxDevicePtr->DeviceNormalBuffer();
     const float on[4] = { normals ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f };
     SetPs(9, on, 1);
     Bind(4, normals);
+    return normals != nullptr;
 }
 
 // One quad over the Gx viewport [minX..maxX, minY..maxY] (normalised; default the whole target) of width x height
@@ -1426,6 +1428,8 @@ bool RenderGrade(const float* curve32, float strength, int dither, uint32_t fram
 // ponytail: after the receivers, not before them (no depth pre-pass): the receivers keep their own cascade sampling, so
 // the cascades are not softened here and a stock tree shadow is not widened; that needs a depth pre-pass or two-phase
 // opaque so the receivers can read the mask (SHADOW_PORT_PLAN S4a/S4b replaced by one mask read).
+// shadowUnified (docs/shadow-research/05-step2-consolidation.md): the exterior receivers drop their cascade term
+// instead (CShadowCache::ReceiverValue) and this pass applies it, min with the land, one fog rule.
 // shadowDebug (TerrainSunShadow::DebugMode) draws a view of the sun shadow from this pass instead, alpha blended,
 // with or without the land.
 bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInColour) {
@@ -1452,7 +1456,10 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     CGxTex* maps[2];
     CGxTex* land = nullptr;
     ShadowConstants(true, 0.0f, in, viewToWorld, shadow, maps, land);
-    if (!land && !debug) {
+    // shadowUnified: this frame's exterior receivers drew without their cascade term (CShadowCache::ReceiverValue), so
+    // the pass runs for it even with no land to add.
+    const bool unified = CShadowCache::s_receiversUnified != 0;
+    if (!land && !debug && !unified) {
         return false;     // gfxTerrainShadow 0, no WDL, or the light under the horizon: nothing to add
     }
     if (land) {
@@ -1547,7 +1554,15 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     Bind(kShadowStage + 4, unit);
     Bind(kShadowStage + 5, fine);
     Bind(kShadowStage + 6, fineFrom);
-    BindNormalBuffer();
+    // c71.z: the receivers' cascade term is this pass's (shadowUnified); it needs the G-buffer to tell the receivers
+    // that still shaded themselves (interior, q1-2: alpha 0.25 / 0.75), so without one the old ratio is kept (those
+    // receivers then lack their cascade shadow for this frame) and the next frame's receivers shade themselves.
+    const bool normals = BindNormalBuffer();
+    extra[6][2] = unified && normals ? 1.0f : 0.0f;
+    SetPs(kShadowMaskBandRegister + 6, extra[6], 1);
+    // Indoors (the steep light, hysteresis) the receivers shade themselves as stock: the exterior shell's band shadow
+    // would otherwise fall on every unit model inside (value 0 receivers, which the mask cannot tell from the rest).
+    CShadowCache::s_unifiedNext = normals && TerrainSunShadow::UnifiedWanted() && !CShadowQuery::CameraIndoors();
     device->RsSet(GxRs_PixelShader, shader);
     device->DeviceSceneDepthBound(false);   // D3D9: s0 is the INTZ depth-stencil the back buffer uses
     DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);

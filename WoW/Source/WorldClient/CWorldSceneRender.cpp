@@ -222,6 +222,9 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     }
 
     CataWater::RenderReflection();   // CATAREFL: not in 12340 (Cata p = 1 planar reflection, before the lists are consumed)
+    // shadowUnified: the exterior receivers drawn from here to the shadow mask (VolumetricFog::OnSolidDone) leave their
+    // cascade term to it, when last frame's mask could take it (after the reflection: the mask does not cover that).
+    CShadowCache::s_receiversUnified = CShadowCache::s_unifiedNext;
     FrameProfileSwitch(FRAMEPROFILE_TERRAIN);
     CWorldScene::RenderChunks();
     FrameProfileSwitch(FRAMEPROFILE_WMO);

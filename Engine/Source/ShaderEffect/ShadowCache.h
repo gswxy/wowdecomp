@@ -97,7 +97,13 @@ class CShadowCache {
     static int32_t s_cascadeReuse;    // VERY_HIGH: band 1 redrawn every 2nd frame, band 2 every 4th, sooner on a move
     static int32_t s_bandDoodads;     // not stock (shadowBandDoodads): extShadowQuality 3-4 bands take query flag 4 too
     static int32_t s_alphaMatch;      // not stock (shadowAlphaMatch): casters alpha-test as their receivers draw (224/255)
-    static int32_t s_wmoInterior;     // not stock (shadowWmoInterior): interior WMO groups and unloaded WMO textures cast
+    static int32_t s_wmoInterior;
+    // not stock (shadowUnified, docs/shadow-research/05): exterior receivers (shadow value >= 2) take the value 0
+    // permutations while set (terrain to the shadow mask), the mask applying their cascade term; s_unifiedNext is
+    // what the mask could do last frame (it ran with a G-buffer), latched before the terrain.
+    static int32_t s_receiversUnified;
+    static int32_t s_unifiedNext;
+    static uint32_t ReceiverValue(uint32_t value) { return s_receiversUnified && value >= 2 ? 0 : value; }     // not stock (shadowWmoInterior): interior WMO groups and unloaded WMO textures cast
     static C4Vector s_pcfOffsets[8];
     static int32_t s_publishedRead;    // set by GetPublished, consumed by GatherBands (band 1 keeps band 0's casters)
     static C44Matrix s_publishedView;  // S3: PostUpdate's Gx view, for GetPublished

@@ -346,7 +346,7 @@ int32_t CM2SceneRender::LightingColorsMatch(const CM2Lighting* a, const CM2Light
 void CM2SceneRender::SetupLighting() {
     M2Material* material = this->m_curMaterial;
     int32_t localLighting = !(material->m_flags & 1) && s_localLighting[material->m_blendMode];
-    uint32_t shadow = this->m_curElement->m_shadowValue;
+    uint32_t shadow = CShadowCache::ReceiverValue(this->m_curElement->m_shadowValue);   // shadowUnified
 
     this->m_curLocalLighting = localLighting;
     CShaderEffect::SetLocalLighting(this->m_curLighting, localLighting, nullptr);

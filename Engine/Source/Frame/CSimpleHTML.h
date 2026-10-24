@@ -17,7 +17,13 @@ class XMLNode;
 struct lua_State;
 
 struct CONTENTNODE : public TSLinkedNode<CONTENTNODE> {
-    /* 0008 */ int32_t m_type;
+    enum CONTENT_TYPE : int32_t {
+        TEXT = 0,
+        HYPERLINK_TEXT = 1,
+        IMAGE = 2,
+    };
+
+    /* 0008 */ CONTENT_TYPE m_type;
     /* 000C */ CSimpleRegion* m_region;
 };
 

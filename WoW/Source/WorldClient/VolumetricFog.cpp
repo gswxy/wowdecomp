@@ -92,6 +92,7 @@ struct CVars {
     CVar* colorSpace;
     CVar* localLightIntensity;
     CVar* localLightPhase;
+    CVar* localLightFade;
     CVar* interior;
     CVar* interiorDensity;
     CVar* interiorFarFog;
@@ -436,15 +437,13 @@ bool Precedes(const LocalLight& a, const float aRaw[3], const LocalLight& b, con
     return false;
 }
 
-// coa SelectLocalPointLight: keep the kMaxLocalLights strongest lights whose reach comes near the camera.
-void SelectLight(FrameInputs& in, float raw[kMaxLocalLights][3], const CM2Light& native, const float cam[3], bool linear, float intensity) {
+// coa SelectLocalPointLight: a light's upload form, false when it is invalid or its reach misses the camera.
+bool MakeLight(LocalLight& candidate, const CM2Light& native, const float cam[3], bool linear, float intensity) {
     const float position[3] = { native.m_pos.x, native.m_pos.y, native.m_pos.z };
     const float color[3] = { native.m_dirColor.x, native.m_dirColor.y, native.m_dirColor.z };
     if (!ValidVector(position, -kMaxWorldCoordinate, kMaxWorldCoordinate) || !ValidVector(color, 0.0f, kMaxLightComponent)) {
-        return;
+        return false;
     }
-
-    LocalLight candidate;
     std::memcpy(candidate.position, position, sizeof(position));
     candidate.attenuation[0] = native.m_constantAttenuation;
     candidate.attenuation[1] = native.m_linearAttenuation;
@@ -455,45 +454,132 @@ void SelectLight(FrameInputs& in, float raw[kMaxLocalLights][3], const CM2Light&
     }
     candidate.cutoff = PointLightCutoff(candidate.color, candidate.attenuation);
     const double limit = candidate.cutoff + kMaxLocalPointLightRadius;
-    if (candidate.cutoff <= 0.0f || SquaredDistance(candidate.position, cam) > limit * limit) {
-        return;
-    }
-
-    int index = 0;
-    while (index < in.localLightCount && !Precedes(candidate, color, in.localLights[index], raw[index], cam)) {
-        ++index;
-    }
-    if (index == kMaxLocalLights) {
-        return;
-    }
-    const int count = std::min(in.localLightCount + 1, kMaxLocalLights);
-    for (int i = count - 1; i > index; --i) {
-        in.localLights[i] = in.localLights[i - 1];
-        std::memcpy(raw[i], raw[i - 1], sizeof(raw[i]));
-    }
-    in.localLights[index] = candidate;
-    std::memcpy(raw[index], color, sizeof(raw[index]));
-    in.localLightCount = count;
+    return candidate.cutoff > 0.0f && SquaredDistance(candidate.position, cam) <= limit * limit;
 }
 
-// coa CapturePointLightsUnsafe on the real CM2Scene light grid: visible point lights only (CM2Light::Link links
-// nothing else there, so the walk needs none of coa's table checks).
+// UCLIGHTS (not coa): the 8 fog light slots are sticky, as Luxvelum's local_light_stabiliser. Re-picking the 8 strongest
+// every frame (coa) popped lamps' fog glow on and off as the camera moved through a crowded city (Undercity: dozens of
+// lamps trading ranks 8 and 9). A slot's light now stays until it leaves the grid or reach, or a challenger is
+// kLightSwapMargin times stronger; it then fades out over vfogLocalLightFade s and the next light fades in.
+// ponytail: one eviction at a time, no per-capture challenge count; add Luxvelum's 3-capture streak if swaps still flutter.
+constexpr double kLightSwapMargin = 1.5;
+constexpr float kLightIdentityYards = 2.0f;     // a slot's node reused by another model further away is a new light
+struct Candidate {
+    LocalLight light;
+    const CM2Light* key;
+    double priority;
+};
+struct LightSlot {
+    LocalLight light;
+    const CM2Light* key;    // only compared, never read: the model may be gone
+    double priority;
+    float weight;           // 0..1 fade
+    bool evicted;
+    bool leaving;
+};
+LightSlot s_lightSlots[kMaxLocalLights];
+int s_lightSlotCount;
+uint32_t s_lightLastMs;
+
 void CaptureLocalLights(FrameInputs& in, const Config& cfg) {
     in.localLightCount = 0;
     CM2Scene* scene = World::s_m2Scene;
     if (!cfg.localLights || !scene || !scene->m_lightGrid || !ValidVector(in.camPos, -kMaxWorldCoordinate, kMaxWorldCoordinate) ||
         !std::isfinite(cfg.localLightIntensity) || cfg.localLightIntensity < 0.0f) {
+        s_lightSlotCount = 0;
         return;
     }
     const bool linear = cfg.colorSpace == 1;
-    float raw[kMaxLocalLights][3] = {};
+    static std::vector<Candidate> s_candidates;
+    s_candidates.clear();
     for (int cell = 0; cell < kLightGridCells; ++cell) {
         for (const CM2Light* light = scene->m_lightGrid[cell]; light; light = light->m_lightNext) {
-            if (light->m_type == M2LIGHT_POINT && light->m_visible) {
-                SelectLight(in, raw, *light, in.camPos, linear, cfg.localLightIntensity);
+            Candidate c;
+            if (light->m_type == M2LIGHT_POINT && light->m_visible && MakeLight(c.light, *light, in.camPos, linear, cfg.localLightIntensity)) {
+                c.key = light;
+                c.priority = LightPriority(c.light, in.camPos);
+                s_candidates.push_back(c);
             }
         }
     }
+    // strongest first; equal ones in a stable order (coa Precedes) so they do not swap between frames
+    std::sort(s_candidates.begin(), s_candidates.end(), [&](const Candidate& a, const Candidate& b) {
+        return Precedes(a.light, a.light.color, b.light, b.light.color, in.camPos);
+    });
+
+    const float fade = std::clamp(CVarFloat(s_cvars.localLightFade, 1.0f), 0.0f, 5.0f);
+    const uint32_t now = FrameTime::s_curTimeMs;
+    const float dt = (now - s_lightLastMs) * 0.001f;
+    s_lightLastMs = now;
+    const bool reset = !(fade > 0.0f) || dt > 1.0f;     // fallback, start, or a gap (loading screen): no fades
+    if (reset) {
+        s_lightSlotCount = 0;
+    }
+    const float step = reset ? 1.0f : dt / fade;
+
+    // the slots' lights in this frame's grid
+    std::vector<bool> taken(s_candidates.size(), false);
+    for (int i = 0; i < s_lightSlotCount; ++i) {
+        LightSlot& slot = s_lightSlots[i];
+        slot.leaving = true;
+        for (size_t c = 0; c < s_candidates.size(); ++c) {
+            const Candidate& cand = s_candidates[c];
+            if (!taken[c] && cand.key == slot.key &&
+                SquaredDistance(cand.light.position, slot.light.position) <= kLightIdentityYards * kLightIdentityYards) {
+                taken[c] = true;
+                slot.light = cand.light;
+                slot.priority = cand.priority;
+                slot.leaving = slot.evicted;
+                break;
+            }
+        }
+    }
+    size_t best = 0;
+    const auto nextFree = [&]() {
+        while (best < s_candidates.size() && taken[best]) {
+            ++best;
+        }
+        return best < s_candidates.size();
+    };
+    // free slots take the strongest unslotted lights
+    while (s_lightSlotCount < kMaxLocalLights && nextFree()) {
+        taken[best] = true;
+        s_lightSlots[s_lightSlotCount++] = LightSlot{ s_candidates[best].light, s_candidates[best].key, s_candidates[best].priority,
+                                                       reset ? 1.0f : 0.0f, false, false };
+    }
+    // a full set: the strongest outsider evicts the weakest slot only by a clear margin, and one at a time
+    if (nextFree()) {
+        bool swapping = false;
+        LightSlot* weakest = nullptr;
+        for (int i = 0; i < s_lightSlotCount; ++i) {
+            LightSlot& slot = s_lightSlots[i];
+            swapping |= slot.leaving;
+            if (!slot.leaving && (!weakest || slot.priority < weakest->priority)) {
+                weakest = &slot;
+            }
+        }
+        if (!swapping && weakest && s_candidates[best].priority > weakest->priority * kLightSwapMargin) {
+            weakest->evicted = weakest->leaving = true;
+        }
+    }
+    // fade, drop the faded-out, upload
+    int kept = 0;
+    for (int i = 0; i < s_lightSlotCount; ++i) {
+        LightSlot slot = s_lightSlots[i];
+        slot.weight = std::clamp(slot.weight + (slot.leaving ? -step : step), 0.0f, 1.0f);
+        if (slot.leaving && slot.weight <= 0.0f) {
+            continue;
+        }
+        s_lightSlots[kept] = slot;
+        LocalLight& out = in.localLights[kept++];
+        out = slot.light;
+        const float w = slot.weight * slot.weight * (3.0f - 2.0f * slot.weight);   // smoothstep: neither end jumps
+        for (float& c : out.color) {
+            c *= w;
+        }
+    }
+    s_lightSlotCount = kept;
+    in.localLightCount = kept;
 }
 
 // ---- batch fog (coa transparent_fog.cpp ApplyStockFogFit + wxl-vfog 0.6.13) --------------------------------------
@@ -777,6 +863,7 @@ void RegisterCVars() {
     s_cvars.colorSpace = reg("vfogColorSpace", "Volumetric fog: 1 = scatter and blend in linear light (default), 0 = gamma (coa ColorSpace)", "1");
     s_cvars.localLightIntensity = reg("vfogLocalLightIntensity", "Volumetric fog point light intensity, 0..8, 0 = off (coa LocalLightIntensity)", "1");
     s_cvars.localLightPhase = reg("vfogLocalLightPhase", "Volumetric fog point light phase g, -0.9..0.9 (coa LocalLightPhase)", "0.3");
+    s_cvars.localLightFade = reg("vfogLocalLightFade", "Volumetric fog point lights keep their slots and fade in/out over this many seconds, 0..5; 0 = re-pick the 8 strongest every frame (the old popping)", "1");
     s_cvars.interior = reg("vfogInterior", "Volumetric fog fades outdoor layers and sunlight indoors (coa InteriorAware)", "1");
     s_cvars.interiorDensity = reg("vfogInteriorDensity", "Volumetric fog outdoor layer density kept indoors, 0..1 (coa InteriorDensity)", "0.15");
     s_cvars.interiorFarFog = reg("vfogInteriorFarFog", "Volumetric fog distance fog density kept indoors, 0..1; lower clears dungeon haze (coa InteriorFarFog)", "1");

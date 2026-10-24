@@ -22,6 +22,8 @@ struct VsOut {
     float4 clip : TEXCOORD3;   // this vertex's clip z, w; their change per unit of baked depth (toward the camera)
     float4 rot  : TEXCOORD4;   // xy: cos, sin of the yaw; z: fog factor; w: depth bias
     float4 sun  : TEXCOORD5;   // xyz toward the sun in model space
+    float4 rel  : TEXCOORD6;   // xyz: the quad point camera-relative (world), nudged toward the sun (shadowFarReceivers)
+    float4 relD : TEXCOORD7;   // xyz: its move per unit of baked depth (dw R)
 };
 
 float3 Decode(float2 g)   // grid point (0..F-1) -> view direction (model space, z up)
@@ -100,5 +102,9 @@ VsOut main(float3 base : POSITION, float2 t : TEXCOORD0)
     float bias = dist < start + 2.0 + range ? gSun.w : 0.0;
     o.rot = float4(cs, sn, fog, bias);
     o.sun = float4(gSun.x * cs + gSun.y * sn, -gSun.x * sn + gSun.y * cs, gSun.z, 0.0);
+    // ponytail: a fixed 0.15 R toward the sun keeps the impostor off its own farTreesShadow caster; a per-band
+    // texel bias if acne still shows.
+    o.rel = float4(pw - gCam.xyz + gSun.xyz * (0.15 * R), 0.0);
+    o.relD = float4(dw * R, 0.0);
     return o;
 }

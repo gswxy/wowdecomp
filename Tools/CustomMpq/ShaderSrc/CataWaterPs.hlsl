@@ -28,6 +28,11 @@ float4 gSpecular : register(c28);    // sun specular colour
 float4 gRipWin   : register(c29);    // ripple window origin - camera (xy), 1 / window size (zw)
 float4 gRipTex   : register(c30);    // (1/N, 1/N, step fraction, P15 ripple strength; 0 = off)
 float4 gRefl     : register(c31);    // PLANAR: x = the mirrored plane's height - camera z, y = 1 / its tolerance
+#ifndef BELOW
+// shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades, c56-c62 + c64, s5/s6, over camera-relative world.
+static const float4x4 cViewToWorld = (float4x4)0;   // vf_shadow's land tap, unused here
+#include "vf_shadow.hlsli"
+#endif
 
 // Cata ProcWaterAbove ripple slope (W1 8.2, wxl-water RippleSlope, one level): height interpolated between the last two
 // steps, finite differences at a lookup bent by the normal map, nothing outside the window.
@@ -143,10 +148,14 @@ float4 main(float4 col : COLOR0, float4 coarse : TEXCOORD0, float4 fine : TEXCOO
     fw *= saturate(((0.5 * f2 + 0.2) * 3.75 / max(1.0 - V.z, 1e-3) / max(fwidth(th), 1e-4) - 1.0) * 0.5);
     c += fw * foam;
 
-    // 5 lighting
-    c += saturate(dot(L, Nw)) * gP.y * gDiffuse.rgb * tint;
+    // 5 lighting; shadowFarReceivers: the sun's diffuse and glint shadowed by the cascades (the terminator fade at N.L,
+    // lifted by gfxShadowFade as VFogWater's land tap), so a tree's shadow on a lake has no sun glint in it.
+    float ndl = dot(L, Nw);
+    float sh  = lerp(CascadeSunVisibility(world, 0.5), 1.0, saturate(pow(1.2 - abs(ndl), 4.0)));
+    sh += (1.0 - sh) * cShadowFade.x;
+    c += saturate(ndl) * gP.y * gDiffuse.rgb * tint * sh;
     float3 H = normalize(-V + L + float3(0.0, 0.0, 1e-4));
-    c += gP.z * f2 * (saturate(Nw.z - 0.8) + pow(saturate(dot(H, Nw)), 50.0)) * gSpecular.rgb;
+    c += gP.z * f2 * (saturate(Nw.z - 0.8) + pow(saturate(dot(H, Nw)), 50.0)) * gSpecular.rgb * sh;
 
     // 6 fog
     c = lerp(gFogColor.rgb, c, ramp.z);

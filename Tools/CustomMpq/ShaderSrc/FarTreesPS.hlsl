@@ -7,6 +7,9 @@ float4 cAmb    : register(c0);
 float4 cDif    : register(c1);
 float4 cFogCol : register(c2);
 float4 cFade   : register(c3);   // x: 0..1 while a model's atlas dissolves in after its bake
+// shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades, c56-c62 + c64, s5/s6, over camera-relative world.
+static const float4x4 cViewToWorld = (float4x4)0;   // vf_shadow's land tap, unused here
+#include "vf_shadow.hlsli"
 
 struct PsOut {
     float4 col : COLOR0;
@@ -14,7 +17,8 @@ struct PsOut {
 };
 
 PsOut main(float4 uv01 : TEXCOORD0, float4 uv23 : TEXCOORD1, float4 w : TEXCOORD2, float4 cz : TEXCOORD3,
-           float4 rot : TEXCOORD4, float4 sun : TEXCOORD5)
+           float4 rot : TEXCOORD4, float4 sun : TEXCOORD5, float4 rel : TEXCOORD6,
+           float4 relD : TEXCOORD7)
 {
     float4 a0 = tex2D(sAlb, uv01.xy), a1 = tex2D(sAlb, uv01.zw), a2 = tex2D(sAlb, uv23.xy), a3 = tex2D(sAlb, uv23.zw);
     float4 n0 = tex2D(sNrm, uv01.xy), n1 = tex2D(sNrm, uv01.zw), n2 = tex2D(sNrm, uv23.xy), n3 = tex2D(sNrm, uv23.zw);
@@ -28,8 +32,9 @@ PsOut main(float4 uv01 : TEXCOORD0, float4 uv23 : TEXCOORD1, float4 w : TEXCOORD
     float4 nd  = n0 * wc.x + n1 * wc.y + n2 * wc.z + n3 * wc.w;
 
     float3 n = normalize(nd.rgb * 2.0 - 1.0);
-    float ndl = saturate(dot(n, sun.xyz));
-    float3 c = alb * min(cAmb.rgb + cDif.rgb * ndl, 1.0);
+    float ndl = dot(n, sun.xyz);
+    float3 c = alb * min(cAmb.rgb + cDif.rgb * saturate(ndl), 1.0);
+    c *= ReceiverShadowScale(CascadeSunVisibility(rel.xyz + relD.xyz * (nd.a * 2.0 - 1.0), 0.5), ndl);
 
     PsOut o;
     o.col = float4(lerp(c, cFogCol.rgb, rot.z), 1.0);

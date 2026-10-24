@@ -4,7 +4,7 @@ float4 gM[4] : register(c0);   // camera-relative world -> clip (row vectors, na
 float4 gCam  : register(c4);   // xyz camera
 float4 gTile : register(c5);   // tile top-left world x, y; slot origin u, v (0..1)
 struct In  { float4 p : POSITION; float4 c : COLOR0; };
-struct Out { float4 pos : POSITION; float4 uv : TEXCOORD0; float dist : TEXCOORD1; };
+struct Out { float4 pos : POSITION; float4 uv : TEXCOORD0; float dist : TEXCOORD1; float3 rel : TEXCOORD2; };   // rel: camera-relative world (the sun shadow's lookup)
 Out main(In i)
 {
     Out o;
@@ -14,5 +14,6 @@ Out main(In i)
     float2 t = saturate(float2(gTile.y - i.p.y, gTile.x - i.p.x) * (3.0 / 1600.0));
     o.uv = float4(t, gTile.zw);
     o.dist = length(rel);
+    o.rel = rel;
     return o;
 }

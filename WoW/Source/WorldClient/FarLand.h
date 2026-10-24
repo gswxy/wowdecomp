@@ -14,7 +14,7 @@ class CMapAreaLow;
 
 namespace FarLand {
 
-// CVars farLand (1 = on, the default since 2026-10-24 farview; 0 = stock WDL horizon), farLandUploads (farFogReach removed in vfogaudit).
+// CVars shadowFarReceivers (BindSunShadow), farLand (1 = on, the default since 2026-10-24 farview; 0 = stock WDL horizon), farLandUploads (farFogReach removed in vfogaudit).
 void RegisterCVars();
 
 // The fog end cap for a view distance: farClip, or with the far land drawing farClip stretched toward its reach.
@@ -32,6 +32,11 @@ bool Apply(const CMapAreaLow* area);
 
 // Before StormDestroy (Client.cpp): stops and joins the bake worker, so it never reads SFile after the archives close.
 void Shutdown();
+
+// shadowFarReceivers (1 = on, default; 0 = stock): vf_shadow.hlsli's sun cascades for a pixel shader whose shadow
+// lookup is camera-relative world (CWorldScene::s_activeWorldView): PS c56-c62 (c62.x = 0: off or no bands), c64
+// gfxShadowFade, maps on s5/s6. FarLandPS, FarTreesPS and CataWaterAbove[P] read them.
+void BindSunShadow();
 
 } // namespace FarLand
 

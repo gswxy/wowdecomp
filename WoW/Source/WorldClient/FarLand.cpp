@@ -35,6 +35,7 @@
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/MapLowDetail.h"
+#include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include "WoW/Source/WorldClient/World.h"
 
 namespace FarLand {
@@ -444,7 +445,24 @@ void PassConstants() {
 
 } // namespace
 
+static bool s_shadowReceivers = true;   // shadowFarReceivers
+
+void BindSunShadow() {
+    static const float kCameraRelative[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    float shadow[7][4];
+    CGxTex* maps[2];
+    VolumetricFog::SunShadowRegisters(s_shadowReceivers, 0.0f, kCameraRelative, shadow, maps);
+    VolumetricFog::SetPs(56, &shadow[0][0], 7);
+    VolumetricFog::SetShadowFadeRegister();
+    VolumetricFog::Bind(5, maps[0]);
+    VolumetricFog::Bind(6, maps[1]);
+}
+
 void RegisterCVars() {
+    CVar::Register("shadowFarReceivers", "Sun shadows (the shadow cascades, out to 640 yd) also on the far land, the far trees and the Cataclysm water, as on the near world: 1 = on (default), 0 = stock (none)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        s_shadowReceivers = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("farLand", "Far land past the view distance in its real ground colour, lit by the sun (baked in the background, cached in Cache\\FarLand): 1 = on (default), 0 = stock fog-coloured horizon", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         s_enabled = SStrToInt(value) != 0;
         return true;
@@ -532,6 +550,7 @@ bool Apply(const CMapAreaLow* area) {
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 5, tile, 1);
     const float fade[4] = { std::min((NowMs() - s_readyMs[t]) / kFadeMs, 1.0f), 0.0f, 0.0f, 0.0f };   // cross-fade in from the stock fog colour
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 5, fade, 1);
+    BindSunShadow();   // per tile: the stock RsPop after each tile drops the texture stages
     return true;
 }
 

@@ -10,6 +10,10 @@ float4 gFogC : register(c3);
 float4 gFog  : register(c4);   // fog start, 1 / (end - start), most fog the land takes (kFogMax: a silhouette)
 float4 gFade : register(c5);   // x: 0 -> 1 as the tile's bake arrives (0 = the stock tile: fog colour)
 float4 gAtlas : register(c6);  // albedo slot texels, 1 / atlas texels; normal the same
+// shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades as the near receivers take them, c56-c62 + c64, s5/s6,
+// rows over camera-relative world (rel); c62.x = 0: unshadowed. vf_shadow's land tap is unused here.
+static const float4x4 cViewToWorld = (float4x4)0;
+#include "vf_shadow.hlsli"
 // The atlas uv of tile coordinate t (0..1) in the slot at origin, at the mip trilinear reads (capped at maxLod): inset
 // by half a texel of the coarser mip, so a tile edge never filters in the next slot (another or no tile). At mip 0
 // that is the old edge-texel-centre mapping.
@@ -19,13 +23,15 @@ float4 Slot(float2 t, float2 origin, float px, float inv, float maxLod)
     float h = 0.5 * exp2(ceil(lod));
     return float4(origin + (h + t * (px - 2 * h)) * inv, 0, lod);
 }
-float4 main(float4 uv : TEXCOORD0, float dist : TEXCOORD1) : COLOR
+float4 main(float4 uv : TEXCOORD0, float dist : TEXCOORD1, float3 rel : TEXCOORD2) : COLOR
 {
     // albedo to mip 4 (8 texels a tile), normals to mip 3 (8 texels; their levels past 4 are flat)
     float3 a = tex2Dlod(sA, Slot(uv.xy, uv.zw, gAtlas.x, gAtlas.y, 4)).rgb;
     float2 xy = tex2Dlod(sN, Slot(uv.xy, uv.zw, gAtlas.z, gAtlas.w, 3)).ag * 2.0 - 1.0;
     float3 n = float3(xy, sqrt(saturate(1.0 - dot(xy, xy))));
-    float3 lit = a * saturate(gAmb.rgb + gDif.rgb * saturate(dot(n, gSun.xyz)));
+    float ndl = dot(n, gSun.xyz);
+    float3 lit = a * saturate(gAmb.rgb + gDif.rgb * saturate(ndl));
+    lit *= ReceiverShadowScale(CascadeSunVisibility(rel, 0.5), ndl);
     float f = min(saturate((dist - gFog.x) * gFog.y), gFog.z);
     return float4(lerp(gFogC.rgb, lerp(lit, gFogC.rgb, f), gFade.x), 1.0);
 }

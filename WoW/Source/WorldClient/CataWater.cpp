@@ -24,6 +24,7 @@
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include "WoW/Source/WorldClient/World.h"
@@ -525,6 +526,7 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
         device->ShaderConstantsSet(GxSh_Pixel, 31, rc31, 1);
         Bind(kReflStage, s_refl);
     }
+    FarLand::BindSunShadow();   // shadowFarReceivers: the sun's diffuse and glint (CataWaterAbove[P]; Below ignores it)
     // The back buffer's alpha is the glow mask: RGB only (the material's RsPop puts it back).
     GxRsSet(GxRs_ColorWrite, 7);
     device->RsSet(GxRs_VertexShader, s_vs);

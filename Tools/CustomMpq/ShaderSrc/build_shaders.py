@@ -81,7 +81,7 @@ SHADERS = {
     'TreeLeavesPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'TreeLeavesPS', {}),
     # far land (farLand, WorldClient/FarLand.cpp): the WDL horizon with the baked ground colour and normals
     'FarLandVS': ('vs_3_0', 0, 0, 0, 0, 'FarLandVS', {}),
-    'FarLandPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'FarLandPS', {}),
+    'FarLandPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6), 0, 'FarLandPS', {}),
     # Soft particles (wxl-light Soft.cpp, docs/BACKLOG_PORT.md): Combiners_Mod 0 / 8 (texkill) + the fade; s12 scene depth
     'SoftParticle0': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 0}),
     'SoftParticle1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 1}),
@@ -112,13 +112,13 @@ SHADERS = {
 # Cata water (waterStyle 1, docs/BACKLOG_PORT.md "Cata water"): the ProcWater VS and ProcWaterAbove / Below PS,
 # drawn by the liquid material in place of vsLiquidWater / psLiquidWater (WorldClient/CataWater.cpp).
 SHADERS['CataWater'] = ('vs_3_0', 0, 0, 0, 0, 'CataWater', {})
-SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 10, 11, 12, 13), 0, 'CataWaterPs', {})
-SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 10, 11, 12, 13, 14), 0, 'CataWaterPs', {'PLANAR': 1})
+SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 9, 10, 11, 12, 13), 0, 'CataWaterPs', {})
+SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 9, 10, 11, 12, 13, 14), 0, 'CataWaterPs', {'PLANAR': 1})
 SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
 SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWaterTint', {})
 # Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).
 SHADERS['FarTreesVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesVS', {})
-SHADERS['FarTreesPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'FarTreesPS', {})
+SHADERS['FarTreesPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6), 0, 'FarTreesPS', {})
 # ... and as sun shadow casters (farTreesShadow, FarTrees::DrawShadow).
 SHADERS['FarTreesShadowVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesShadowVS', {})
 SHADERS['FarTreesShadowPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'FarTreesShadowPS', {})
@@ -162,7 +162,8 @@ MULTI = {
 def compare_slots(name):
     if name == 'VFogShadowMask':
         return (5, 6, 8, 9)     # + band 0 and the unit map (vfog38)
-    return (5, 6) if name.startswith(('VFogMarch', 'VFogComposite', 'VFogCaustics')) else ()
+    # + the shadowFarReceivers receivers (FarLand::BindSunShadow)
+    return (5, 6) if name.startswith(('VFogMarch', 'VFogComposite', 'VFogCaustics', 'FarLandPS', 'FarTreesPS', 'CataWaterAbove')) else ()
 
 
 def bls(recs):

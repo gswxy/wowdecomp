@@ -128,3 +128,12 @@ float SunVisibility(float3 viewPosition, float edgeJitter)
 #endif
     return sun + (1 - sun) * cShadowFade.x;
 }
+
+// shadowFarReceivers (far land, far trees, Cata water): the stock receivers' darkening of a lit colour by the cascade
+// visibility s, Combiners_Opaque:3's maths: the terminator fade s' = lerp(s, 1, sat((1.2 - |N.L|)^4)), then
+// x (1 - k (1 - s')), k = 0.3 x gfxShadowFade (c64.x = 1 - fade), as terrain_fade.py and VFogShadowMask's stock.
+float ReceiverShadowScale(float s, float ndl)
+{
+    s = lerp(s, 1, saturate(pow(1.2 - abs(ndl), 4)));
+    return 1 - 0.3 * (1 - cShadowFade.x) * (1 - s);
+}

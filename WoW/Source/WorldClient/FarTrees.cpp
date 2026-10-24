@@ -24,6 +24,7 @@
 #include "WoW/Source/WorldClient/CWorldMath.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/FarTreesBake.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/Types.h"
@@ -418,6 +419,7 @@ void Draw() {
                 GxRsSet(GxRs_StencilTest, 0);
                 GxRsSet(GxRs_ScissorTest, 0);
                 GxRsSet(GxRs_ColorWrite, 7);
+                FarLand::BindSunShadow();
                 begun = true;
             }
             const FarTreesBake::ModelResult& r = m.data;

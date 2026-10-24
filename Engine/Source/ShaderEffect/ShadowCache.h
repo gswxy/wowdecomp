@@ -88,6 +88,7 @@ class CShadowCache {
     // Not stock (CShadowQuery sets these each frame; see ShadowCache.cpp):
     static uint32_t s_bandRedraw;     // gfxSunShadows: bit i = redraw cached band i once, wherever the camera is
     static int32_t s_texelSnap;       // gfxShadowSnap: map centres snapped to whole texels in light space
+    static int32_t s_drawingUnitMap;  // set while Update draws the unit maps (render callback band 0), so band-0 casters can tell
     static int32_t s_haveBandCentre;  // gfxShadowAnchor: the bands follow s_bandCentre instead of the viewer
     static C3Vector s_bandCentre;
     // Not stock (Badgermilk0 port; CShadowQuery sets these from shadowMapSize / shadowSoftness / shadowCascadeReuse):

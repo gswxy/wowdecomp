@@ -18,7 +18,7 @@ void RegisterCVars();
 bool Enabled();
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height
-int DebugMode();            // shadowDebug 0..3: the mask pass draws a view of the sun shadow instead of darkening
+int DebugMode();            // shadowDebug 0..7: the mask pass draws a view of the sun shadow instead of darkening
 const float* LightDir();    // toward the light the land heights were last built for (Update), world
 
 // Rebuilds the texture when the light turned (toLight is the true sun; gfxSunShadows' latched light replaces it) or the camera moved far enough. False (and no texture) with the CVar

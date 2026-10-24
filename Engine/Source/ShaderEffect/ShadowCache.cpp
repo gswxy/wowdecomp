@@ -47,6 +47,7 @@ int32_t CShadowCache::s_needsRebuild;
 // Not stock: set by CShadowQuery::Update (gfxSunShadows, gfxShadowSnap, gfxShadowAnchor).
 uint32_t CShadowCache::s_bandRedraw;
 int32_t CShadowCache::s_texelSnap;
+int32_t CShadowCache::s_drawingUnitMap;
 int32_t CShadowCache::s_haveBandCentre;
 C3Vector CShadowCache::s_bandCentre;
 
@@ -1193,6 +1194,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
 
     data.m_queryFlags[0] = 3;
     data.m_useFrustum = 0;
+    CShadowCache::s_drawingUnitMap = 1;
     CShadowCache::s_queryCallback(data, frame);
 
     CGxTex* target = TextureGetGxTex(CShadowCache::s_intDynShadow, 1, nullptr);
@@ -1225,6 +1227,8 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
 
         CShadowCache::s_renderCallback(data, 0, target, colorTarget, CShadowCache::s_extDynShadow.m_dir);
     }
+
+    CShadowCache::s_drawingUnitMap = 0;
 
     if (mode > SHADOW_MEDIUM) {
         if (CShadowCache::s_needsRebuild) {

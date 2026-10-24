@@ -72,7 +72,7 @@ float ReceiverCompare(sampler2D maps, float3 q)
 // What the receivers' shadow maps say, with their cutovers (Combiners_Opaque:3): the unit map inside 0.99 of its
 // square, min band 0 if |q| < 1, else band 1 if |q| < 1, else band 2 faded out over 0.9-0.99. which = the map read for
 // shadowDebug: 0 unit map, 1-3 bands 0-2, 4 none.
-float ReceiverShadow(float3 p, out float which)
+float ReceiverShadow(float3 p, out float which, out float unitOnly, out float bandOnly)
 {
     float c = 1;
     which = 4;
@@ -113,6 +113,8 @@ float ReceiverShadow(float3 p, out float which)
         }
     }
     which = min(which, band);
+    unitOnly = c;
+    bandOnly = b;
     return min(c, b);
 }
 
@@ -135,9 +137,12 @@ float3 Nearer(float3 p, float3 a, float3 b)
 }
 
 // shadowDebug, drawn with alpha blending over the scene: 1 the map read, at half strength; 2 the sun's visibility;
-// 3 magenta where no cascade is read (outside them all, or no world shader wrote the G-buffer: water, fixed function).
-float4 DebugView(float mode, float which, float visibility, float2 pixel)
+// 3 magenta where no cascade is read (outside them all, or no world shader wrote the G-buffer: water, fixed function);
+// 4-7 one term alone in grey, unlifted (terms.x land heightfield, y bands 0-2, z back-face rule, w unit map).
+float4 DebugView(float mode, float which, float visibility, float4 terms, float2 pixel)
 {
+    [branch] if (mode > 3.5)
+        return float4((mode < 4.5 ? terms.x : mode < 5.5 ? terms.y : mode < 6.5 ? terms.z : terms.w).xxx, 1);
     [branch] if (mode < 1.5)
     {
         float3 tint = which < 0.5 ? float3(1, 1, 0) : which < 1.5 ? float3(0, 1, 0) : which < 2.5 ? float3(0, 0.4, 1)
@@ -195,14 +200,16 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     // lighting slopes the shadows called dark (shadowvid video, 2026-10-24). At N.L 0 the target is the receivers' own
     // colour (cascade lifted; ndl under the shading light's 10 deg floor at most sin 6 deg), so the cut barely shows.
     float liftCascade = TerminatorFade(n, cMaskCascadeLight.xyz);
-    land = dot(n, cMaskLandLight.xyz) <= 0 ? 0 : land;
+    float landHeights = land;
+    float facing = dot(n, cMaskLandLight.xyz) <= 0 ? 0 : 1;
+    land *= facing;
     [branch] if (land >= 1 && debug <= 0)
         return 1;
 
-    float which;
-    float cascade = lerp(ReceiverShadow(p, which), 1, liftCascade);
+    float which, unitOnly, bandOnly;
+    float cascade = lerp(ReceiverShadow(p, which, unitOnly, bandOnly), 1, liftCascade);
     [branch] if (debug > 0)
-        return DebugView(debug, which, min(cascade, land), pixel);
+        return DebugView(debug, which, min(cascade, land), float4(landHeights, bandOnly, facing, unitOnly), pixel);
     // Terrain's own min with its baked MCSH is not modelled: MCSH is per chunk, baked for another sun, and the depth
     // does not say which pixels are terrain, so MCSH-dark ground in the land's shadow still darkens twice.
     float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;

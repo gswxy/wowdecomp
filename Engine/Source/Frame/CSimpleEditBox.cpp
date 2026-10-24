@@ -159,7 +159,7 @@ CSimpleEditBox::CSimpleEditBox(CSimpleFrame* parent) : CSimpleFrame(parent) {
     this->m_highlightDrag = 0;
     this->m_cursorTexture = nullptr;
     this->m_cursorPos = 0;
-    this->m_editBoxFlags = 0x1;
+    this->m_editBoxFlags = EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS;
     this->m_dirtyBits = 0x1;
     this->m_historyLines = 0;
     this->m_historyIndex = 0;
@@ -256,11 +256,11 @@ CSimpleEditBox::~CSimpleEditBox() {
 // INLINED
 void CSimpleEditBox::OnFocusChange(bool focus, bool runScript) {
     if (focus) {
-        if (this->m_editBoxFlags & 0x8) {
+        if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
             OsInputEnableSecureMode(1);
         }
 
-        if (!(this->m_editBoxFlags & 0xC)) {
+        if (!(this->m_editBoxFlags & (EDITBOX_FLAGS::EDITBOX_NUMERIC | EDITBOX_FLAGS::EDITBOX_PASSWORD))) {
             OsIMEEnable(1);
         }
 
@@ -268,11 +268,11 @@ void CSimpleEditBox::OnFocusChange(bool focus, bool runScript) {
             this->RunScript(this->m_onEditFocusGained, 0, nullptr);
         }
     } else {
-        if (this->m_editBoxFlags & 0x8) {
+        if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
             OsInputEnableSecureMode(0);
         }
 
-        if (!(this->m_editBoxFlags & 0xC)) {
+        if (!(this->m_editBoxFlags & (EDITBOX_FLAGS::EDITBOX_NUMERIC | EDITBOX_FLAGS::EDITBOX_PASSWORD))) {
             this->DisableIME();
         }
 
@@ -392,9 +392,9 @@ void CSimpleEditBox::GetScriptTime(lua_State* L, double* time, uint32_t* count, 
 // OFFSET: 0x00962BB0
 void CSimpleEditBox::SetAutoFocus(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x1;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS;
     } else {
-        this->m_editBoxFlags &= ~0x1u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS;
     }
 }
 
@@ -402,9 +402,9 @@ void CSimpleEditBox::SetAutoFocus(int32_t enable) {
 // OFFSET: 0x00962BD0
 void CSimpleEditBox::SetCountInvisibleLetters(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x20;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS;
     } else {
-        this->m_editBoxFlags &= ~0x20u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS;
     }
 }
 
@@ -412,9 +412,9 @@ void CSimpleEditBox::SetCountInvisibleLetters(int32_t enable) {
 // OFFSET: 0x00962BF0
 void CSimpleEditBox::SetNumeric(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x4;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_NUMERIC;
     } else {
-        this->m_editBoxFlags &= ~0x4u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_NUMERIC;
     }
 }
 
@@ -422,9 +422,9 @@ void CSimpleEditBox::SetNumeric(int32_t enable) {
 // OFFSET: 0x00962C10
 void CSimpleEditBox::SetPassword(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x8;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_PASSWORD;
     } else {
-        this->m_editBoxFlags &= ~0x8u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_PASSWORD;
     }
 }
 
@@ -432,9 +432,9 @@ void CSimpleEditBox::SetPassword(int32_t enable) {
 // OFFSET: 0x00962C30
 void CSimpleEditBox::SetAltArrowKeyMode(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x10;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_ALT_ARROW_KEY_MODE;
     } else {
-        this->m_editBoxFlags &= ~0x10u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_ALT_ARROW_KEY_MODE;
     }
 }
 
@@ -802,7 +802,7 @@ void CSimpleEditBox::CopyToClipboard() {
         return;
     }
 
-    if (this->m_editBoxFlags & 0x8) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
         OsClipboardPutString("");
         return;
     }
@@ -925,7 +925,7 @@ void CSimpleEditBox::UpdateSizes() {
 
     this->m_fontString->MarkFramePointsUnused();
     this->m_fontString->SetWidth((this->m_rect.maxX - this->m_rect.minX) / this->m_layoutScale - (this->m_textInsets.maxX + this->m_textInsets.minX));
-    this->m_fontString->SetHeight(this->m_editBoxFlags & 0x2 ? 0.0f : (this->m_rect.maxY - this->m_rect.minY) / this->m_layoutScale - (this->m_textInsets.maxY + this->m_textInsets.minY));
+    this->m_fontString->SetHeight(this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE ? 0.0f : (this->m_rect.maxY - this->m_rect.minY) / this->m_layoutScale - (this->m_textInsets.maxY + this->m_textInsets.minY));
     this->m_fontString->SetPoint(FRAMEPOINT_TOPLEFT, this, FRAMEPOINT_TOPLEFT, this->m_textInsets.minX, -this->m_textInsets.maxY, 1);
 
     float fontHeight = this->m_fontString->GetFontHeight(true);
@@ -1533,13 +1533,13 @@ int32_t CSimpleEditBox::ConvertCoordinateToIndex(float x, float y, int32_t& inde
         return result;
     }
 
-    const char* text = this->m_editBoxFlags & 0x8 ? this->m_textHidden : this->m_text;
+    const char* text = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD ? this->m_textHidden : this->m_text;
     float spacing = this->m_fontString->m_spacing;
     float fontHeight = CSimpleTop::RoundToPixelHeight(this->m_fontString->GetFontHeight(true) * this->m_layoutScale);
     float lineHeight = CSimpleTop::RoundToPixelHeight(this->m_layoutScale * spacing) + fontHeight;
     uint32_t line = 0;
 
-    if (this->m_editBoxFlags & 0x2) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         for (float offset = rect.maxY - rect.minY - (y - rect.minY); offset > lineHeight; line++) {
             if (line >= this->m_visibleLines.m_count - 2) {
                 break;
@@ -1609,7 +1609,7 @@ int32_t CSimpleEditBox::ConvertCoordinateToIndex(float x, float y, int32_t& inde
 // VERIFY: 1fd324ce auto
 // OFFSET: 0x009649D0
 void CSimpleEditBox::MakeTextVisible(int32_t position, float offset, float width) {
-    if (this->m_editBoxFlags & 0x2) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         return;
     }
 
@@ -1637,7 +1637,7 @@ void CSimpleEditBox::UpdateVisibleCursor() {
         return;
     }
 
-    const char* text = this->m_editBoxFlags & 0x8 ? this->m_textHidden : this->m_text;
+    const char* text = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD ? this->m_textHidden : this->m_text;
     float x = 0.0f;
     float y = 0.0f;
     float spacing = this->m_fontString->m_spacing;
@@ -1661,7 +1661,7 @@ void CSimpleEditBox::UpdateVisibleCursor() {
         case 1:
             x = static_cast<uint32_t>(cursor) == this->m_visibleLines.m_data[line] ? 0.0f : this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], cursor - this->m_visibleLines.m_data[line]);
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOPLEFT, x, y, 1);
             } else {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_LEFT, x, y, 1);
@@ -1673,7 +1673,7 @@ void CSimpleEditBox::UpdateVisibleCursor() {
             x = static_cast<uint32_t>(cursor) == this->m_visibleLines.m_data[line] ? 0.0f : this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], cursor - this->m_visibleLines.m_data[line]);
             x -= this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], this->m_visibleLines.m_data[line + 1] - this->m_visibleLines.m_data[line]) * 0.5f;
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOP, x, y, 1);
             } else {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_CENTER, x, y, 1);
@@ -1684,7 +1684,7 @@ void CSimpleEditBox::UpdateVisibleCursor() {
         case 4:
             x = static_cast<uint32_t>(cursor) == this->m_visibleLines.m_data[line + 1] ? 0.0f : -this->m_fontString->GetTextWidth(&text[cursor], this->m_visibleLines.m_data[line + 1] - cursor);
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOPRIGHT, x, y, 1);
             } else {
                 this->m_cursorTexture->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_RIGHT, x, y, 1);
@@ -1711,7 +1711,7 @@ void CSimpleEditBox::UpdateVisibleCursor() {
 // VERIFY: f8f4d424 manual
 // OFFSET: 0x00964DB0
 void CSimpleEditBox::UpdateHighlightArea(CSimpleRegion* region, int32_t left, int32_t right) {
-    const char* text = this->m_editBoxFlags & 0x8 ? this->m_textHidden : this->m_text;
+    const char* text = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD ? this->m_textHidden : this->m_text;
     float y = 0.0f;
     float spacing = this->m_fontString->m_spacing;
     float fontHeight = CSimpleTop::RoundToPixelHeight(this->m_fontString->GetFontHeight(true) * this->m_layoutScale);
@@ -1752,7 +1752,7 @@ void CSimpleEditBox::UpdateHighlightArea(CSimpleRegion* region, int32_t left, in
         case 1:
             x = static_cast<uint32_t>(left) == this->m_visibleLines.m_data[line] ? 0.0f : this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], left - this->m_visibleLines.m_data[line]);
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 region->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOPLEFT, x, y, 0);
             } else {
                 region->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_LEFT, x, y, 0);
@@ -1764,7 +1764,7 @@ void CSimpleEditBox::UpdateHighlightArea(CSimpleRegion* region, int32_t left, in
             x = static_cast<uint32_t>(left) == this->m_visibleLines.m_data[line] ? 0.0f : this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], left - this->m_visibleLines.m_data[line]);
             x -= this->m_fontString->GetTextWidth(&text[this->m_visibleLines.m_data[line]], this->m_visibleLines.m_data[line + 1] - this->m_visibleLines.m_data[line]) * 0.5f;
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 region->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOP, x, y, 0);
             } else {
                 region->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_CENTER, x, y, 0);
@@ -1775,7 +1775,7 @@ void CSimpleEditBox::UpdateHighlightArea(CSimpleRegion* region, int32_t left, in
         case 4:
             x = static_cast<uint32_t>(left) == this->m_visibleLines.m_data[line + 1] ? 0.0f : -this->m_fontString->GetTextWidth(&text[left], this->m_visibleLines.m_data[line + 1] - left);
 
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 region->SetPoint(FRAMEPOINT_TOPLEFT, this->m_fontString, FRAMEPOINT_TOPRIGHT, x, y, 0);
             } else {
                 region->SetPoint(FRAMEPOINT_LEFT, this->m_fontString, FRAMEPOINT_RIGHT, x, y, 0);
@@ -1924,7 +1924,7 @@ void CSimpleEditBox::GetEditTextInsets(float& left, float& right, float& top, fl
 void CSimpleEditBox::OnLayerShow() {
     CSimpleFrame::OnLayerShow();
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
     }
 }
@@ -2020,7 +2020,7 @@ int32_t CSimpleEditBox::OnLayerKeyDownRepeat(const CKeyEvent& evt) {
         return 0;
     }
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
     } else if (this != CSimpleEditBox::s_currentFocus) {
         return 0;
@@ -2036,7 +2036,7 @@ int32_t CSimpleEditBox::OnLayerKeyUp(const CKeyEvent& evt) {
         return 0;
     }
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
         return 1;
     }
@@ -2071,7 +2071,7 @@ void CSimpleEditBox::Insert(const char* text, const char* taint, int32_t runScri
     int32_t length = SStrLen(text);
     int32_t chars;
 
-    if ((this->m_editBoxFlags & 0x4) && !highlight && *text) {
+    if ((this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_NUMERIC) && !highlight && *text) {
         for (const char* digit = text; *digit; digit += chars) {
             if (sgetu8(reinterpret_cast<const uint8_t*>(digit), &chars) - '0' > 9) {
                 return;
@@ -2118,17 +2118,17 @@ void CSimpleEditBox::Insert(const char* text, const char* taint, int32_t runScri
     }
 
     if (this->m_textMaxLetters) {
-        int32_t letters = this->m_editBoxFlags & 0x20 ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
+        int32_t letters = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
 
         if (letters > this->m_textMaxLetters) {
             int32_t cursor = this->m_cursorPos;
             this->SetCursorPosition(this->m_textLength);
 
-            letters = this->m_editBoxFlags & 0x20 ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
+            letters = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
 
             while (letters > this->m_textMaxLetters) {
                 this->Delete(this->m_textMaxLetters - letters, script);
-                letters = this->m_editBoxFlags & 0x20 ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
+                letters = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS ? SStrLenUTF8(this->m_text) : this->GetLenToNum(0, this->m_textLength);
             }
 
             this->SetCursorPosition(cursor);
@@ -2179,7 +2179,7 @@ void CSimpleEditBox::Insert(uint32_t ch) {
             return;
         }
 
-        if (!(this->m_editBoxFlags & 0x2) || ch != '\n') {
+        if (!(this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) || ch != '\n') {
             return;
         }
     }
@@ -2268,16 +2268,16 @@ void CSimpleEditBox::PasteFromClipboard() {
 // OFFSET: 0x00965F20
 void CSimpleEditBox::SetMultiLine(int32_t enable) {
     if (enable) {
-        this->m_editBoxFlags |= 0x2;
+        this->m_editBoxFlags |= EDITBOX_FLAGS::EDITBOX_MULTILINE;
     } else {
-        this->m_editBoxFlags &= ~0x2u;
+        this->m_editBoxFlags &= ~EDITBOX_FLAGS::EDITBOX_MULTILINE;
     }
 
     this->m_visibleLines.SetCount(2);
 
     CSimpleFontString* fontString = this->m_fontString;
 
-    if (this->m_editBoxFlags & 0x2) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         fontString->SetJustifyV(0x8);
 
         fontString->m_settableStyleFlags &= ~0x4000u;
@@ -2320,7 +2320,7 @@ int32_t CSimpleEditBox::OnLayerChar(const CCharEvent& evt) {
         return 0;
     }
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
     } else if (this != CSimpleEditBox::s_currentFocus) {
         return 0;
@@ -2392,13 +2392,13 @@ int32_t CSimpleEditBox::OnLayerIme(const CImeEvent& evt) {
         return 0;
     }
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
     } else if (this != CSimpleEditBox::s_currentFocus) {
         return 0;
     }
 
-    if (this->m_editBoxFlags & 0x8) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
         return 1;
     }
 
@@ -2521,16 +2521,16 @@ void CSimpleEditBox::ForwardHistory() {
 void CSimpleEditBox::UpdateVisibleText() {
     float width = this->m_fontString->GetWidth();
 
-    if (this->m_editBoxFlags & 0x8) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
         uint32_t length = SStrLen(this->m_text);
         this->m_textHidden = static_cast<char*>(SMemReAlloc(this->m_textHidden, length + 1, __FILE__, __LINE__, 0));
         memset(this->m_textHidden, '*', length);
         this->m_textHidden[length] = 0;
     }
 
-    char* text = this->m_editBoxFlags & 0x8 ? this->m_textHidden : this->m_text;
+    char* text = this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD ? this->m_textHidden : this->m_text;
 
-    if (this->m_editBoxFlags & 0x2) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         uint32_t lines = this->m_fontString->WrapText(&text[this->m_visiblePosition], width, this->m_visibleLines.m_data, this->m_visibleLines.m_count);
 
         if (!lines) {
@@ -2569,7 +2569,7 @@ void CSimpleEditBox::UpdateVisibleText() {
         this->m_visibleLines.m_data[1] = this->m_visibleLength + this->m_visiblePosition;
     }
 
-    if (!(this->m_editBoxFlags & 0x8)) {
+    if (!(this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD)) {
         if (this->m_imeComposition && this->m_clauseHighlight && this->m_clauseEnd > this->m_visiblePosition + this->m_visibleLength) {
             this->MakeTextVisible(this->m_clauseEnd, width, width);
         }
@@ -2634,7 +2634,7 @@ void CSimpleEditBox::UpdateVisibleText() {
         text[end] = saved;
     }
 
-    if (this->m_editBoxFlags & 0x2) {
+    if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         float height = this->m_fontString->GetStringHeight();
 
         if (height == 0.0f) {
@@ -2872,11 +2872,11 @@ int32_t CSimpleEditBox::OnLayerKeyDown(const CKeyEvent& evt) {
 
     KEY key = evt.m_data.m_key;
 
-    if (key == KEY_PRINTSCREEN || ((this->m_editBoxFlags & 0x10) && (key == KEY_LEFT || key == KEY_RIGHT || key == KEY_UP || key == KEY_DOWN) && !EventIsKeyDown(KEY_LALT) && !EventIsKeyDown(KEY_RALT))) {
+    if (key == KEY_PRINTSCREEN || ((this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_ALT_ARROW_KEY_MODE) && (key == KEY_LEFT || key == KEY_RIGHT || key == KEY_UP || key == KEY_DOWN) && !EventIsKeyDown(KEY_LALT) && !EventIsKeyDown(KEY_RALT))) {
         return 0;
     }
 
-    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & 0x1)) {
+    if (!CSimpleEditBox::s_currentFocus && (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS)) {
         CSimpleEditBox::SetKeyboardFocus(this);
     } else if (this != CSimpleEditBox::s_currentFocus) {
         return 0;
@@ -2890,7 +2890,7 @@ int32_t CSimpleEditBox::OnLayerKeyDown(const CKeyEvent& evt) {
             break;
 
         case KEY_ENTER:
-            if (!(this->m_editBoxFlags & 0x2) || this->m_onEnterPressed.m_luaRef) {
+            if (!(this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) || this->m_onEnterPressed.m_luaRef) {
                 this->m_simpleTop->unused_1250 = 1;
                 this->RunOnEnterPressedScript();
                 this->m_simpleTop->unused_1250 = 0;
@@ -2923,7 +2923,7 @@ int32_t CSimpleEditBox::OnLayerKeyDown(const CKeyEvent& evt) {
             break;
 
         case KEY_UP:
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 this->MoveLine(-1, IsShiftDown());
             } else {
                 this->ForwardHistory();
@@ -2941,7 +2941,7 @@ int32_t CSimpleEditBox::OnLayerKeyDown(const CKeyEvent& evt) {
             break;
 
         case KEY_DOWN:
-            if (this->m_editBoxFlags & 0x2) {
+            if (this->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
                 this->MoveLine(1, IsShiftDown());
             } else {
                 this->BackwardHistory();

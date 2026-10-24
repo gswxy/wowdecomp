@@ -98,7 +98,7 @@ class CM2ModelCall;
 
 class CM2ModelCall {
     public:
-    /* 0000 */ uint32_t m_type;
+    /* 0000 */ EModelModQ m_type;
     /* 0004 */ CM2ModelCall* m_next;
     /* 0008 */ uint32_t m_time;
     /* 000C */ uintptr_t m_args [17];

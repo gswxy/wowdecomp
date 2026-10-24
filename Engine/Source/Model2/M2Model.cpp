@@ -57,7 +57,7 @@ TSGrowableArray<M2ModelCallback> CM2Model::s_sequenceCallbacks;
 
 // INLINED
 CM2ModelCall::CM2ModelCall() {
-    this->m_type = MODEL_COMMAND_NOT_QUEUED;
+    this->m_type = EModelModQ::MODEL_COMMAND_NOT_QUEUED;
 }
 
 // VERIFY: 35d86a94 auto
@@ -247,7 +247,7 @@ void CM2Model::SetLightEnabled(uint32_t index, uint32_t enabled) {
     CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
     if (call) {
-        call->m_type = MODEL_SET_LIGHT_ENABLED;
+        call->m_type = EModelModQ::MODEL_SET_LIGHT_ENABLED;
         call->m_next = nullptr;
         call->m_time = this->m_scene->m_time;
         call->m_args[0] = index;
@@ -301,7 +301,7 @@ void CM2Model::SetRibbonsEnabled(uint32_t enabled) {
     CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
     if (call) {
-        call->m_type = MODEL_SET_RIBBONS_ENABLED;
+        call->m_type = EModelModQ::MODEL_SET_RIBBONS_ENABLED;
         call->m_next = nullptr;
         call->m_time = this->m_scene->m_time;
         call->m_args[0] = enabled;
@@ -754,7 +754,7 @@ void CM2Model::ReplaceTexture(uint32_t type, CTexture* texture) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_REPLACE_TEXTURE;
+            call->m_type = EModelModQ::MODEL_REPLACE_TEXTURE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = type;
@@ -819,7 +819,7 @@ void CM2Model::ReplaceParticleColor(uint32_t id, CImVector color0, CImVector col
     CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
     if (call) {
-        call->m_type = MODEL_REPLACE_PARTICLE_COLOR;
+        call->m_type = EModelModQ::MODEL_REPLACE_PARTICLE_COLOR;
         call->m_next = nullptr;
         call->m_time = this->m_scene->m_time;
         call->m_args[0] = id;
@@ -1363,7 +1363,7 @@ void CM2Model::SetBoneFlags(uint32_t boneId, uint32_t flags, uint32_t mask) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_BONE_FLAGS;
+            call->m_type = EModelModQ::MODEL_SET_BONE_FLAGS;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = boneId;
@@ -1706,7 +1706,7 @@ void CM2Model::SetBoneSequenceTime(uint32_t boneId, uint32_t time) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_BONE_SEQUENCE_TIME;
+            call->m_type = EModelModQ::MODEL_SET_BONE_SEQUENCE_TIME;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = boneId;
@@ -1754,7 +1754,7 @@ void CM2Model::SetBoneSequenceSpeed(uint32_t boneId, float speed) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_BONE_SEQUENCE_SPEED;
+            call->m_type = EModelModQ::MODEL_SET_BONE_SEQUENCE_SPEED;
             call->m_next = nullptr;
             *reinterpret_cast<float*>(&call->m_args[1]) = speed;
             call->m_time = this->m_scene->m_time;
@@ -1806,7 +1806,7 @@ void CM2Model::LoadSequence(uint32_t id) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_LOAD_SEQUENCE;
+            call->m_type = EModelModQ::MODEL_LOAD_SEQUENCE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = id;
@@ -1870,7 +1870,7 @@ void CM2Model::SetBoneProceduralTransform(uint32_t boneId, const C44Matrix& matr
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_BONE_PROCEDURAL_TRANSFORM;
+            call->m_type = EModelModQ::MODEL_SET_BONE_PROCEDURAL_TRANSFORM;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = boneId;
@@ -2150,7 +2150,7 @@ void CM2Model::SetEmittersEnabled(int32_t enabled) {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_EMITTERS_ENABLED;
+            call->m_type = EModelModQ::MODEL_SET_EMITTERS_ENABLED;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = enabled;
@@ -4098,7 +4098,7 @@ void CM2Model::SetGeometryVisible(uint32_t first, uint32_t last, int32_t visible
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_GEOMETRY_VISIBLE;
+            call->m_type = EModelModQ::MODEL_SET_GEOMETRY_VISIBLE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = first;
@@ -4135,7 +4135,7 @@ void CM2Model::SetGeosetVisibilityRange(uint32_t first, uint32_t last, int32_t v
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_GEOSET_VISIBILITY_RANGE;
+            call->m_type = EModelModQ::MODEL_SET_GEOSET_VISIBILITY_RANGE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = first;
@@ -4154,7 +4154,7 @@ void CM2Model::OptimizeVisibleGeometry() {
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_OPTIMIZE_VISIBLE_GEOSETS;
+            call->m_type = EModelModQ::MODEL_OPTIMIZE_VISIBLE_GEOSETS;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             *this->m_modelCallTail = call;
@@ -6818,7 +6818,7 @@ void CM2Model::UnsetBoneSequence(uint32_t boneId, int32_t blend, int32_t primary
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_UNSET_BONE_SEQUENCE;
+            call->m_type = EModelModQ::MODEL_UNSET_BONE_SEQUENCE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             call->m_args[0] = boneId;
@@ -6920,7 +6920,7 @@ void CM2Model::SetBoneSequence(uint32_t boneId, uint32_t sequenceId, uint32_t va
         CM2ModelCall* call = new (__FILE__, __LINE__) CM2ModelCall();
 
         if (call) {
-            call->m_type = MODEL_SET_BONE_SEQUENCE;
+            call->m_type = EModelModQ::MODEL_SET_BONE_SEQUENCE;
             call->m_next = nullptr;
             call->m_time = this->m_scene->m_time;
             *reinterpret_cast<float*>(&call->m_args[4]) = speed;
@@ -7698,63 +7698,63 @@ int32_t CM2Model::InitializeLoaded() {
         this->m_scene->m_time = call->m_time;
 
         switch (call->m_type) {
-            case MODEL_REPLACE_TEXTURE:
+            case EModelModQ::MODEL_REPLACE_TEXTURE:
                 this->ReplaceTexture(call->m_args[0], reinterpret_cast<CTexture*>(call->m_args[1]));
                 break;
 
-            case MODEL_SET_GEOMETRY_VISIBLE:
+            case EModelModQ::MODEL_SET_GEOMETRY_VISIBLE:
                 this->SetGeometryVisible(call->m_args[0], call->m_args[1], call->m_args[2]);
                 break;
 
-            case MODEL_SET_GEOSET_VISIBILITY_RANGE:
+            case EModelModQ::MODEL_SET_GEOSET_VISIBILITY_RANGE:
                 this->SetGeosetVisibilityRange(call->m_args[0], call->m_args[1], call->m_args[2]);
                 break;
 
-            case MODEL_OPTIMIZE_VISIBLE_GEOSETS:
+            case EModelModQ::MODEL_OPTIMIZE_VISIBLE_GEOSETS:
                 this->OptimizeVisibleGeometry();
                 break;
 
-            case MODEL_SET_BONE_FLAGS:
+            case EModelModQ::MODEL_SET_BONE_FLAGS:
                 this->SetBoneFlags(call->m_args[0], call->m_args[1], call->m_args[2]);
                 break;
 
-            case MODEL_SET_BONE_SEQUENCE:
+            case EModelModQ::MODEL_SET_BONE_SEQUENCE:
                 this->SetBoneSequence(call->m_args[0], call->m_args[1], call->m_args[2], call->m_args[3], *reinterpret_cast<float*>(&call->m_args[4]), call->m_args[5], call->m_args[6]);
                 break;
 
-            case MODEL_UNSET_BONE_SEQUENCE:
+            case EModelModQ::MODEL_UNSET_BONE_SEQUENCE:
                 this->UnsetBoneSequence(call->m_args[0], call->m_args[1], call->m_args[2]);
                 break;
 
-            case MODEL_SET_BONE_SEQUENCE_TIME:
+            case EModelModQ::MODEL_SET_BONE_SEQUENCE_TIME:
                 this->SetBoneSequenceTime(call->m_args[0], call->m_args[1]);
                 break;
 
-            case MODEL_SET_BONE_SEQUENCE_SPEED:
+            case EModelModQ::MODEL_SET_BONE_SEQUENCE_SPEED:
                 this->SetBoneSequenceSpeed(call->m_args[0], *reinterpret_cast<float*>(&call->m_args[1]));
                 break;
 
-            case MODEL_SET_BONE_PROCEDURAL_TRANSFORM:
+            case EModelModQ::MODEL_SET_BONE_PROCEDURAL_TRANSFORM:
                 this->SetBoneProceduralTransform(call->m_args[0], *reinterpret_cast<C44Matrix*>(&call->m_args[1]));
                 break;
 
-            case MODEL_SET_LIGHT_ENABLED:
+            case EModelModQ::MODEL_SET_LIGHT_ENABLED:
                 this->SetLightEnabled(call->m_args[0], call->m_args[1]);
                 break;
 
-            case MODEL_REPLACE_PARTICLE_COLOR:
+            case EModelModQ::MODEL_REPLACE_PARTICLE_COLOR:
                 this->ReplaceParticleColor(call->m_args[0], *reinterpret_cast<CImVector*>(&call->m_args[1]), *reinterpret_cast<CImVector*>(&call->m_args[2]), *reinterpret_cast<CImVector*>(&call->m_args[3]));
                 break;
 
-            case MODEL_SET_EMITTERS_ENABLED:
+            case EModelModQ::MODEL_SET_EMITTERS_ENABLED:
                 this->SetEmittersEnabled(call->m_args[0]);
                 break;
 
-            case MODEL_SET_RIBBONS_ENABLED:
+            case EModelModQ::MODEL_SET_RIBBONS_ENABLED:
                 this->SetRibbonsEnabled(call->m_args[0]);
                 break;
 
-            case MODEL_LOAD_SEQUENCE:
+            case EModelModQ::MODEL_LOAD_SEQUENCE:
                 this->LoadSequence(call->m_args[0]);
                 break;
         }

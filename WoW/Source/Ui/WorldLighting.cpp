@@ -55,6 +55,7 @@ struct LightingCVars {
     CVar* dynamicDistance;
     CVar* dynamicMinRadius;
     CVar* replaceStock;
+    CVar* wmoInsideOnly;
     CVar* flicker;
     CVar* wrap;
     CVar* specular;
@@ -244,6 +245,10 @@ Gathered* AddLight(const C3Vector& position, const C3Vector& gamma, float scale,
     light.m_flicker = flame ? FlickerFor(light.m_color) * fminf(1.0f, 8.0f / radius) : 0.0f;
     light.m_specular = 1.0f;
 
+    // UCLIGHTS: fade out over the last quarter of the gather's reach instead of switching off at its edge
+    float edge = std::clamp(((reach + radius) - sqrtf(DistanceSquared(position, camera))) / std::max(reach * 0.25f, 1.0f), 0.0f, 1.0f);
+    light.m_color = light.m_color * (edge * edge * (3.0f - 2.0f * edge));
+
     if (light.m_color.x + light.m_color.y + light.m_color.z < 0.003f) {
         return nullptr;
     }
@@ -368,14 +373,16 @@ void GatherWmoLights(const C3Vector& camera, float reach) {
                 continue;
             }
 
-            // the group within reach; an interior one only with the camera inside it: without shadows its lights
-            // would shine through its walls
-            // ponytail: inside = in its bounding box, not the portal walk's current group; switch if rooms leak
+            // the group within reach. UCLIGHTS: an interior one no longer only with the camera inside its box: Undercity is
+            // all interior groups, so whole rooms of lamps switched on and off as the camera crossed from one box into the
+            // next (lightDynamicWmoInsideOnly 1 brings that back). A room's lights may now reach through a thin wall.
+            // ponytail: no shadowing of WMO lights through walls; add a portal/collision test if rooms visibly leak
+            const bool insideOnly = s_cv.wmoInsideOnly && s_cv.wmoInsideOnly->m_intValue != 0;
             const CAaBox& box = defGroup->m_bbox;
             C3Vector nearest(std::clamp(camera.x, box.b.x, box.t.x), std::clamp(camera.y, box.b.y, box.t.y), std::clamp(camera.z, box.b.z, box.t.z));
             float d2 = DistanceSquared(nearest, camera);
 
-            if (d2 > reach * reach || ((defGroup->m_flags & MAPOBJ_FLAG_INTERIOR) && d2 > 0.0f)) {
+            if (d2 > reach * reach || (insideOnly && (defGroup->m_flags & MAPOBJ_FLAG_INTERIOR) && d2 > 0.0f)) {
                 continue;
             }
 
@@ -435,13 +442,21 @@ void SelectLights() {
     size_t wmoTake = std::min(wmo.size(), kGxLightingMaxLights - m2Take);
     int32_t rank = 0;
 
-    for (size_t i = 0; i < m2Take; i++) {
-        m2[i]->m_rank = rank++;
-    }
-
-    for (size_t i = 0; i < wmoTake; i++) {
-        wmo[i]->m_rank = rank++;
-    }
+    // UCLIGHTS: the kept lights near the cap fade over a quarter of the best dropped one's score, so a light crossing the
+    // cap as the camera moves dims through it instead of popping (as LegionLights' maxLightCount cut)
+    auto take = [&](std::vector<Gathered*>& list, size_t n) {
+        float cut = n < list.size() ? list[n]->m_score : 0.0f;
+        for (size_t i = 0; i < n; i++) {
+            Gathered* g = list[i];
+            g->m_rank = rank++;
+            if (cut > 0.0f) {
+                float w = std::clamp((g->m_score - cut) / (cut * 0.25f), 0.0f, 1.0f);
+                g->m_light.m_color = g->m_light.m_color * w;
+            }
+        }
+    };
+    take(m2, m2Take);
+    take(wmo, wmoTake);
 
     s_lights.clear();
 
@@ -692,6 +707,7 @@ void WorldLightingRegisterCVars() {
     s_cv.dynamicM2 = Reg("lightDynamicM2", "Model (torch, brazier) light strength (0-8)", "0.6");
     s_cv.dynamicWmo = Reg("lightDynamicWmo", "WMO (building) light strength (0-8)", "0.5");
     s_cv.dynamicDistance = Reg("lightDynamicDistance", "Dynamic lights reach this far from the camera, yards (20-500)", "100");
+    s_cv.wmoInsideOnly = Reg("lightDynamicWmoInsideOnly", "1 = an interior WMO room's lights only while the camera is in its box (whole rooms of lamps switch as you walk between them); 0 = every room within reach (default)", "0");
     s_cv.dynamicMinRadius = Reg("lightDynamicMinRadius", "A model light reaches at least this far, yards (the stock falloff has no end)", "6");
     s_cv.replaceStock = Reg("lightReplaceStock", "With lightDynamic on, the stock per-object point lights are off: the dynamic lights replace them", "1");
     s_cv.flicker = Reg("lightFlicker", "Flame lights flicker this much (0-1)", "0");

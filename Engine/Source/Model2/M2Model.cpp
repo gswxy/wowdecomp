@@ -6254,7 +6254,34 @@ void CM2Model::AnimateSM() {
         return;
     }
 
-    *this->m_boneMatrices = M2TreeSway::World(this) * scene->m_view; // TREESWAY: not in 12340 (m_worldTransform): casters tilt with the drawn tree
+    const C44Matrix rigid = M2TreeSway::World(this) * scene->m_view; // TREESWAY: not in 12340 (m_worldTransform): casters tilt with the drawn tree
+
+    // WSCASTERS, not in 12340: bone matrices are model -> camera view. A model off screen is not animated this
+    // frame and stock refreshed bone 0 alone, so the rest of its bones (a tree's leaf and sway bones) kept the camera
+    // view of the last frame it was drawn, or identity if it never was: the shadow pass maps them back through this
+    // frame's inverse view, so those parts' shadow swung round the valley as the camera turned (Valley of Trials,
+    // 2026-10-25). The simple path for off-screen casters: every bone keeps its pose relative to bone 0, which takes
+    // this frame's view. ponytail: frozen pose, no sway off screen; a full Animate() is the upgrade.
+    C44Matrix* bones = this->m_boneMatrices;
+    const uint32_t boneCount = this->m_shared->m_data->m_bones.m_count;
+
+    if (boneCount > 1 && !(this->m_fFlags & 0x1000)) {
+        const float det = bones[0].Determinant();
+
+        if (std::fabs(det) > 1e-12f) {
+            const C44Matrix delta = bones[0].Inverse(det) * rigid;
+
+            for (uint32_t i = 1; i < boneCount; i++) {
+                bones[i] = bones[i] * delta;
+            }
+        } else {
+            for (uint32_t i = 1; i < boneCount; i++) {
+                bones[i] = rigid;
+            }
+        }
+    }
+
+    bones[0] = rigid;
     this->m_alpha = this->m_baseAlpha * this->m_fadeAlpha;
 
     M2Data* data = this->m_shared->m_data;

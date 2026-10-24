@@ -1731,7 +1731,7 @@ static int32_t Script_SetBackdrop(lua_State* L) {
     int32_t tile = StringToBOOL(L, -1, 0);
     lua_settop(L, -2);
 
-    uint32_t pieces = edgeFile && *edgeFile ? 0xFF : 0;
+    CBackdropGenerator::BACKDROPPIECES pieces = edgeFile && *edgeFile ? CBackdropGenerator::BACKDROPPIECES::THEWORKS : CBackdropGenerator::BACKDROPPIECES::BACKDROPONLY;
     backdrop->m_bgFile.Copy(bgFile);
     backdrop->m_pieces = pieces;
     backdrop->m_tile = tile;

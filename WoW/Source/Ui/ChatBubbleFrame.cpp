@@ -300,7 +300,7 @@ CGChatBubbleFrame::CGChatBubbleFrame(CSimpleFrame* parent) : CSimpleFrame(parent
     void* data = SMemAlloc(sizeof(CBackdropGenerator), __FILE__, __LINE__, 0);
     CBackdropGenerator* backdrop = data ? new (data) CBackdropGenerator() : nullptr;
     backdrop->m_bgFile.Copy("Interface\\Tooltips\\ChatBubble-Background");
-    backdrop->m_pieces = 0xFF;
+    backdrop->m_pieces = CBackdropGenerator::BACKDROPPIECES::THEWORKS;
     backdrop->m_tile = 1;
     backdrop->m_edgeFile.Copy("Interface\\Tooltips\\ChatBubble-Backdrop");
     backdrop->m_alphaMode = GxBlend_Alpha;

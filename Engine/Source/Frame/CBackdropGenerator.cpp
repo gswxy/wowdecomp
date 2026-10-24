@@ -137,7 +137,7 @@ void CBackdropGenerator::LoadXML(XMLNode* node, CStatus* status) {
         tiled = StringToBOOL(tile);
     }
 
-    uint32_t pieces = edgeFile && *edgeFile ? THEWORKS : BACKDROPONLY;
+    BACKDROPPIECES pieces = edgeFile && *edgeFile ? BACKDROPPIECES::THEWORKS : BACKDROPPIECES::BACKDROPONLY;
 
     this->m_bgFile.Copy(bgFile);
     this->m_tile = tiled;
@@ -223,7 +223,7 @@ void CBackdropGenerator::Generate(const CRect* rect) {
         this->m_backgroundTexture->SetTexCoord(texCoords);
     }
 
-    if (this->m_pieces & LEFTSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::LEFTSIDE) {
         texCoords[0].x = 0.0078125f;
         texCoords[0].y = 0.0625f;
         texCoords[1].x = 0.0078125f;
@@ -235,7 +235,7 @@ void CBackdropGenerator::Generate(const CRect* rect) {
         this->m_leftTexture->SetTexCoord(texCoords);
     }
 
-    if (this->m_pieces & RIGHTSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::RIGHTSIDE) {
         texCoords[0].x = 0.1328125f;
         texCoords[0].y = 0.0625f;
         texCoords[1].x = 0.1328125f;
@@ -247,7 +247,7 @@ void CBackdropGenerator::Generate(const CRect* rect) {
         this->m_rightTexture->SetTexCoord(texCoords);
     }
 
-    if (this->m_pieces & TOPSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::TOPSIDE) {
         texCoords[0].x = 0.2578125f;
         texCoords[0].y = tilesX - 0.0625f;
         texCoords[1].x = 0.3671875f;
@@ -259,7 +259,7 @@ void CBackdropGenerator::Generate(const CRect* rect) {
         this->m_topTexture->SetTexCoord(texCoords);
     }
 
-    if (this->m_pieces & BOTTOMSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::BOTTOMSIDE) {
         texCoords[0].x = 0.3828125f;
         texCoords[0].y = tilesX - 0.0625f;
         texCoords[1].x = 0.4921875f;
@@ -289,7 +289,7 @@ CBackdropGenerator::CBackdropGenerator() {
     this->m_bottomRightTexture = nullptr;
     this->m_edgeSize = DEFAULT_CORNER_SIZE;
     this->m_tileSize = 0.0f;
-    this->m_pieces = BACKDROPONLY;
+    this->m_pieces = BACKDROPPIECES::BACKDROPONLY;
     this->m_insetTop = 0.0f;
     this->m_tile = 0;
     this->m_insetBottom = 0.0f;
@@ -322,7 +322,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetTexture(this->m_bgFile.m_str ? this->m_bgFile.m_str : "", this->m_tile, 0, CSimpleTexture::s_textureFilterMode, ImageMode_Normal);
     }
 
-    if (this->m_pieces & LEFTSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::LEFTSIDE) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_leftTexture = texture;
@@ -335,7 +335,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & RIGHTSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::RIGHTSIDE) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_rightTexture = texture;
@@ -348,7 +348,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & TOPSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::TOPSIDE) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_topTexture = texture;
@@ -361,7 +361,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & BOTTOMSIDE) {
+    if (this->m_pieces & BACKDROPPIECES::BOTTOMSIDE) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_bottomTexture = texture;
@@ -374,7 +374,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & TOPLEFTCORNER) {
+    if (this->m_pieces & BACKDROPPIECES::TOPLEFTCORNER) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_topLeftTexture = texture;
@@ -395,7 +395,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & TOPRIGHTCORNER) {
+    if (this->m_pieces & BACKDROPPIECES::TOPRIGHTCORNER) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_topRightTexture = texture;
@@ -416,7 +416,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & BOTTOMLEFTCORNER) {
+    if (this->m_pieces & BACKDROPPIECES::BOTTOMLEFTCORNER) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_bottomLeftTexture = texture;
@@ -437,7 +437,7 @@ void CBackdropGenerator::SetOutput(CSimpleFrame* frame) {
         texture->SetBlendMode(this->m_alphaMode);
     }
 
-    if (this->m_pieces & BOTTOMRIGHTCORNER) {
+    if (this->m_pieces & BACKDROPPIECES::BOTTOMRIGHTCORNER) {
         void* data = CSimpleTexture::s_allocator.GetData(0, typeid(CSimpleTexture).raw_name(), SLOG_OBJECT);
         CSimpleTexture* texture = data ? new (data) CSimpleTexture(frame, 1, 1) : nullptr;
         this->m_bottomRightTexture = texture;

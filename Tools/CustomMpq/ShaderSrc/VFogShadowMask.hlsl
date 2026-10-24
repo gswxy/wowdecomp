@@ -179,8 +179,6 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
         }
         land = saturate(1 - (lit - world.z - cMaskAmbient.w) * cTerrainShadow.w);
     }
-    [branch] if (land >= 1 && debug <= 0)
-        return 1;
 
     float3 dx = Nearer(p, ViewAt(pixel + float2(1, 0)), ViewAt(pixel - float2(1, 0)));
     float3 dy = Nearer(p, ViewAt(pixel + float2(0, 1)), ViewAt(pixel - float2(0, 1)));
@@ -191,10 +189,15 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     // The cascade term lifts at the terminator as the receivers' does. The land term does not: lifting it too (step 1)
     // erased a mountain's shadow on every surface under 0.2 N.L, all flat ground once the sun is under 11.5 deg, which
     // is when a mountain shades a valley, and left a tree's cascade shadow on that floor alone (2026-10-24). A back face
-    // to the land's light gets no sun inside the land's shadow or out of it, so there the receivers' own result stands
-    // (land 1); at N.L 0 both sides give a ratio of 1, so the cut does not show.
+    // to the land's light is in its own shadow (land 0): taking the receivers' result there (step 2, land 1) left a
+    // mountain's dark side to the cascades, which shade only where a ridge's back face stands before another (the
+    // folded tops dark, the smooth foot not), and to the shading light, 6 deg higher than the shadows' at a low sun,
+    // lighting slopes the shadows called dark (shadowvid video, 2026-10-24). At N.L 0 the target is the receivers' own
+    // colour (cascade lifted; ndl under the shading light's 10 deg floor at most sin 6 deg), so the cut barely shows.
     float liftCascade = TerminatorFade(n, cMaskCascadeLight.xyz);
-    land = dot(n, cMaskLandLight.xyz) <= 0 ? 1 : land;
+    land = dot(n, cMaskLandLight.xyz) <= 0 ? 0 : land;
+    [branch] if (land >= 1 && debug <= 0)
+        return 1;
 
     float which;
     float cascade = lerp(ReceiverShadow(p, which), 1, liftCascade);

@@ -65,7 +65,15 @@ int32_t s_enabled = 1;
 // never fogged past kFogMax, so tall land (Hyjal) stays a darker silhouette and ridge line against the sky.
 constexpr float kHazeReach = 2.5f;
 constexpr float kFogMax = 0.85f;
+// farlandv2: with far land drawing, the horizon pass starts this close (planar yd) instead of at farclip - 50, so
+// the far land also fills wherever the near terrain has not drawn: ADT tiles past 1111 yd stream in only once they
+// enter the view, and with a wide screen the view's far plane reaches ~1.6 x farclip at its edges, so turning left
+// a band between the loaded terrain and farclip - 50 where neither drew (land popped in and out with the camera).
+// The horizon keeps its own depth band behind the whole world (s_horizonMinZ), so wherever near terrain did draw it
+// still wins the depth test.
+constexpr float kHorizonNear = 600.0f;
 int32_t s_uploads = 4;
+float s_hazeFalloff = 1.0f / 300.0f;   // farLandHazeHeight
 
 CGxShader* s_vs = nullptr;
 CGxShader* s_ps = nullptr;
@@ -436,6 +444,7 @@ void PassConstants() {
     ps[4][0] = dn.m_fog.m_start;
     ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? 1.0f / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
     ps[4][2] = kFogMax;
+    ps[4][3] = s_hazeFalloff;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, &ps[0][0], 5);
     // FarLandPS c6: slot texels and 1 / atlas texels per atlas, for its in-slot uv (audit 3/4: LOD capped, inset by
     // half a texel of the mip it reads, so no mip samples the next slot or the flat normal levels past kNormalLevels)
@@ -467,6 +476,11 @@ void RegisterCVars() {
         s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farLandHazeHeight", "farLand: the far haze thins with height above the camera by e over this many yards, so low ground goes into the haze first and high ridges keep their silhouette (stock fog and vfog; default 300, 0 = no height term)", 1, "300", [](CVar*, const char*, const char* value, void*) -> bool {
+        const float h = SStrToFloat(value);
+        s_hazeFalloff = h > 1.0f ? 1.0f / h : 0.0f;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("farLandUploads", "farLand: most baked tiles copied into the atlases per frame (1..32, default 4)", 1, "4", [](CVar*, const char*, const char* value, void*) -> bool {
         s_uploads = std::min(std::max(SStrToInt(value), 1), 32);
         return true;
@@ -480,6 +494,14 @@ bool Drawing() {
 float FogCap(float farClip) {
     if (!s_enabled || s_shaderFailed) return farClip;
     return farClip * std::min(kHazeReach, std::max(World::s_horizonFarClipScale, 1.0f));
+}
+
+float HorizonNear(float farZ) {
+    return Drawing() ? std::min(farZ - 50.0f, kHorizonNear) : farZ - 50.0f;
+}
+
+float HazeFalloff() {
+    return Drawing() ? s_hazeFalloff : 0.0f;
 }
 
 void BeginPass() {

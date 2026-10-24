@@ -131,6 +131,18 @@ the same name share a scale.
        They are no longer requested.
      - `kKeep` 16 let two kept tiles 32 apart fight over one atlas slot. It is now 15.
    - The list is rebuilt every frame (`CullSortTable`), on rotation as well as movement.
+   - **farlandv2 (the real cause, 2026-10-24):** none of the above was it. The horizon pass (cull and draw) began at
+     the stock near plane `farZ - 50`, measured along the view axis, while the near terrain only exists where its ADT
+     tile has streamed in: past 1111 yd a tile loads only once it enters the view (`CMap` streaming), and on a
+     21:9 screen the view's far plane reaches about 1.6 x farclip at the screen edges. Turning opened a band between
+     the loaded terrain and `farZ - 50` where neither drew: a mountain ended in a vertical cut against the sky, then
+     came back when the tile loaded. With far land drawing, the horizon now starts at 600 yd
+     (`FarLand::HorizonNear`, also vfog's band decode); its depth band sits behind the whole world, so near terrain
+     still wins wherever it drew, and the far land fills every hole.
+   - **Height haze** (`farLandHazeHeight`, default 300 yd, 0 = off): the far haze thins by e per 300 yd above the
+     camera, so low ground goes into the haze first and high ridges keep a silhouette. vfog: the distance layer's
+     upper falloff from the reference height. Stock fog: `FarLandPS` scales the fog distance by the mean density
+     along the ray, (1 - e^-x) / x.
 3. **Sun blowout.** The fp16 fog stores no longer clip the in-scatter per channel (`DitheredStore`), so the
    composite's soft highlight roll-off now handles the sun halo instead of a hue-shifted clip. coa stores fp16 unclamped too.
 4. **Shafts stacking on the sun.** The shaft floor is now `max(phase, floor)` instead of `phase + floor`, so the sun

@@ -2072,11 +2072,11 @@ int32_t CWorldScene::FrustumCull(const C3Vector& center, float radius) {
 
 // VERIFY: e94a022f auto
 // OFFSET: 0x00791170
-void CWorldScene::BuildHorizonProjection(C44Matrix* projection) {
+void CWorldScene::BuildHorizonProjection(C44Matrix* projection) {   // FARLAND: near plane farZ - 50 in 12340
     CGCamera* camera = CGWorldFrame::GetActiveCamera();
     float farZ = camera->m_farZ;
     float fov = camera->FOV();
-    GxuXformCreateProjection_Exact(fov * 0.60000002f, camera->m_aspect, farZ - 50.0f, World::s_horizonFarClipScale * World::s_farClip, *projection);
+    GxuXformCreateProjection_Exact(fov * 0.60000002f, camera->m_aspect, FarLand::HorizonNear(farZ), World::s_horizonFarClipScale * World::s_farClip, *projection);
 }
 
 // VERIFY: 6cb64bd1 manual

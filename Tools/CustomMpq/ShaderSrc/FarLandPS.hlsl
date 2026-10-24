@@ -7,7 +7,8 @@ float4 gSun  : register(c0);   // world direction towards the sun
 float4 gAmb  : register(c1);
 float4 gDif  : register(c2);
 float4 gFogC : register(c3);
-float4 gFog  : register(c4);   // fog start, 1 / (end - start), most fog the land takes (kFogMax: a silhouette)
+float4 gFog  : register(c4);   // fog start, 1 / (end - start), most fog the land takes (kFogMax: a silhouette),
+                               // w: 1 / farLandHazeHeight (0 = no height term)
 float4 gFade : register(c5);   // x: 0 -> 1 as the tile's bake arrives (0 = the stock tile: fog colour)
 float4 gAtlas : register(c6);  // albedo slot texels, 1 / atlas texels; normal the same
 // shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades as the near receivers take them, c56-c62 + c64, s5/s6,
@@ -32,6 +33,9 @@ float4 main(float4 uv : TEXCOORD0, float dist : TEXCOORD1, float3 rel : TEXCOORD
     float ndl = dot(n, gSun.xyz);
     float3 lit = a * saturate(gAmb.rgb + gDif.rgb * saturate(ndl));
     lit *= ReceiverShadowScale(CascadeSunVisibility(rel, 0.5), ndl);
-    float f = min(saturate((dist - gFog.x) * gFog.y), gFog.z);
+    // farlandv2: the haze thins by e per farLandHazeHeight above the camera, so the fog a ray gathers is its length
+    // times the mean of that density along it, (1 - e^-x) / x at x = its rise over the height (vfog: the distance layer)
+    float x = max(rel.z * gFog.w, 1e-4);
+    float f = min(saturate((dist * (1 - exp(-x)) / x - gFog.x) * gFog.y), gFog.z);
     return float4(lerp(gFogC.rgb, lerp(lit, gFogC.rgb, f), gFade.x), 1.0);
 }

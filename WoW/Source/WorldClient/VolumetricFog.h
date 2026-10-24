@@ -106,6 +106,7 @@ struct FrameInputs {
     float zoneFogDistance;          // m_bands.m_fogEnd
     float farClip;                  // World::s_farClip
     float fogCap;                   // FarLand::FogCap(farClip): the fog end cap, stretched toward the far land's reach
+    float hazeFalloff;              // FarLand::HazeFalloff(): the distance layer thins by e per this inverse height above the reference (0 = uniform)
     float clientGlowAmount;         // m_bands.m_glow (0 when FFX glow is off)
     float interiorBlend;            // DNInfo m_interiorFogBlend (camera WMO blend)
     bool inLiquid;

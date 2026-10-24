@@ -14,13 +14,18 @@ class CMapAreaLow;
 
 namespace FarLand {
 
-// CVars shadowFarReceivers (BindSunShadow), farLand (1 = on, the default since 2026-10-24 farview; 0 = stock WDL horizon), farLandUploads (farFogReach removed in vfogaudit).
+// CVars shadowFarReceivers (BindSunShadow), farLand (1 = on, the default since 2026-10-24 farview; 0 = stock WDL horizon), farLandUploads, farLandHazeHeight (farFogReach removed in vfogaudit).
 void RegisterCVars();
 
 // The fog end cap for a view distance: farClip, or with the far land drawing farClip stretched toward its reach.
 float FogCap(float farClip);
 // farLand is on and its shaders loaded: the horizon blocks show real land, so they must not pop (vfogaudit).
 bool Drawing();
+// The horizon pass's near plane (planar yd) for a camera far plane: stock farZ - 50, or with far land drawing pulled
+// in to kHorizonNear so it fills any gap the near terrain leaves (farlandv2). BuildHorizonProjection and vfog's band decode.
+float HorizonNear(float farZ);
+// farLandHazeHeight as 1 / yd (0 = off or far land not drawing): the far haze thins with height above the camera.
+float HazeFalloff();
 
 // Start of CWorldScene::RenderHorizon: new map check, finished tiles into the atlases (capped), and the next Apply
 // uploads this pass's view, sun and fog constants.

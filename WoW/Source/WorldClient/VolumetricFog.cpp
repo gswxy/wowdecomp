@@ -322,6 +322,7 @@ void ReadDayNightInputs(FrameInputs& in) {
     in.zoneFogDistance = info.m_bands.m_fogEnd;
     in.farClip = World::s_farClip;
     in.fogCap = FarLand::FogCap(in.farClip);
+    in.hazeFalloff = FarLand::HazeFalloff();
     in.inLiquid = false;
     in.clientGlowAmount = GlowScreenEffectRuns() ? Clamp01(info.m_bands.m_glow) : 0.0f;
     in.interiorBlend = SmoothedInteriorBlend();
@@ -939,7 +940,7 @@ static bool CaptureView(FrameInputs& in) {
     const float farClip = World::s_farClip;
     in.horizonBand[0] = kHorizonMinZ;
     in.horizonBand[1] = kHorizonMaxZ;
-    in.horizonBand[2] = camera ? camera->m_farZ - 50.0f : farClip - 50.0f;
+    in.horizonBand[2] = FarLand::HorizonNear(camera ? camera->m_farZ : farClip);
     in.horizonBand[3] = World::s_horizonFarClipScale * farClip;
 
     return in.viewport[1] > in.viewport[0] && in.viewport[3] > in.viewport[2] && IsPerspective(in.glProjection) &&

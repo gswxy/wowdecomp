@@ -487,7 +487,7 @@ void CGxDevice::ICursorDraw() {
     GxRsSet(GxRs_Texture1, nullptr);
     GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
     GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
-    GxRsSet(GxRs_TexGen0, 0);
+    GxRsSet(GxRs_TexGen0, GxTexGen_Disabled);
     GxRsSet(GxRs_TextureShader0, 0);
 
     C44Matrix world;
@@ -1398,7 +1398,7 @@ void CGxDevice::IRsInit() {
         this->m_appRenderStates[GxRs_Texture0 + i].m_value.m_data.i[0] = 0;
         this->m_appRenderStates[GxRs_ColorOp0 + i].m_value.m_data.i[0] = GxTexOp_Mod;
         this->m_appRenderStates[GxRs_AlphaOp0 + i].m_value.m_data.i[0] = GxTexOp_Mod;
-        this->m_appRenderStates[GxRs_TexGen0 + i].m_value.m_data.i[0] = 0;
+        this->m_appRenderStates[GxRs_TexGen0 + i].m_value.m_data.i[0] = GxTexGen_Disabled;
         this->m_appRenderStates[GxRs_TextureShader0 + i].m_value.m_data.i[0] = 0;
         this->m_appRenderStates[GxRs_TextureCoord0 + i].m_value.m_data.i[0] = i;
     }
@@ -2130,7 +2130,7 @@ void CGxDevice::RsInit() {
         this->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + tmu), nullptr);
         this->RsSet(static_cast<EGxRenderState>(GxRs_ColorOp0 + tmu), GxTexOp_Mod);
         this->RsSet(static_cast<EGxRenderState>(GxRs_AlphaOp0 + tmu), GxTexOp_Mod);
-        this->RsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + tmu), 0);
+        this->RsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + tmu), GxTexGen_Disabled);
         this->RsSet(static_cast<EGxRenderState>(GxRs_TextureShader0 + tmu), 0);
         this->RsSet(static_cast<EGxRenderState>(GxRs_TextureCoord0 + tmu), static_cast<int32_t>(tmu));
     }

@@ -638,8 +638,8 @@ static void ProjectTexRender2d(const CAaBox& box, const CImVector& color, uint32
         GxRsSet(GxRs_PolygonOffset, (polygonOffset + polygonOffset) * 3.0518044e-05f);
     }
 
-    GxRsSet(GxRs_TexGen0, 2);
-    GxRsSet(GxRs_TexGen1, 2);
+    GxRsSet(GxRs_TexGen0, GxTexGen_World);
+    GxRsSet(GxRs_TexGen1, GxTexGen_World);
     GxRsSet(GxRs_TextureShader0, 1);
     GxRsSet(GxRs_TextureShader1, 1);
 

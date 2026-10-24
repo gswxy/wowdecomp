@@ -803,6 +803,24 @@ void CMapRenderChunk::RenderSetup(int32_t a2) {
     this->m_lastUpdateTime = 0.0f;
     this->AllocLayerTextures();
 
+    // LIVESHADOW (not in 12340): the baked MCSH shadow rides the alpha textures' alpha; a loaded chunk made under the
+    // other answer (mapShadows toggled, the cascades switched on or off) regenerates them through their callbacks
+    int8_t baked = CMapRenderChunk::BakedShadows() ? 1 : 0;
+
+    if (this->m_bakedShadows != baked) {
+        if (this->m_bakedShadows >= 0) {
+            CTexture* textures[5] = { this->m_terrainBlendTexture, this->m_layers[0].m_layerTexture, this->m_layers[1].m_layerTexture, this->m_layers[2].m_layerTexture, this->m_layers[3].m_layerTexture };
+
+            for (CTexture* texture : textures) {
+                if (CGxTex* gxTex = texture ? TextureGetGxTex(texture, 1, nullptr) : nullptr) {
+                    GxTexUpdate(gxTex, 0, 0, gxTex->m_width, gxTex->m_height, 1);
+                }
+            }
+        }
+
+        this->m_bakedShadows = baked;
+    }
+
     if (!a2 || !CMap::enableTerrainShaderVertex) {
         C44Matrix world;
         C3Vector translation = this->m_vec1 - CWorldScene::s_activeWorldView;
@@ -1734,7 +1752,7 @@ void CMapRenderChunk::CreateChunkLayerTex(CMapRenderChunkLayer* layer) {
     uint32_t chunkFlags = chunk->m_header->m_flags;
     uint8_t* shadowMap = nullptr;
 
-    if ((chunkFlags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunkFlags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap = chunk->m_shadowMap;
     }
 
@@ -1796,7 +1814,7 @@ void CMapRenderChunk::CreateShaderTexture() {
 
     uint32_t chunkFlags = chunk->m_header->m_flags;
 
-    if ((chunkFlags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunkFlags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap = chunk->m_shadowMap;
     }
 
@@ -1853,7 +1871,7 @@ void CMapRenderChunk::CreateShaderTexture() {
     uint32_t chunk2Flags = header->m_flags;
     uint8_t* shadowMap2 = nullptr;
 
-    if ((chunk2Flags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunk2Flags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap2 = this->m_mapChunks[1]->m_shadowMap;
     }
 
@@ -1962,6 +1980,18 @@ void CMapRenderChunk::AllocLayerTexture(CMapRenderChunkLayer* layer) {
 
     layer->m_layerTexture = texture;
     GxTexUpdate(TextureGetGxTex(texture, 1, nullptr), 0, 0, width, height, 1);
+}
+
+// LIVESHADOW (not in 12340): the baked ADT shadow (MCSH, painted on the land in a fixed direction) under mapShadows,
+// except while the live sun/moon shadows run on D3D11/Vulkan (shadow value >= 2: the cascades and the shadow mask),
+// which it would double. D3D9 and the low shadow qualities keep it.
+bool CMapRenderChunk::BakedShadows() {
+    if (!(CWorld::enables & Enable_Shadow)) {
+        return false;
+    }
+
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+    return (api != GxApi_D3d11 && api != GxApi_Vulkan) || CShadowCache::GetShadowValue() < 2;
 }
 
 // VERIFY: 20e9adae auto
@@ -2401,7 +2431,7 @@ void CMapRenderChunk::RenderMultiPassAlpha(CMapRenderChunk* renderChunk) {
         }
     }
 
-    if (renderChunk->m_shadowTexture && (CWorld::enables & Enable_Shadow)) {
+    if (renderChunk->m_shadowTexture && CMapRenderChunk::BakedShadows()) {
         GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
         GxUpdateAlphaRef(GxRs_AlphaRef);
         g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(CWorld::shadowModTexture, 1, nullptr));

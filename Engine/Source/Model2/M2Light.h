@@ -10,6 +10,7 @@
 
 class CM2Light;
 class CM2Scene;
+class CM2Model;
 
 class CM2Light {
     public:
@@ -87,6 +88,11 @@ class CM2Lighting {
 // WorldLighting.cpp sets it on D3D11/Vulkan with shaderLighting, lightDynamic and lightReplaceStock on; else null).
 // CM2Lighting::AddLight skips that scene's point lights; the sun, moon and ambient still pass.
 extern CM2Scene* g_m2ShaderOwnedLightScene;
+// UNITLIGHTS (not in 12340): a model that keeps that scene's stock per-vertex point lights anyway (WorldLighting.cpp:
+// units and what they carry; the shader lighting's dynamic lights never reached them). Null = none keeps them.
+// g_m2KeepPointLightsNow is set by CM2Model::SetupLighting while the model it asks about selects its lights.
+extern bool (*g_m2KeepStockPointLights)(const CM2Model* model);
+extern bool g_m2KeepPointLightsNow;
 // POINTLIGHT (not in 12340): set while a WMO group or terrain chunk gathers its lights and the LegionLights pass
 // (lightMode) lights them per pixel instead: CM2Lighting::AddLight then takes no point lights (the stock vertex
 // shaders lit them per vertex, a patchwork of triangles under a torch)

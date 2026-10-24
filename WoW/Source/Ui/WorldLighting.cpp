@@ -12,6 +12,7 @@
 #include "Engine/Source/Gx/GxLighting.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2ModelLight.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
@@ -20,6 +21,7 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/Map.h"
+#include "WoW/Source/WorldClient/MapLoad.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
@@ -33,6 +35,20 @@
 // lit shaders come with custom.MPQ. D3D9 keeps the stock shaders (g_gxLighting is null there).
 
 namespace {
+
+// UNITLIGHTS: units (and the weapons, helms and mounts attached to them) keep the stock per-vertex point lights under
+// lightReplaceStock. The dynamic per-pixel lights light the doodads and WMOs but never reached the units' draws (in game
+// 2026-10-25: lightReplaceStock 0 lit the NPCs at a campfire, 1 left them dark on the side facing it); until that is
+// found, the units keep the stock lights the dynamic ones were meant to replace. A unit's world entity carries
+// m_staticFlags 0x8000 (CMap::ObjectCreate flag 0x10, CGObject_C for TYPE_UNIT; the character-ambient boost).
+bool KeepStockPointLights(const CM2Model* model) {
+    while (model->m_attachParent) {
+        model = model->m_attachParent;
+    }
+
+    return model->m_lightingCallback == CMapStaticEntity::ModelLightingCallback && model->m_lightingArg
+        && (static_cast<const CMapStaticEntity*>(model->m_lightingArg)->m_staticFlags & 0x8000);
+}
 
 struct LightingCVars {
     CVar* hdr;
@@ -709,7 +725,7 @@ void WorldLightingRegisterCVars() {
     s_cv.dynamicDistance = Reg("lightDynamicDistance", "Dynamic lights reach this far from the camera, yards (20-500)", "100");
     s_cv.wmoInsideOnly = Reg("lightDynamicWmoInsideOnly", "1 = an interior WMO room's lights only while the camera is in its box (whole rooms of lamps switch as you walk between them); 0 = every room within reach (default)", "0");
     s_cv.dynamicMinRadius = Reg("lightDynamicMinRadius", "A model light reaches at least this far, yards (the stock falloff has no end)", "6");
-    s_cv.replaceStock = Reg("lightReplaceStock", "With lightDynamic on, the stock per-object point lights are off: the dynamic lights replace them", "1");
+    s_cv.replaceStock = Reg("lightReplaceStock", "With lightDynamic on, the stock per-object point lights are off: the dynamic lights replace them (1 = units keep theirs, 2 = units too)", "1");
     s_cv.flicker = Reg("lightFlicker", "Flame lights flicker this much (0-1)", "0");
     s_cv.wrap = Reg("lightWrap", "Dynamic light wraps round the terminator (0-1)", "0.25");
     s_cv.specular = Reg("lightSpecular", "Specular on WMO specular shaders and shiny models (D3D11/Vulkan)", "0");
@@ -734,6 +750,7 @@ void WorldLightingBeginWorld() {
     // the stock per-object point lights give way to ours (M2Light.cpp CM2Lighting::AddLight); D3D9 (no g_gxLighting)
     // and lightDynamic off keep them
     g_m2ShaderOwnedLightScene = (features & GxLighting_Dynamic) && s_cv.replaceStock->m_intValue > 0 ? World::s_m2Scene : nullptr;
+    g_m2KeepStockPointLights = s_cv.replaceStock->m_intValue == 1 ? KeepStockPointLights : nullptr;   // UNITLIGHTS (2 = units too)
 
     // all off: the device is never called, the frame is the stock one
     if (!features) {

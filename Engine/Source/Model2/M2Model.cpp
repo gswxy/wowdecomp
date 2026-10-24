@@ -6295,12 +6295,16 @@ void CM2Model::SetupLighting() {
 
         this->m_lighting.Initialize(this->m_scene, sphere);
         g_m2SkipPointLights = g_m2PixelLitScene && this->m_scene == g_m2PixelLitScene;   // LEGION lights: lit per pixel (lightMode 2)
+        // UNITLIGHTS: a unit keeps its stock point lights under the shader lighting (M2Light.h)
+        g_m2KeepPointLightsNow = g_m2ShaderOwnedLightScene && g_m2KeepStockPointLights && g_m2KeepStockPointLights(this);
         this->m_scene->SelectLights(&this->m_lighting);
         g_m2SkipPointLights = false;
 
         if (this->m_lightingCallback) {
             this->m_lightingCallback(this, &this->m_lighting, this->m_lightingArg);
         }
+
+        g_m2KeepPointLightsNow = false;
 
         this->m_lighting.SetupSunlight();
         this->m_lighting.CameraSpace();

@@ -146,6 +146,9 @@ class CMapRenderChunk {
     /* 0088 */ CTexture* m_shadowTexture;
     /* 008C */ CMapChunkBuf* m_chunkBuf;
     /* 0090 */ CGxBatch m_batch;
+    int8_t m_bakedShadows = -1;   // LIVESHADOW (not in 12340): BakedShadows() its textures were made with, -1 = not yet
+
+    static bool BakedShadows();
 
     ~CMapRenderChunk();
     CMapRenderChunk();

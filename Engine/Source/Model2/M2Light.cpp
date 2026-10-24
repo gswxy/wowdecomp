@@ -212,6 +212,8 @@ void CM2Lighting::AddDiffuse(const C3Vector& color, const C3Vector& dir) {
 }
 
 CM2Scene* g_m2ShaderOwnedLightScene = nullptr;
+bool (*g_m2KeepStockPointLights)(const CM2Model* model) = nullptr;
+bool g_m2KeepPointLightsNow = false;
 bool g_m2SkipPointLights = false;
 CM2Scene* g_m2PixelLitScene = nullptr;
 
@@ -230,7 +232,7 @@ void CM2Lighting::AddLight(CM2Light* light) {
     }
 
     // LIGHTING (not in 12340): the shader lighting lights this scene's point lights per pixel instead
-    if (g_m2SkipPointLights || (g_m2ShaderOwnedLightScene && light->m_scene == g_m2ShaderOwnedLightScene)) {
+    if (g_m2SkipPointLights || (g_m2ShaderOwnedLightScene && light->m_scene == g_m2ShaderOwnedLightScene && !g_m2KeepPointLightsNow)) {
         return;
     }
 

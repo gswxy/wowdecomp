@@ -299,7 +299,7 @@ Both run before liquids, transparents and the fog composite, so the fog fogs the
 | CVar | Range | Default | |
 |---|---|---|---|
 | `lightMode` | 0/1/2 | 2 | 0 off (stock per-vertex lamps), 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
-| `maxLightCount` | 1..128 | 32 | nearest lights kept (Legion 128); 16 a pass, so 32 = 2 passes |
+| `maxLightCount` | 1..128 | 64 | lights kept, largest radius / distance first (Legion 128); 16 a full-screen pass, so 64 = 4 passes; the kept ones within 1.25x of the cut fade in (no switching at the cap) |
 | `maxLightDist` | 20..2048 | 200 | yd; lights farther than this plus their radius are dropped, the light fades over the last quarter (Legion 2048) |
 | `lightIntensity` | 0..4 | 1 | scale on the added light |
 | `lightShadows` | 0..1 | 1 | screen-space shadow rays toward each lamp; a fully blocked lamp keeps 1 - 0.85 x this of its light |
@@ -340,6 +340,15 @@ the stamp is unchanged (the model never animated) the static entry lights; once 
 on when linked and off when the model left it off, and a grid light known to be static needs one refresh, not two, to be
 kept stale. WMO MOLT is not read: nothing in 12340 loads it at run time (its lights are baked into MOCV), and the lamps it
 stands for are doodads with their own M2 lights. Cost: one loop over the list a frame (a few thousand entries in Undercity).
+
+**Placed lamps always on** (2026-10-24, lampson; Undercity lamps still switching with the camera, video 18-21-29).
+Cause: the lightbake rule "the live light wins once the model has animated". `CM2Scene::SelectLights` (run by every
+lit model's `SetupLighting` and the terrain/WMO gathers) calls `SetVisible(0)` on a light whose stamp is old, and
+`SetVisible(0)` UNLINKS it from `m_lightGrid`. So a lamp whose doodad animated once (camera near or in view) and was then
+culled (the camera passed under it) left the grid, and its static entry was skipped for its changed stamp: dark until
+the model was drawn again. Now every static-list lamp is lit every frame at its static colour; the grid walk skips
+them; the live light only supplies the position on frames its model animated (stamp == frame stamp, visible). Carried
+or moving lights (not in the static list) stay live, as before. `maxLightCount` default 32 -> 64.
 
 **Baked shadows** (2026-10-24, lightbake; `RunBake`, `LegionLights.hlsl` `BakedVisibility`). Not a rendered cube depth
 map: each static lamp's cube is 6 x 16 x 16 rays cast once through `World::Intersect` (flags 0x111: terrain, WMO and

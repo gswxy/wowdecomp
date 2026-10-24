@@ -92,15 +92,16 @@ uint32_t s_walk;
 
 // LIGHTBAKE (static light list): every placed doodad's M2 point lights, read from its model's light block when the
 // doodad is placed (CMapDoodadDef::UpdateBounds, ADT MDDF and WMO MODD alike) and dropped with it (~CMapDoodadDef),
-// in world space through the doodad's matrix, colour from the tracks' first keys. Keyed by the model's own CM2Light,
-// so the animated light, once its model has animated, wins (the grid walk above), and a lamp never animated since
-// load still lights. WMO MOLT lights are not read: 12340 never loads them (baked into MOCV), and the lamps they
+// in world space through the doodad's matrix, colour from the tracks' first keys. Keyed by the model's own CM2Light.
+// LAMPSON: a placed lamp is ALWAYS on at this colour. Its live light only moves it, on the frames its model animated
+// (stamp == frame stamp and visible); it never turns it off: a stale light is UNLINKED from the grid by
+// CM2Scene::SelectLights (SetVisible(0) -> Unlink) as soon as any model near it is lit, so "live wins" read every
+// lamp whose doodad had once animated and was then culled (camera passed under it) as switched off. WMO MOLT lights are not read: 12340 never loads them (baked into MOCV), and the lamps they
 // stand for are doodads with their own M2 lights.
 struct Static {
     const CMapDoodadDef* def;
     C3Vector pos;
     float colour[3];
-    uint32_t stamp0;        // the light's stamp when placed: another one = its model has animated since
     int32_t slot;           // baked occlusion in the atlas, -1 none
     uint32_t used;          // the last frame it was selected (atlas LRU)
     bool noBake;            // the bake found the lamp shut in its own holder's collision: screen-space rays only
@@ -401,7 +402,7 @@ void RegisterCVars() {
         return CVar::Register(name, help, 1, value, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     };
     s_mode = reg("lightMode", "Lamps and torches light the world around them per pixel: 0 = off (the stock per-vertex light on ground and buildings), 1 = ground and buildings, 2 = also creatures, characters and grass (default)", "2");
-    s_count = reg("maxLightCount", "Most lamps that light the world at once, nearest first, 1..128", "32");
+    s_count = reg("maxLightCount", "Most lamps that light the world at once, biggest on screen first, 1..128 (16 a full-screen pass)", "64");
     s_dist = reg("maxLightDist", "Distance in yards out to which lamps light the world (fades out over the last quarter), 20..2048", "200");
     s_normalBuffer = reg("gxNormalBuffer", "The world's models, buildings and ground also write their smooth normals, which the lamps (lightMode), the mountains' shadow (shadowMask) and SSAO light by: 1 = on (default), 0 = rebuild them from the depth (faceted)", "1");
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");
@@ -428,7 +429,7 @@ void AddDoodad(const CMapDoodadDef* def) {
         // ponytail: the bone's rest pose taken as identity (lamps hang from static or barely swinging bones)
         const CM2Light* key = &model->m_lights[i].m_light;
         Static& s = s_static[key];
-        s = Static{ def, light.m_position * def->m_mat, { colour.x * intensity, colour.y * intensity, colour.z * intensity }, key->m_stamp, -1, 0, false };
+        s = Static{ def, light.m_position * def->m_mat, { colour.x * intensity, colour.y * intensity, colour.z * intensity }, -1, 0, false };
         keys.push_back(key);
     }
     if (!keys.empty()) {
@@ -479,7 +480,7 @@ void OnWorld(bool solidDone) {
     }
     const float maxDist = Var(s_dist, 200.0f, 20.0f, 2048.0f);
     const float intensity = Var(s_intensity, 1.0f, 0.0f, 4.0f);
-    const int maxCount = static_cast<int>(Var(s_count, 32.0f, 1.0f, static_cast<float>(kMaxLights)));
+    const int maxCount = static_cast<int>(Var(s_count, 64.0f, 1.0f, static_cast<float>(kMaxLights)));
     if (intensity <= 0.0f) {
         return;
     }
@@ -519,8 +520,10 @@ void OnWorld(bool solidDone) {
             if (native->m_type != M2LIGHT_POINT) {
                 continue;
             }
+            if (s_static.count(native)) {
+                continue;   // LAMPSON: a placed lamp, lit below from the static list
+            }
             const bool fresh = !native->m_scene || native->m_stamp == scene->m_frameStamp;
-            const bool isStatic = s_static.count(native) != 0;
             Seen& seen = s_seen.try_emplace(native, Seen{ native->m_pos, 0, 0, 0, 0 }).first->second;
             seen.walk = s_walk;
             if (fresh) {
@@ -530,26 +533,23 @@ void OnWorld(bool solidDone) {
                 seen.visible = native->m_visible != 0;
                 seen.refreshes = std::min<uint32_t>(seen.refreshes + 1, 2);
             }
-            // stale: only a static light seen on at least twice, still where it was
-            // (a placed doodad's light, LIGHTBAKE: once is enough)
-            const bool on = fresh ? seen.visible : seen.visible && !seen.moved && seen.refreshes >= (isStatic ? 1u : 2u) &&
+            // stale: only a light seen on at least twice, still where it was
+            const bool on = fresh ? seen.visible : seen.visible && !seen.moved && seen.refreshes >= 2u &&
                             native->m_pos.x == seen.pos.x && native->m_pos.y == seen.pos.y && native->m_pos.z == seen.pos.z;
             if (!on) {
                 continue;
             }
             const float c[3] = { native->m_dirColor.x, native->m_dirColor.y, native->m_dirColor.z };
             const float att[3] = { native->m_constantAttenuation, native->m_linearAttenuation, native->m_quadraticAttenuation };
-            add(native->m_pos, c, att, isStatic ? native : nullptr);
+            add(native->m_pos, c, att, nullptr);
         }
     }
-    // LIGHTBAKE: the placed doodads' lights whose models have never animated since (the animated one wins: in the
-    // grid when on, and off when its model left it off)
+    // LAMPSON: every placed doodad's lamp, always, at its static colour; the live light only moves it while animated
     for (const auto& entry : s_static) {
         const CM2Light* key = entry.first;
-        if (key->m_stamp == entry.second.stamp0) {
-            const float att[3] = { 0.0f, 0.7f, 0.03f };     // CM2Light's, every M2 light
-            add(entry.second.pos, entry.second.colour, att, key);
-        }
+        const bool live = key->m_scene == scene && key->m_stamp == scene->m_frameStamp && key->m_visible;
+        const float att[3] = { 0.0f, 0.7f, 0.03f };     // CM2Light's, every M2 light
+        add(live ? key->m_pos : entry.second.pos, entry.second.colour, att, key);
     }
     if ((s_walk & 63) == 0) {   // lights no longer in the grid (their models gone): drop
         for (auto it = s_seen.begin(); it != s_seen.end();) {
@@ -562,7 +562,16 @@ void OnWorld(bool solidDone) {
     if (static_cast<int>(s_lights.size()) > maxCount) {
         std::nth_element(s_lights.begin(), s_lights.begin() + maxCount, s_lights.end(),
                          [](const Light& a, const Light& b) { return a.score > b.score; });
+        // LAMPSON: the kept lights near the cut fade in over a quarter of its score, so a lamp crossing the cap as
+        // the camera turns dims through it instead of switching (s_lights[maxCount] is the best one dropped)
+        const float cut = s_lights[maxCount].score;
         s_lights.resize(maxCount);
+        for (Light& l : s_lights) {
+            const float w = std::clamp((l.score - cut) / std::max(cut * 0.25f, 1e-6f), 0.0f, 1.0f);
+            for (float& c : l.colour) {
+                c *= w;
+            }
+        }
     }
     // LIGHTBAKE: the selected static lamps take their baked slots; the best unbaked one bakes on (kBakeMs a frame)
     if (Var(s_baked, 1.0f, 0.0f, 1.0f) > 0.0f && PrepareAtlas()) {

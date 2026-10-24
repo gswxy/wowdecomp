@@ -152,7 +152,7 @@ end
 table.insert(PAGES, #PAGES, { name = "Lights", parent = "Advanced", title = "Lamps & Torches",
 	{ "lightMode", "drop", "Lamp light on the world", "Lamps, torches and braziers light the ground and walls around them.",
 	  { { "0", "Off" }, { "1", "Ground and buildings" }, { "2", "Also creatures and grass" } } },
-	{ "maxLightCount", "slider", "Most lamps at once", "How many of the nearest lamps light the world at the same time.", 1, 128, 1 },
+	{ "maxLightCount", "slider", "Most lamps at once", "How many lamps light the world at the same time, the biggest on screen first (every 16 is one more full-screen pass).", 1, 128, 1 },
 	{ "maxLightDist", "slider", "Lamp light distance (yards)", "How far away lamps still light the world.", 20, 2048, 20 },
 	{ "lightIntensity", "slider", "Lamp brightness", "How bright the lamp light on the world is.", 0, 4, 0.1 },
 	{ "lightShadows", "slider", "Lamp shadows", "Posts, walls and creatures between a lamp and a surface block its light. 0 turns it off.", 0, 1, 0.1 },

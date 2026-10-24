@@ -28,11 +28,11 @@ constexpr int kMaxLocalLights = 8;
 // ---- settings (CVars, VolumetricFog.cpp fills this every frame; coa-vfog src/config.h) --------
 struct Config {
     bool enable = true;             // vfog
-    int quality = 1;                // vfogQuality: 1 = 1/4 res 16 steps, 2 = 1/2 res 24, 3 = 1/2 res 32
-    float density = 0.8f;           // vfogDensity
+    int quality = 2;                // vfogQuality: 1 = 1/4 res 16 steps, 2 = 1/2 res 24, 3 = 1/2 res 32
+    float density = 1.0f;           // vfogDensity
     float haze = 1.0f;              // vfogHaze
     float groundFog = 0.6f;         // vfogGroundFog
-    float farFog = 0.0f;            // vfogFarFog (distance layer; replaces stock linear fog)
+    float farFog = 1.0f;            // vfogFarFog (distance layer; replaces stock linear fog)
     bool transparentFog = true;     // vfogTransparent: early composite + fitted fog for later batches
     bool lateGlow = true;           // vfogLateGlow: additive pass-1 elements drawn after the late composite
     bool fadeEarly = true;          // vfogFadeEarly: fading M2s drawn before the early composite (wxl-vfog 0.6)
@@ -42,15 +42,15 @@ struct Config {
     int colorSpace = 1;             // 1 = linear-light scattering (gamma-decoded colours)
     int classicPhase = 0;
     float sunScatter = 0.1f;        // vfogSunScatter (coa 0.2; halved 2026-10-24, washed-out sunlit fog)
-    float ambient = 0.8f;           // vfogAmbient
+    float ambient = 1.0f;           // vfogAmbient
     float exposure = 1.0f;
-    float classicExposure = 0.85f;
-    bool localLights = true;        // vfogLocalLights
-    float localLightIntensity = 1.2f;
-    float localLightPhase = 0.4f;
+    float classicExposure = 1.0f;
+    bool localLights = true;        // vfogLocalLightIntensity > 0 (vfogLocalLights folded in, vfogaudit)
+    float localLightIntensity = 1.0f;
+    float localLightPhase = 0.3f;
     bool interiorAware = true;
     float interiorDensity = 0.15f;
-    float noiseAmount = 0.0f;       // vfogNoise
+    float noiseAmount = 0.15f;      // vfogNoise
     float noiseScale = 0.025f;
     float noiseWindSpeed = 0.5f;
     bool classicNoise = true;
@@ -61,11 +61,11 @@ struct Config {
     int debugView = 0;              // vfogDebug 0..3
     float godRays = 1.0f;           // vfogGodRays: coa GodRays, 0 = off, 0..4 strength (default 1)
     bool shadowedSun = true;        // vfogShadowedSun: the sun in-scatter tested against the sun shadow maps (S3)
-    bool shafts = true;             // vfogShafts: world-space sun shafts seen from any angle (isotropic floor on the sun phase)
+    bool shafts = true;             // vfogShaftIntensity > 0 (vfogShafts folded in, vfogaudit): world-space sun shafts seen from any angle (isotropic floor on the sun phase)
     float shaftIntensity = 0.35f;   // vfogShaftIntensity: that floor, 0..2 (the forward peak is 1)
     float canopy = 0.5f;            // vfogCanopy: the haze glow kept in sun shadow, 1 - this (0 = glow unshadowed)
-    bool grade = true;              // vfogGrade: coa ColorGrading > 0 (coa preset 0.5)
-    float gradeStrength = 0.5f;     // vfogGradeStrength: coa ColorGrading's 0..1 strength when on
+    bool grade = false;             // vfogGradeStrength > 0 (vfogGrade folded in, vfogaudit)
+    float gradeStrength = 0.0f;     // vfogGradeStrength: coa ColorGrading's 0..1 strength when on
     int dither = 1;                 // vfogDither: 0 off, 1 = +-1/255 triangular on the 8-bit outputs, 2 = twice that
     bool hdrTargets = true;         // vfogHdrTargets: half-float fog targets where the device has them, 0 = 8 bit
     float interiorFarFog = 1.0f;    // vfogInteriorFarFog: coa InteriorFarFog (PR #9), distance fog kept indoors 0..1

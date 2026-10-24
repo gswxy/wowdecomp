@@ -2206,7 +2206,7 @@ void DayNight::UpdateFog() {
     } else {
         // FARVIEW: not in 12340. With far land drawing, the zone's curve is stretched by as much as the land reaches
         // past the view distance (wxl-farfield game_fog: end = min(E * reach / farclip, reach)), so it fades into the
-        // haze instead of being fog colour past farclip. FogCap(end) == end when farLand or farFogReach is off.
+        // haze instead of being fog colour past farclip. FogCap(end) == end when farLand is off (vfogaudit: stretched to 2.5 x, not the full reach).
         const float cap = FarLand::FogCap(end);
         const float bandsEnd = end > 0.0f ? info.m_bands.m_fogEnd * (cap / end) : info.m_bands.m_fogEnd;
         end = cap;

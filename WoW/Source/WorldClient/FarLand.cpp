@@ -50,13 +50,20 @@ constexpr uint32_t kAtlasA = kWin * FarLandBake::kAlbedoPx;   // 4096, DXT1
 constexpr uint32_t kAtlasN = kWin * FarLandBake::kNormalPx;   // 2048, DXT5
 constexpr uint32_t kCacheVersion = 2;      // 2: MCLQ water, MCLY 0x100, a bad MCLY drops its layers only; WDT/liquid key, payload CRC
 constexpr float kFadeMs = 600.0f;
-constexpr int32_t kKeep = 16;              // tiles: queued jobs and finished bakes farther than this from the camera are dropped
+constexpr int32_t kKeep = 15;              // tiles: queued jobs and finished bakes farther than this from the camera are dropped;
+                                           // vfogaudit: 15, not 16, so two kept tiles are never 32 apart and evict each other
+                                           // from the same window slot (the pair flickered at the far edge)
 constexpr float kRetryMs = 60000.0f;       // a failed tile (no ADT, a read error) is asked again after this
 constexpr float kContestMs = 2000.0f;      // a tile whose slot a nearer visible tile holds is asked again after this
 constexpr float kIdleMs = 2000.0f;         // no horizon pass this long (character select, a loading screen): drop the queue
 
 int32_t s_enabled = 1;
-float s_fogReach = 1.0f;   // farFogReach
+// vfogaudit (aerial perspective, replaces farFogReach): the fog end with far land drawing is this many view distances
+// out (or the land's reach if shorter), so the land past farclip builds quickly into the haze and reads as a
+// haze-coloured silhouette by ~2-2.5 x farclip instead of showing its texture out to 6 x. The far land itself is
+// never fogged past kFogMax, so tall land (Hyjal) stays a darker silhouette and ridge line against the sky.
+constexpr float kHazeReach = 2.5f;
+constexpr float kFogMax = 0.85f;
 int32_t s_uploads = 4;
 
 CGxShader* s_vs = nullptr;
@@ -427,6 +434,7 @@ void PassConstants() {
     ps[3][0] = dn.m_fog.m_color.r / 255.0f; ps[3][1] = dn.m_fog.m_color.g / 255.0f; ps[3][2] = dn.m_fog.m_color.b / 255.0f;
     ps[4][0] = dn.m_fog.m_start;
     ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? 1.0f / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
+    ps[4][2] = kFogMax;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, &ps[0][0], 5);
     // FarLandPS c6: slot texels and 1 / atlas texels per atlas, for its in-slot uv (audit 3/4: LOD capped, inset by
     // half a texel of the mip it reads, so no mip samples the next slot or the flat normal levels past kNormalLevels)
@@ -445,15 +453,15 @@ void RegisterCVars() {
         s_uploads = std::min(std::max(SStrToInt(value), 1), 32);
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
-    CVar::Register("farFogReach", "farLand: how far the fog end is stretched past the view distance toward the far land's reach (0 = stock, fog ends at farclip; 1 = at horizonFarclipScale x farclip, default)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
-        s_fogReach = std::min(std::max(SStrToFloat(value), 0.0f), 1.0f);
-        return true;
-    }, CATEGORY_GRAPHICS, false, nullptr, false);
+}
+
+bool Drawing() {
+    return s_enabled && !s_shaderFailed;
 }
 
 float FogCap(float farClip) {
     if (!s_enabled || s_shaderFailed) return farClip;
-    return farClip * (1.0f + s_fogReach * (std::max(World::s_horizonFarClipScale, 1.0f) - 1.0f));
+    return farClip * std::min(kHazeReach, std::max(World::s_horizonFarClipScale, 1.0f));
 }
 
 void BeginPass() {
@@ -503,6 +511,9 @@ bool Apply(const CMapAreaLow* area) {
     if (!s_enabled || !g_theGxDevicePtr || s_loadedFor != g_lowDetailLoads || !s_albedo.tex) return false;
     const int32_t t = (area->m_index.y & 63) * 64 + (area->m_index.x & 63);
     s_drawFrame[t] = CWorld::frameCnt;
+    // vfogaudit: past kKeep a tile cannot hold a window slot; asking for it only made the worker bake and drop it
+    // every frame (delaying the near tiles turning into view). It stays the stock block, deep in the haze by then.
+    if (TileDistance(t, s_camTile.load()) > kKeep) return false;
     if (s_state[t] == kNone || (s_state[t] == kFailed && NowMs() >= s_readyMs[t])) Request(t);
     if (s_state[t] != kReady || !Shaders()) return false;
     CGxTex* albedo = TextureGetGxTex(s_albedo.tex, 0, nullptr);

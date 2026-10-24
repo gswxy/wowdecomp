@@ -1318,7 +1318,7 @@ bool RenderFog(const FogParams& fogIn, const FrameInputs& in, const Config& cfg,
     // vfogShafts: the HG phase is forward (about 1/27 of its peak with the sun behind), so the shadowed in-scatter only
     // showed toward the sun. An isotropic floor lets the lit and shadowed air differ from every view direction. Only
     // with a shadow tested: unshadowed it would be a flat brightening.
-    f.shafts = cfg.shafts && f.sunShadowed ? cfg.shaftIntensity : 0.0f;
+    f.shafts = cfg.shafts ? cfg.shaftIntensity : 0.0f;   // vfogaudit: not only with a shadow test, so lit air keeps its brightness at any shadow setting
     if (!temporal && f.sunShadowed) {
         f.march[0] = 0.5f;
     }

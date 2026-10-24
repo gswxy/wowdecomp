@@ -97,6 +97,22 @@ void CMapLowDetail::CullHorizonAreas(const C3Vector* pos) {
         for (int32_t c = minCol; c <= maxCol; c++) {
             CMapAreaLow* area = this->m_areas[64 * r + c];
 
+            // FARLAND (vfogaudit): with real far land showing, a block is drawn whenever its box, padded by a small
+            // margin, touches the horizon frustum (the view's own at horizonFarclipScale x farclip). The stock skyline
+            // buffer and occlusion volumes are skipped: they were tuned for fog-coloured blocks and dropped blocks
+            // that peek over near hills or sit at the screen edge, so land popped in and out as the camera turned.
+            // ponytail: no occlusion at all for far land (a few hundred cheap draws); a conservative skyline test if it ever shows.
+            if (area && FarLand::Drawing()) {
+                constexpr float kMargin = 32.0f;
+                CAaBox box = area->m_bbox;
+                box.b.x -= kMargin; box.b.y -= kMargin; box.b.z -= kMargin;
+                box.t.x += kMargin; box.t.y += kMargin; box.t.z += kMargin;
+                if (!CWorldScene::FrustumCull(&box)) {
+                    CWorldScene::AddHorizonChunk(area);
+                }
+                continue;
+            }
+
             if (!area || CWorldScene::FrustumCull(&area->m_bbox) || CWorldOcclusion::QueryVolumes(&area->m_sphere)) {
                 continue;
             }

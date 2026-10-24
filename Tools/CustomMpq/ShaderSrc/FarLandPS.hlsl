@@ -7,7 +7,7 @@ float4 gSun  : register(c0);   // world direction towards the sun
 float4 gAmb  : register(c1);
 float4 gDif  : register(c2);
 float4 gFogC : register(c3);
-float4 gFog  : register(c4);   // fog start, 1 / (end - start)
+float4 gFog  : register(c4);   // fog start, 1 / (end - start), most fog the land takes (kFogMax: a silhouette)
 float4 gFade : register(c5);   // x: 0 -> 1 as the tile's bake arrives (0 = the stock tile: fog colour)
 float4 gAtlas : register(c6);  // albedo slot texels, 1 / atlas texels; normal the same
 // The atlas uv of tile coordinate t (0..1) in the slot at origin, at the mip trilinear reads (capped at maxLod): inset
@@ -26,6 +26,6 @@ float4 main(float4 uv : TEXCOORD0, float dist : TEXCOORD1) : COLOR
     float2 xy = tex2Dlod(sN, Slot(uv.xy, uv.zw, gAtlas.z, gAtlas.w, 3)).ag * 2.0 - 1.0;
     float3 n = float3(xy, sqrt(saturate(1.0 - dot(xy, xy))));
     float3 lit = a * saturate(gAmb.rgb + gDif.rgb * saturate(dot(n, gSun.xyz)));
-    float f = saturate((dist - gFog.x) * gFog.y);
+    float f = min(saturate((dist - gFog.x) * gFog.y), gFog.z);
     return float4(lerp(gFogC.rgb, lerp(lit, gFogC.rgb, f), gFade.x), 1.0);
 }

@@ -1,4 +1,5 @@
 #include "WoW/Source/Ui/WorldLighting.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -108,7 +109,8 @@ uint32_t Features() {
         features |= GxLighting_Ssao;
     }
 
-    if (Positive(s_cv.fogScattering) > 0.0f) {
+    // vfogaudit: the stock fog it tints is pushed out while vfog draws, and the fitted fog would get the sun twice
+    if (Positive(s_cv.fogScattering) > 0.0f && !VolumetricFog::Active()) {
         features |= GxLighting_Scattering;
     }
 

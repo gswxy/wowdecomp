@@ -211,10 +211,12 @@ float4 Dithered(float4 colour, float2 position, float2 offset, float frame)
 }
 
 // The low-res fog stores (march, temporal). cDither.z = 0 on half-float targets, which need no dither. The
-// saturate keeps the 0..1 range an 8-bit store clamps to, so both storages feed the composite the same values.
+// vfogaudit: in-scatter is no longer clipped per channel on half-float targets (coa stores fp16 unclamped), so the
+// composite's soft highlight roll-off sees the sun halo above 1 instead of a flat, hue-shifted clip.
 float4 DitheredStore(float4 colour, float2 position, float2 offset, float frame)
 {
-    return saturate(DitheredBy(cDither.z, colour, position, offset, frame));
+    float4 c = DitheredBy(cDither.z, colour, position, offset, frame);
+    return float4(max(c.rgb, 0), saturate(c.a));
 }
 
 // tex2Dlod at level 0 for uv in 0..1. The lod operand is saturate(uv - 2) = 0 rather than a literal 0: fxc

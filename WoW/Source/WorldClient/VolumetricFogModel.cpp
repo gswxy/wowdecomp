@@ -27,6 +27,9 @@ constexpr float kGroundSun = 0.8f;
 constexpr float kGroundAmbient = 0.75f;
 
 constexpr float kFarOpticalDepth = 3.0f;
+// vfogaudit: with far land drawing (FarLand::FogCap past farclip) the distance layer ends at e^-2.3 ~ 10 % of the land
+// showing through, so its silhouette and ridge lines stay readable against the sky (3.0 left ~5 %: a flat wall).
+constexpr float kFarLandOpticalDepth = 2.3f;
 constexpr float kFarRamp = 60.0f;
 constexpr float kFarStartFraction = 0.25f;
 constexpr float kFarG = 0.2f;
@@ -208,7 +211,8 @@ void DistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p,
     float opticalDepthPerDensity = DistanceFogOpticalDepthPerDensity(farStart, p.farLimit, p.maxDistance);
     out.start = farStart;
     // coa: vfogStockFog 0 keeps the stock fog and drops the distance layer.
-    out.density = cfg.stockFog && opticalDepthPerDensity > 0.0f ? kFarOpticalDepth * cfg.farFog * cfg.density / opticalDepthPerDensity
+    const float endOpticalDepth = in.fogCap > in.farClip * 1.01f ? kFarLandOpticalDepth : kFarOpticalDepth;
+    out.density = cfg.stockFog && opticalDepthPerDensity > 0.0f ? endOpticalDepth * cfg.farFog * cfg.density / opticalDepthPerDensity
                                                 : 0.0f;
     out.g = kFarG;
     out.isotropic = kFarIsotropic;
@@ -370,7 +374,9 @@ FogParams BuildFogParamsFrom(const FrameInputs& in, const Config& cfg, const Aut
     p.directLightMatch = 1.0f;
     if (p.authored) {
         p.directLightMatch = ClientToClassicDirectLight(*authored, p.lightColor, p.linear);
-        AuthoredLayers(*authored, cfg, p, cfg.sunScatter * p.directLightMatch, p.layers, p.noise);
+        // vfogaudit: elevation- and moon-faded like the derived and distance layers (coa passed the raw scatter, so
+        // authored zones had ~3x the moon glow at night and a jump at the sun/moon handover).
+        AuthoredLayers(*authored, cfg, p, elevationFadedScatter * p.directLightMatch, p.layers, p.noise);
         HaloHue(*authored, p.rayColor);
         DistanceLayer(in, cfg, p, elevationFadedScatter, fogColor, distanceFog);
         const float thinness = ClassicFogThinness(p, *authored, in.camPos[2]);

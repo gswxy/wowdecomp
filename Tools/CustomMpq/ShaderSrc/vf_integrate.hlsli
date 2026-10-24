@@ -159,7 +159,7 @@ float LayerPhase(FogLayer layer, float cosAngle)
 float2 LayerRayTerms(FogLayer layer, float cosToLight, float skyUpward)
 {
     return float2(layer.density * SkyDensityScale(layer, skyUpward),
-                  (1 - HorizonShadow(layer)) * (LayerPhase(layer, cosToLight) + cShadowFade.y));
+                  (1 - HorizonShadow(layer)) * max(LayerPhase(layer, cosToLight), cShadowFade.y));   // vfogaudit: a floor, not +0.35 on the sun peak
 }
 
 struct MarchRay

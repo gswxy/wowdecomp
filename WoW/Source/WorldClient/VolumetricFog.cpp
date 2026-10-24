@@ -68,7 +68,6 @@ struct CVars {
     CVar* farFog;
     CVar* ambient;
     CVar* data;
-    CVar* localLights;
     CVar* transparent;
     CVar* startOffset;
     CVar* maxDistance;
@@ -76,10 +75,8 @@ struct CVars {
     CVar* debug;
     CVar* godRays;
     CVar* shadowedSun;
-    CVar* shafts;
     CVar* shaftIntensity;
     CVar* canopy;
-    CVar* grade;
     CVar* gradeStrength;
     CVar* dither;
     CVar* hdrTargets;
@@ -176,7 +173,6 @@ Config ReadConfig() {
     cfg.farFog = std::max(CVarFloat(s_cvars.farFog, cfg.farFog), 0.0f);
     cfg.ambient = std::max(CVarFloat(s_cvars.ambient, cfg.ambient), 0.0f);
     cfg.dataMode = std::clamp(CVarInt(s_cvars.data, cfg.dataMode), 0, 1);
-    cfg.localLights = CVarInt(s_cvars.localLights, 1) != 0;
     cfg.transparentFog = CVarInt(s_cvars.transparent, 0) != 0;
     cfg.fadeEarly = CVarInt(s_cvars.fadeEarly, 1) != 0;
     cfg.lateGlow = CVarInt(s_cvars.lateGlow, 1) != 0;
@@ -188,10 +184,8 @@ Config ReadConfig() {
     cfg.debugView = std::clamp(CVarInt(s_cvars.debug, 0), 0, 3);
     cfg.godRays = std::clamp(CVarFloat(s_cvars.godRays, cfg.godRays), 0.0f, 4.0f);   // coa config.cpp:75
     cfg.shadowedSun = CVarInt(s_cvars.shadowedSun, 1) != 0;
-    cfg.shafts = CVarInt(s_cvars.shafts, 1) != 0;
     cfg.shaftIntensity = std::clamp(CVarFloat(s_cvars.shaftIntensity, cfg.shaftIntensity), 0.0f, 2.0f);
     cfg.canopy = std::clamp(CVarFloat(s_cvars.canopy, cfg.canopy), 0.0f, 1.0f);
-    cfg.grade = CVarInt(s_cvars.grade, cfg.grade) != 0;
     cfg.gradeStrength = std::clamp(CVarFloat(s_cvars.gradeStrength, cfg.gradeStrength), 0.0f, 1.0f);   // coa config.cpp:52
     cfg.dither = std::clamp(CVarInt(s_cvars.dither, 1), 0, 2);
     cfg.hdrTargets = CVarInt(s_cvars.hdrTargets, 1) != 0;
@@ -215,6 +209,10 @@ Config ReadConfig() {
     cfg.foreverGlow = CVarInt(s_cvars.foreverGlow, 0) != 0;
     cfg.sunMarker = CVarInt(s_cvars.sunMarker, 0) != 0;
     cfg.liquidDepth = CVarInt(s_cvars.liquidDepth, 1) != 0;
+    // vfogaudit: one knob each, 0 = off (the old on/off gates vfogGrade, vfogShafts, vfogLocalLights are gone)
+    cfg.grade = cfg.gradeStrength > 0.0f;
+    cfg.shafts = cfg.shaftIntensity > 0.0f;
+    cfg.localLights = cfg.localLightIntensity > 0.0f;
     return cfg;
 }
 
@@ -289,6 +287,22 @@ bool CameraInInteriorGroup() {
     return false;
 }
 
+// vfogaudit: the group test is binary, so crossing a door stepped the indoor fade (density x0.15, sun off) in one
+// frame. Eased here (~0.25 s time constant, once per frame time); every reader goes through this.
+float SmoothedInteriorBlend() {
+    static float s_blend = 0.0f;
+    static double s_lastMs = -1.0;
+    const float target = CameraInInteriorGroup() ? Clamp01(DayNight::g_dnInfo.m_interiorFogBlend) : 0.0f;
+    const double now = FrameTime::s_curTimeMs;
+    if (s_lastMs < 0.0 || now < s_lastMs || now - s_lastMs > 1000.0) {
+        s_blend = target;
+    } else if (now > s_lastMs) {
+        s_blend += (target - s_blend) * std::min(static_cast<float>(now - s_lastMs) * 0.004f, 1.0f);
+    }
+    s_lastMs = now;
+    return s_blend;
+}
+
 // coa engine.cpp BuildFrameInputsUnsafe + ReadLightParamsSelection, the DNInfo half (before the push-out).
 void ReadDayNightInputs(FrameInputs& in) {
     const DayNight::DNInfo& info = DayNight::g_dnInfo;
@@ -310,7 +324,7 @@ void ReadDayNightInputs(FrameInputs& in) {
     in.fogCap = FarLand::FogCap(in.farClip);
     in.inLiquid = false;
     in.clientGlowAmount = GlowScreenEffectRuns() ? Clamp01(info.m_bands.m_glow) : 0.0f;
-    in.interiorBlend = CameraInInteriorGroup() ? Clamp01(info.m_interiorFogBlend) : 0.0f;
+    in.interiorBlend = SmoothedInteriorBlend();
     in.stormBlend = Clamp01(info.m_stormBlend);
     const int32_t slot = static_cast<int32_t>(info.m_overrideLightParamsId);
     in.screenEffectSlot = slot >= 0 && slot < kLightParamsSlots ? slot : -1;
@@ -725,15 +739,14 @@ void CollectRefraction(int mode) {
 void RegisterCVars() {
     // VFOG section 8 defaults: coa CoAVolFog.ini plus the user's wxl-vfog look.
     s_cvars.enable = CVar::Register("vfog", "Volumetric fog (replaces the stock fog)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.quality = CVar::Register("vfogQuality", "Volumetric fog quality: 1 = quarter res 16 steps, 2 = half res 24, 3 = half res 32", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.quality = CVar::Register("vfogQuality", "Volumetric fog quality: 1 = quarter res 16 steps, 2 = half res 24 (default), 3 = half res 32", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.temporal = CVar::Register("vfogTemporal", "Volumetric fog temporal blend (0 = off)", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.density = CVar::Register("vfogDensity", "Volumetric fog density scale", 1, "0.8", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.density = CVar::Register("vfogDensity", "Volumetric fog density scale", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.haze = CVar::Register("vfogHaze", "Volumetric fog haze scale", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.groundFog = CVar::Register("vfogGroundFog", "Volumetric fog ground fog scale", 1, "0.6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.farFog = CVar::Register("vfogFarFog", "Volumetric fog distance layer scale", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.ambient = CVar::Register("vfogAmbient", "Volumetric fog ambient light scale", 1, "0.8", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.farFog = CVar::Register("vfogFarFog", "Volumetric fog distance layer scale (the aerial perspective over the far land; 0 = none)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.ambient = CVar::Register("vfogAmbient", "Volumetric fog ambient light scale", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.data = CVar::Register("vfogData", "Volumetric fog: 0 = derived layers only, 1 = authored fog data where it covers", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.localLights = CVar::Register("vfogLocalLights", "Volumetric fog lit by nearby point lights", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.transparent = CVar::Register("vfogTransparent", "Volumetric fog: 1 = composite before transparents and fit the fog onto them, 0 = one composite after the whole world", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.fadeEarly = CVar::Register("vfogFadeEarly", "Volumetric fog: 1 = M2s fading at their draw distance are drawn before the early composite, so it fogs them at their own depth (default), 0 = stock pass 1 with the fitted fog", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.lateGlow = CVar::Register("vfogLateGlow", "Volumetric fog with vfogTransparent 0: 1 = additive particles, ribbons and glow batches drawn after the late composite with the fitted fog, so flames are not fogged by what is behind them (default), 0 = drawn under it", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -741,16 +754,14 @@ void RegisterCVars() {
     s_cvars.msaaSplit = CVar::Register("vfogMsaaSplit", "Volumetric fog with MSAA: 1 = the near and far samples of an edge pixel each fogged at their own depth (coa sample split), 0 = the fog of one sample", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.startOffset = CVar::Register("vfogStartOffset", "Volumetric fog start distance (yards)", 1, "10", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.maxDistance = CVar::Register("vfogMaxDistance", "Volumetric fog maximum march distance (yards)", 1, "5000", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.noise = CVar::Register("vfogNoise", "Volumetric fog density noise amount", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.noise = CVar::Register("vfogNoise", "Volumetric fog density noise amount, 0..1", 1, "0.15", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.debug = CVar::Register("vfogDebug", "Volumetric fog debug view (0..3)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.grade = CVar::Register("vfogGrade", "Volumetric fog colour grading: the modern client's colour curve for the lights around the camera, over the 3D view after the glow (not names or the UI): 1 = on (default, coa preset), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.gradeStrength = CVar::Register("vfogGradeStrength", "Volumetric fog colour grading strength while vfogGrade is on, 0..1 (coa ColorGrading)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.gradeStrength = CVar::Register("vfogGradeStrength", "Volumetric fog colour grading: the modern client's colour curve for the lights around the camera, 0..1 (coa ColorGrading), 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.dither = CVar::Register("vfogDither", "Volumetric fog dither against banding on the 8-bit outputs (composite, grade, water, and the fog targets when 8 bit): 0 = off, 1 = +-1/255 triangular (default), 2 = twice that", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.hdrTargets = CVar::Register("vfogHdrTargets", "Volumetric fog: 1 = half-float fog and god ray targets where the device has them (default), 0 = 8 bit (bands)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.godRays = CVar::Register("vfogGodRays", "Volumetric fog god rays from the bright sky around the sun: 0 = off, 1 = on (default), up to 4 = strength", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shadowedSun = CVar::Register("vfogShadowedSun", "Volumetric fog sun shafts through the scene: the fog's sunlight is shadowed by trees, buildings and terrain casters (needs shadows above low): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.shafts = CVar::Register("vfogShafts", "Volumetric fog sun shafts visible from any view direction, not only toward the sun (needs vfogShadowedSun): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.shaftIntensity = CVar::Register("vfogShaftIntensity", "Volumetric fog sun shaft strength away from the sun while vfogShafts is on, 0..2 (default 0.35)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.shaftIntensity = CVar::Register("vfogShaftIntensity", "Volumetric fog sun shaft strength away from the sun, 0..2 (default 0.35), 0 = off", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.canopy = CVar::Register("vfogCanopy", "Volumetric fog darkening of the haze glow in sun shadow (under trees, beside buildings) while vfogShadowedSun is on, 0..1 (default 0.5)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     TerrainSunShadow::RegisterCVars();
 
@@ -760,11 +771,11 @@ void RegisterCVars() {
     // coa CoAVolFog.ini keys that were constants until vfog13 (defaults as coa, the user's look where VFOG_PORT 8 says).
     s_cvars.sunScatter = reg("vfogSunScatter", "Volumetric fog in-scattered sun or moon light (coa SunScatter; 0.2 before 2026-10-24), 0..10", "0.1");
     s_cvars.exposure = reg("vfogExposure", "Volumetric fog brightness of the derived layers (coa Exposure), 0..10", "1");
-    s_cvars.classicExposure = reg("vfogClassicExposure", "Volumetric fog brightness of the authored layers (coa ClassicExposure, 1 = as authored), 0..10", "0.85");
+    s_cvars.classicExposure = reg("vfogClassicExposure", "Volumetric fog brightness of the authored layers (coa ClassicExposure, 1 = as authored), 0..10", "1");
     s_cvars.classicPhase = reg("vfogClassicPhase", "Volumetric fog authored sun scattering: 0 = phase peaks at 1, 1 = energy-normalised (coa ClassicPhase)", "0");
     s_cvars.colorSpace = reg("vfogColorSpace", "Volumetric fog: 1 = scatter and blend in linear light (default), 0 = gamma (coa ColorSpace)", "1");
-    s_cvars.localLightIntensity = reg("vfogLocalLightIntensity", "Volumetric fog point light intensity, 0..8 (coa LocalLightIntensity)", "1.2");
-    s_cvars.localLightPhase = reg("vfogLocalLightPhase", "Volumetric fog point light phase g, -0.9..0.9 (coa LocalLightPhase)", "0.4");
+    s_cvars.localLightIntensity = reg("vfogLocalLightIntensity", "Volumetric fog point light intensity, 0..8, 0 = off (coa LocalLightIntensity)", "1");
+    s_cvars.localLightPhase = reg("vfogLocalLightPhase", "Volumetric fog point light phase g, -0.9..0.9 (coa LocalLightPhase)", "0.3");
     s_cvars.interior = reg("vfogInterior", "Volumetric fog fades outdoor layers and sunlight indoors (coa InteriorAware)", "1");
     s_cvars.interiorDensity = reg("vfogInteriorDensity", "Volumetric fog outdoor layer density kept indoors, 0..1 (coa InteriorDensity)", "0.15");
     s_cvars.interiorFarFog = reg("vfogInteriorFarFog", "Volumetric fog distance fog density kept indoors, 0..1; lower clears dungeon haze (coa InteriorFarFog)", "1");
@@ -1281,7 +1292,7 @@ bool BatchFog(const float modelPos[3], float& start, float& end, float& density,
 }
 
 float CameraInteriorBlend() {
-    return CameraInInteriorGroup() ? Clamp01(DayNight::g_dnInfo.m_interiorFogBlend) : 0.0f;
+    return SmoothedInteriorBlend();
 }
 
 }  // namespace VolumetricFog

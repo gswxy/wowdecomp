@@ -19,7 +19,10 @@ bool Enabled();
 bool UnifiedWanted();       // shadowUnified (and MaskWanted): the mask takes the exterior receivers' cascade term
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height
-int DebugMode();            // shadowDebug 0..7: the mask pass draws a view of the sun shadow instead of darkening
+// shadowPenumbra / shadowMaxThrow / shadowThrowFade for the mask's c80 (penumbra per yd, clamp on, any on, 0) and c81
+// (the blocker search's four reference offsets, yd)
+void SoftShadow(float params[4], float levels[4]);
+int DebugMode();            // shadowDebug 0..8: the mask pass draws a view of the sun shadow instead of darkening
 const float* LightDir();    // toward the light the land heights were last built for (Update), world
 
 // Rebuilds the texture when the light turned (toLight is the true sun; gfxSunShadows' latched light replaces it) or the camera moved far enough. False (and no texture) with the CVar

@@ -82,6 +82,9 @@ CVar* s_softCvar;       // shadowSoft
 CVar* s_fineCvar;       // shadowMaskFine
 CVar* s_debugCvar;      // shadowDebug
 CVar* s_unifiedCvar;    // shadowUnified (docs/shadow-research/05-step2-consolidation.md)
+CVar* s_penumbraCvar;   // shadowPenumbra (docs/shadow-research/06-soft-shadows.md)
+CVar* s_throwCvar;      // shadowMaxThrow
+CVar* s_throwFadeCvar;  // shadowThrowFade
 Level s_coarse(kSize, kCell, kGridOrigin, true);
 Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
 // The fine level's land, (kFineSize + 2)^2 from (r0 - 1, c0 - 1): ADT heights where loaded, WDL beyond, kNone in holes.
@@ -513,13 +516,16 @@ void RegisterCVars() {
     s_cvar = CVar::Register("gfxTerrainShadow", "The land (near terrain and the far WDL horizon) blocks the sun for the volumetric fog's sun shafts and glow and for the sun glare: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_maskCvar = CVar::Register("shadowMask", "Mountains (near terrain and the far WDL horizon) cast the sun's shadow onto the world: terrain, buildings and models (needs gfxTerrainShadow): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_softCvar = CVar::Register("shadowSoft", "Softness of the mountains' shadow edge (shadowMask), 0 = hard .. 4 = very soft, default 1", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_debugCvar = CVar::Register("shadowDebug", "Shows the sun shadow through the shadow mask pass (any shadowMask): 1 = which map each pixel reads (yellow unit map, green band 0, blue band 1, orange band 2, red none), 2 = the sun's visibility in grey (cascades and land; under shadowUnified the multiplier the mask lays on each surface), 3 = magenta where no cascade is read; grey visibility of one term alone: 4 = land heightfield (fine/coarse), 5 = bands 0-2, 6 = back-face rule, 7 = unit map; 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_debugCvar = CVar::Register("shadowDebug", "Shows the sun shadow through the shadow mask pass (any shadowMask): 1 = which map each pixel reads (yellow unit map, green band 0, blue band 1, orange band 2, red none), 2 = the sun's visibility in grey (cascades and land; under shadowUnified the multiplier the mask lays on each surface), 3 = magenta where no cascade is read; grey visibility of one term alone: 4 = land heightfield (fine/coarse), 5 = bands 0-2, 6 = back-face rule, 7 = unit map; 8 = distance from the shadowed surface back to the model casting it (shadowUnified: black at contact, white at 40 yd or shadowMaxThrow, red where shadowMaxThrow fades it, dark blue no caster); 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_unifiedCvar = CVar::Register("shadowUnified", "One sun shadow answer per pixel (needs shadowMask): outdoor terrain, buildings and models leave their shadow-map term to the shadow mask, which combines it with the mountains' shadow (darker of the two, one fade into the fog, the same low-sun lift on ground and models): 1 = on (default), 0 = each surface shades its own shadow maps (old)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_penumbraCvar = CVar::Register("shadowPenumbra", "Model shadows (shadowUnified) soften with the distance to their caster, sharp where a trunk meets the ground and soft far off; times the sun's real 0.53 degree disc: 0 = off (fixed edge, old), default 3", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_throwCvar = CVar::Register("shadowMaxThrow", "Model shadows (shadowUnified) fade out when their caster is more than this many yards back along the sun (the mountains' shadow and shadowMask are not affected): 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_throwFadeCvar = CVar::Register("shadowThrowFade", "Yards over which shadowMaxThrow fades a model shadow out, ending at shadowMaxThrow (default 20)", 1, "20", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_fineCvar = CVar::Register("shadowMaskFine", "The mountains' shadow (shadowMask) from the loaded terrain's own heights (4 yd) within 1 km of the camera, the far WDL (33 yd) beyond: 1 = on (default), 0 = WDL only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
 int DebugMode() {
-    return s_debugCvar ? std::clamp(s_debugCvar->m_intValue, 0, 7) : 0;
+    return s_debugCvar ? std::clamp(s_debugCvar->m_intValue, 0, 8) : 0;
 }
 
 const float* LightDir() {
@@ -532,6 +538,26 @@ bool UnifiedWanted() {
 
 bool MaskWanted() {
     return (!s_maskCvar || s_maskCvar->m_intValue != 0) && Enabled();
+}
+
+void SoftShadow(float params[4], float levels[4]) {
+    // shadowPenumbra: the filter radius per yard to the caster, the sun's half angle (0.0093 rad across) times the CVar.
+    const float penumbra = s_penumbraCvar && std::isfinite(s_penumbraCvar->m_floatValue) ? std::clamp(s_penumbraCvar->m_floatValue, 0.0f, 20.0f) : 0.0f;
+    float throwYards = s_throwCvar && std::isfinite(s_throwCvar->m_floatValue) ? std::clamp(s_throwCvar->m_floatValue, 0.0f, 2000.0f) : 0.0f;
+    const float fade = s_throwFadeCvar && std::isfinite(s_throwFadeCvar->m_floatValue) ? std::clamp(s_throwFadeCvar->m_floatValue, 0.0f, 2000.0f) : 20.0f;
+    const bool clamp = throwYards > 0.0f;
+    // The blocker search's reference offsets (yd): its last two are the fade's start and end, the others its halves.
+    // Unclamped, 40 yd stands in for the end (a caster further back gets the 40 yd penumbra).
+    const float end = clamp ? throwYards : 40.0f;
+    const float start = std::clamp(clamp ? end - fade : end * 0.5f, end * 0.125f, end);
+    levels[0] = start * 0.25f;
+    levels[1] = start * 0.5f;
+    levels[2] = start;
+    levels[3] = std::max(end, start + 0.01f);
+    params[0] = penumbra * 0.00465f;
+    params[1] = clamp ? 1.0f : 0.0f;
+    params[2] = penumbra > 0.0f || clamp ? 1.0f : 0.0f;
+    params[3] = 0.0f;
 }
 
 float MaskSoftYards() {

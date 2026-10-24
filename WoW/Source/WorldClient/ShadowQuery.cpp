@@ -2,6 +2,9 @@
 #include "WoW/Source/WorldClient/WorldConstants.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
+#include "Engine/Source/ConsoleBase/ConsoleCommand.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
+#include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include <algorithm>
 #include <cmath>
@@ -105,6 +108,8 @@ float CShadowQuery::s_cutoffHeight;
 // STATIC: 0x00D25320
 ShadowQueryBuffers CShadowQuery::s_bandBuffers[3];
 
+static int32_t ConsoleCommand_ShadowSunInfo(const char*, const char*);   // shadowSunInfo, after SunShadowDir's statics
+
 // VERIFY: a0192ad6 auto
 // OFFSET: 0x007BD3A0
 void CShadowQuery::Initialize() {
@@ -116,6 +121,7 @@ void CShadowQuery::Initialize() {
     g_shadowCull = CVar::Register("shadowCull", "enable shadow frustum culling", 0, "1", nullptr, CATEGORY_DEFAULT, false, nullptr, false);
     g_shadowScissor = CVar::Register("shadowScissor", "enable scissoring when rendering shadowmaps", 0, "1", nullptr, CATEGORY_DEFAULT, false, nullptr, false);
     g_shadowInstancing = CVar::Register("shadowInstancing", "enable instancing when rendering shadowmaps", 0, "1", nullptr, CATEGORY_DEFAULT, false, nullptr, false);
+    ConsoleCommandRegister("shadowSunInfo", ConsoleCommand_ShadowSunInfo, CATEGORY_GRAPHICS, "Prints the shadow light's elevation and bearing beside the lighting's and the sun and moon discs'");
     s_cvSunShadows = CVar::Register("gfxSunShadows", "Shadows fall from the sun or moon in the sky (0 = stock steep light)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSnap = CVar::Register("gfxShadowSnap", "Shadow maps move in whole texels so shadow edges do not crawl (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowAnchor = CVar::Register("gfxShadowAnchor", "Shadow cascades stay put while the player jumps (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -214,6 +220,40 @@ static bool LightBody(C3Vector& toward, float& elevDeg) {
     toward = dir[body];
     elevDeg = elev[body];
     return true;
+}
+
+// shadowSunInfo: elevation / compass bearing (0 north, 90 east; x is north, y west) of the directions toward the light.
+static void PrintToward(const char* what, float x, float y, float z) {
+    const float len = std::sqrt(x * x + y * y + z * z);
+    if (!(len > 1e-6f)) {
+        ConsolePrintf("  %-28s none", what);
+        return;
+    }
+    float az = std::atan2(-y, x) * 57.29578f;
+    az = az < 0.0f ? az + 360.0f : az;
+    ConsolePrintf("  %-28s elev %6.2f  az %6.2f", what, std::asin(std::clamp(z / len, -1.0f, 1.0f)) * 57.29578f, az);
+}
+
+static int32_t ConsoleCommand_ShadowSunInfo(const char*, const char*) {
+    const DayNight::DNInfo& info = DayNight::g_dnInfo;
+    const float hours = info.m_dayProgression * 24.0f;
+    ConsolePrintf("shadowSunInfo: game time %02d:%02d, light body %s, gfxSunArc %d", static_cast<int>(hours), static_cast<int>((hours - std::floor(hours)) * 60.0f),
+                  DayNight::g_lightBody == 1 ? "moon" : "sun", DayNight::SunArc() ? 1 : 0);
+    PrintToward("sun disc (SetPlanets)", DayNight::g_sunToward.x, DayNight::g_sunToward.y, DayNight::g_sunToward.z);
+    PrintToward("moon disc", DayNight::g_moonToward.x, DayNight::g_moonToward.y, DayNight::g_moonToward.z);
+    const C3Vector& l = info.m_light1.m_dir;
+    PrintToward("lighting (m_light1, shading)", -l.x, -l.y, -l.z);
+    const C3Vector& d = CShadowCache::s_sunDir;
+    PrintToward("shadow maps (s_sunDir)", -d.x, -d.y, -d.z);
+    if (s_haveLatch) {
+        PrintToward("shadow latch (gfxSunShadows)", s_latch.x, s_latch.y, s_latch.z);
+    } else {
+        ConsolePrintf("  shadow latch: none (stock light: gfxSunShadows 0 or indoors)");
+    }
+    const float* land = TerrainSunShadow::LightDir();
+    PrintToward("land term (shadowMask)", land[0], land[1], land[2]);
+    ConsolePrintf("  shadow elevation kept within %.0f-%.0f deg; shading capped at the stock light's height (gfxSunArcMatch)", kShadowMinElev, kShadowMaxElev);
+    return 1;
 }
 
 /// The direction the shadow maps' light travels this frame; false = the stock light.

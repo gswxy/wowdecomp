@@ -48,6 +48,7 @@ constexpr uint32_t kShadowRegister = 56;           // vf_shadow.hlsli c56-c61 ba
 constexpr uint32_t kShadowMaskRegister = 10;      // VFogShadowMask c10-c13 (light, ambient + bias, diffuse, stock fog)
 constexpr float kShadowMaskSurfaceBias = 4.0f;     // yd: the ADT surface between WDL vertices may sit this far under them
 constexpr uint32_t kShadowMaskBandRegister = 65;   // VFogShadowMask c65-c67 band 0, c68-c70 unit map, c71 (band 0 on, unit on)
+constexpr uint32_t kShadowMaskSoftRegister = 80;   // VFogShadowMask c80-c81: TerrainSunShadow::SoftShadow (shadowPenumbra, shadowMaxThrow)
 constexpr uint32_t kShadowMaskFineRegister = 72;   // VFogShadowMask c72: TerrainSunShadow::Fine row (shadowMaskFine), s10 its texture; c73/s11 its fade
 constexpr uint32_t kShadowMaskPcfRegister = 74;    // VFogShadowMask c74-c75 PCF offsets, c76 cascade light + shadowDebug, c77 land light
 constexpr float kReceiverShadowStrength = 0.3f;    // stock receivers: lit colour x (0.7 + 0.3 x cascade lit)
@@ -1546,6 +1547,9 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     CGxTex* fineFrom = nullptr;
     TerrainSunShadow::Fine(fine, fineRow[0], fineFrom, fineRow[1]);    // shadowMaskFine: c72 (w = 0 off), s10; its fade c73, s11
     SetPs(kShadowMaskFineRegister, &fineRow[0][0], 2);
+    float soft[2][4];
+    TerrainSunShadow::SoftShadow(soft[0], soft[1]);
+    SetPs(kShadowMaskSoftRegister, &soft[0][0], 2);
     Bind(0, depth);
     Bind(kShadowStage, maps[0]);
     Bind(kShadowStage + 1, maps[1]);

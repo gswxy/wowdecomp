@@ -43,6 +43,10 @@ float4 cTerrainFineFrom : register(c73);
 sampler2D sTerrainFineFrom : register(s11);
 
 float4 cMaskPcf[2] : register(c74);
+// shadowPenumbra / shadowMaxThrow (TerrainSunShadow::SoftShadow, docs/shadow-research/06-soft-shadows.md), unified pixels only:
+// c80 (filter radius per yard to the caster, throw clamp on, any on, 0), c81 the blocker search's reference offsets (yd).
+float4 cMaskSoft : register(c80);
+float4 cMaskSoftLevels : register(c81);
 float4 cMaskCascadeLight : register(c76);
 float4 cMaskLandLight : register(c77);
 
@@ -74,19 +78,84 @@ float ReceiverCompare(sampler2D maps, float3 q)
                   MapTap(maps, uv + cMaskPcf[1].xy, q.z) + MapTap(maps, uv + cMaskPcf[1].zw, q.z));
 }
 
+// PCSS from compares alone (the hwPCF maps are depth textures read through the compare, no raw depth): moving the
+// reference L yd toward the light, a tap reads lit iff its caster is within L yd of the receiver along the light, so
+// the shadowed fraction at L = 0, L1..L4 (c81) over 5 search taps is the share of casters further back than each L.
+// Their mean distance d sets the filter radius (d x c80.x: the sun disc's penumbra), so a shadow is sharp where the
+// caster touches the receiver and soft far from it; shadowMaxThrow (c80.y) drops the casters past L4 and half of those
+// between L3 and L4. zyd / uvyd: the map's q.z and uv per yard (its rows are an ortho light: one length each).
+// distance (out): d, -1 with no caster (shadowDebug 8); share (out): what shadowMaxThrow keeps of the shadow.
+float SoftCompare(sampler2D maps, float3 q, float zyd, float uvyd, out float distance, out float share)
+{
+    float2 uv = q.xy * 0.5 + 0.5;
+    float pcf = length(cMaskPcf[0].xy);
+    float search = max(cMaskSoftLevels.w * cMaskSoft.x * uvyd, pcf);
+    float2 taps[5] = { float2(0, 0), float2(0.7071, 0.7071) * search, float2(-0.7071, 0.7071) * search,
+                       float2(0.7071, -0.7071) * search, float2(-0.7071, -0.7071) * search };
+    float b0 = 0;
+    [unroll] for (int i = 0; i < 5; i++)
+        b0 += 1 - MapTap(maps, uv + taps[i], q.z);
+    distance = -1;
+    share = 1;
+    [branch] if (b0 <= 0)
+        return 1;
+    float b[4] = { 0, 0, 0, 0 };
+    [unroll] for (int k = 0; k < 4; k++)
+        [unroll] for (int j = 0; j < 5; j++)
+            b[k] += 1 - MapTap(maps, uv + taps[j], q.z - cMaskSoftLevels[k] * zyd);
+    // mean caster distance: each slice between offsets at its middle, the last past L4 at L4
+    distance = ((b0 - b[0]) * 0.5 * cMaskSoftLevels.x + (b[0] - b[1]) * 0.5 * (cMaskSoftLevels.x + cMaskSoftLevels.y) +
+                (b[1] - b[2]) * 0.5 * (cMaskSoftLevels.y + cMaskSoftLevels.z) + (b[2] - b[3]) * 0.5 * (cMaskSoftLevels.z + cMaskSoftLevels.w) +
+                b[3] * cMaskSoftLevels.w) / b0;
+    share = cMaskSoft.y > 0 ? saturate((b0 - 0.5 * (b[2] + b[3])) / b0) : 1;
+    [branch] if (share <= 0)
+        return 1;
+    // The receivers' 5 taps scaled out to the radius (the stock pattern at contact), with 4 more between them at half
+    // of it once it is wider than the stock taps, so a wide penumbra is a ramp rather than five copies.
+    float s = max(distance * cMaskSoft.x * uvyd / max(pcf, 1e-6), 1);
+    float v = 0.2 * (MapTap(maps, uv, q.z) + MapTap(maps, uv + cMaskPcf[0].xy * s, q.z) + MapTap(maps, uv + cMaskPcf[0].zw * s, q.z) +
+                     MapTap(maps, uv + cMaskPcf[1].xy * s, q.z) + MapTap(maps, uv + cMaskPcf[1].zw * s, q.z));
+    [branch] if (s > 1)
+    {
+        float h = 0.5 * s * 0.7071;
+        float4 o0 = float4(cMaskPcf[0].x - cMaskPcf[0].y, cMaskPcf[0].x + cMaskPcf[0].y, cMaskPcf[0].z - cMaskPcf[0].w, cMaskPcf[0].z + cMaskPcf[0].w) * h;
+        float4 o1 = float4(cMaskPcf[1].x - cMaskPcf[1].y, cMaskPcf[1].x + cMaskPcf[1].y, cMaskPcf[1].z - cMaskPcf[1].w, cMaskPcf[1].z + cMaskPcf[1].w) * h;
+        float inner = 0.25 * (MapTap(maps, uv + o0.xy, q.z) + MapTap(maps, uv + o0.zw, q.z) + MapTap(maps, uv + o1.xy, q.z) + MapTap(maps, uv + o1.zw, q.z));
+        v = lerp(v, (5 * v + 4 * inner) / 9, saturate(s - 1));
+    }
+    return 1 - (1 - v) * share;
+}
+
+// One map's term: the receivers' own compare, or under shadowUnified with c80.z the soft one. rows: its q.x and q.z rows.
+float MapShadow(sampler2D maps, float3 q, bool soft, float4 rowX, float4 rowZ, inout float distance, inout float share)
+{
+    [branch] if (!soft)
+        return ReceiverCompare(maps, q);
+    float d, k;
+    float v = SoftCompare(maps, q, length(rowZ.xyz), 0.5 * length(rowX.xyz), d, k);
+    [branch] if (d > distance)   // the caster furthest back of the maps read, for shadowDebug 8
+    {
+        distance = d;
+        share = k;
+    }
+    return v;
+}
+
 // What the receivers' shadow maps say, with their cutovers (Combiners_Opaque:3): the unit map inside 0.99 of its
 // square, min band 0 if |q| < 1, else band 1 if |q| < 1, else band 2 faded out over 0.9-0.99. which = the map read for
 // shadowDebug: 0 unit map, 1-3 bands 0-2, 4 none.
-float ReceiverShadow(float3 p, out float which, out float unitOnly, out float bandOnly)
+float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, out float bandOnly, out float distance, out float share)
 {
     float c = 1;
     which = 4;
+    distance = -1;
+    share = 1;
     [branch] if (cMaskMaps.y > 0)
     {
         float3 q = MaskCoord(3, p);
         [branch] if (max(abs(q.x), abs(q.y)) < 0.99)
         {
-            c = ReceiverCompare(sUnit, q);
+            c = MapShadow(sUnit, q, soft, cMaskRows[3], cMaskRows[5], distance, share);
             which = 0;
         }
     }
@@ -95,7 +164,7 @@ float ReceiverShadow(float3 p, out float which, out float unitOnly, out float ba
     float3 q0 = MaskCoord(0, p);
     [branch] if (cMaskMaps.x > 0 && max(abs(q0.x), abs(q0.y)) < 1)
     {
-        b = ReceiverCompare(sBand0, q0);
+        b = MapShadow(sBand0, q0, soft, cMaskRows[0], cMaskRows[2], distance, share);
         band = 1;
     }
     else if (ShadowedSun())
@@ -103,7 +172,7 @@ float ReceiverShadow(float3 p, out float which, out float unitOnly, out float ba
         float3 q = ShadowCoord(0, p);
         [branch] if (max(abs(q.x), abs(q.y)) < 1)
         {
-            b = ReceiverCompare(sShadowNear, q);
+            b = MapShadow(sShadowNear, q, soft, cShadowBands[0], cShadowBands[2], distance, share);
             band = 2;
         }
         else
@@ -112,7 +181,7 @@ float ReceiverShadow(float3 p, out float which, out float unitOnly, out float ba
             float fade = saturate(11 - 11.1111 * max(abs(q.x), abs(q.y)));
             [branch] if (fade > 0)
             {
-                b = lerp(1, ReceiverCompare(sShadowFar, q), fade);
+                b = lerp(1, MapShadow(sShadowFar, q, soft, cShadowBands[3], cShadowBands[5], distance, share), fade);
                 band = 3;
             }
         }
@@ -152,9 +221,13 @@ float3 Nearer(float3 p, float3 a, float3 b)
 // shadowDebug, drawn with alpha blending over the scene: 1 the map read, at half strength; 2 the sun's visibility
 // (shadowUnified pixels: the multiplier this pass lays on them, fog included, i.e. what the receiver shows);
 // 3 magenta where no cascade is read (outside them all, or no world shader wrote the G-buffer: water, fixed function);
-// 4-7 one term alone in grey, unlifted (terms.x land heightfield, y bands 0-2, z back-face rule, w unit map).
-float4 DebugView(float mode, float which, float visibility, float4 terms, float2 pixel)
+// 4-7 one term alone in grey, unlifted (terms.x land heightfield, y bands 0-2, z back-face rule, w unit map);
+// 8 the caster's distance (shadowPenumbra / shadowMaxThrow, unified pixels).
+float4 DebugView(float mode, float which, float visibility, float4 terms, float2 pixel, float distance, float share)
 {
+    // 8: the caster's distance back along the light (SoftCompare), grey to white at L4, red where shadowMaxThrow fades it
+    [branch] if (mode > 7.5)
+        return distance < 0 ? float4(0, 0, 0.3, 1) : float4(saturate(distance / cMaskSoftLevels.w).xxx * float3(1, share, share) + float3(1 - share, 0, 0), 1);
     [branch] if (mode > 3.5)
         return float4((mode < 4.5 ? terms.x : mode < 5.5 ? terms.y : mode < 6.5 ? terms.z : terms.w).xxx, 1);
     [branch] if (mode < 1.5)
@@ -221,8 +294,8 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     [branch] if (land >= 1 && debug <= 0 && !unified)
         return 1;
 
-    float which, unitOnly, bandOnly;
-    float cascade = lerp(ReceiverShadow(p, which, unitOnly, bandOnly), 1, liftCascade);
+    float which, unitOnly, bandOnly, distance, share;
+    float cascade = lerp(ReceiverShadow(p, unified && cMaskSoft.z > 0, which, unitOnly, bandOnly, distance, share), 1, liftCascade);
     float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;
     float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
     [branch] if (unified)
@@ -234,11 +307,11 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
         float3 landRatio = lerp(1, lerp(min(cMaskAmbient.rgb / max(lit, 1.0 / 255), shadowed), 1, land), cMaskLight.w);
         float3 ratio = lerp(1, min(1 - cMaskDiffuse.w * (1 - cascade), saturate(landRatio)), 1 - fog);
         [branch] if (debug > 0)
-            return DebugView(debug, which, dot(ratio, 1.0 / 3), float4(landHeights, bandOnly, facing, unitOnly), pixel);
+            return DebugView(debug, which, dot(ratio, 1.0 / 3), float4(landHeights, bandOnly, facing, unitOnly), pixel, distance, share);
         return float4(ratio, 1);
     }
     [branch] if (debug > 0)
-        return DebugView(debug, which, min(cascade, land), float4(landHeights, bandOnly, facing, unitOnly), pixel);
+        return DebugView(debug, which, min(cascade, land), float4(landHeights, bandOnly, facing, unitOnly), pixel, distance, share);
     // Terrain's own min with its baked MCSH is not modelled: MCSH is per chunk, baked for another sun, and the depth
     // does not say which pixels are terrain, so MCSH-dark ground in the land's shadow still darkens twice.
     float3 stock = lit * (1 - cMaskDiffuse.w * (1 - cascade));

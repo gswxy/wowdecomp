@@ -5,6 +5,14 @@
 
 class CDataRecycler {
     public:
+    enum : uint32_t {
+        eDefaultNodesPerBlock = 16,
+    };
+
+    enum : int32_t {
+        eDefaultMaxNodes = 0x7FFFFFFF,
+    };
+
     struct Node {
         /* 0000 */ Node* m_next;
         /* 0004 */ void* m_data;

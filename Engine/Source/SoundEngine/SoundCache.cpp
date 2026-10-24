@@ -15,7 +15,7 @@
 static CSRWLock s_cacheLock;
 
 // STATIC: 0x00D43448
-static CacheChunkRecycler s_chunkRecycler(16, 0x7FFFFFFF);
+static CacheChunkRecycler s_chunkRecycler(CDataRecycler::eDefaultNodesPerBlock, CDataRecycler::eDefaultMaxNodes);
 
 // STATIC: 0x00B1D5E4
 SoundCache g_soundCache;

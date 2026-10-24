@@ -53,7 +53,7 @@ static CVar* s_cvShadowMapSize;
 static CVar* s_cvShadowSoftness;
 static CVar* s_cvShadowCascadeReuse;
 static CVar* s_cvShadowTerrainCast;
-static CVar* s_cvShadowUnitTerrain;
+static CVar* s_cvShadowUnitFarTrees;
 // Not stock (shadow overhaul step 1): shadowCasterMinTexels.
 static CVar* s_cvShadowCasterMinTexels;
 static CVar* s_cvShadowBandDoodads;
@@ -123,7 +123,7 @@ void CShadowQuery::Initialize() {
     s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering or Vulkan only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSoftness = CVar::Register("shadowSoftness", "Scales the shadow PCF filter, 0.25 to 4 (1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowTerrainCast = CVar::Register("shadowTerrainCast", "ADT terrain casts into the sun shadow maps (0 = stock: models and WMOs only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvShadowUnitTerrain = CVar::Register("shadowUnitTerrain", "Terrain and far tree impostors also cast into the 20 yd unit map (0 = off, default: the bands carry them; at a low sun the unit map's square runs 40 / sin(elevation) yd along the sun with the finest bias, recentred on the camera every frame)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowUnitFarTrees = CVar::Register("shadowUnitFarTrees", "Far tree impostors also cast into the 20 yd unit map (0 = off, default: the bands carry them; at a low sun the unit map's square runs 40 / sin(elevation) yd along the sun with the finest bias, recentred on the camera every frame)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCasterMinTexels = CVar::Register("shadowCasterMinTexels", "Smallest caster in the 320/1280 yd shadow bands, in band texels of radius (0 = stock 2/10 yd)", 1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowBandDoodads = CVar::Register("shadowBandDoodads", "extShadowQuality 3-4: billboard doodads and interior-flagged WMOs cast into the far shadow bands (0 = stock: the 20 yd unit map only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowAlphaMatch = CVar::Register("shadowAlphaMatch", "Leaf and alpha-blended surfaces cast exactly where they draw (0 = stock: M2 cut at half alpha, WMO glass and glow cast solid)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -676,15 +676,17 @@ static std::unordered_map<const CMapChunk*, TerrainCaster> s_terrainCache;
 static C3Vector s_terrainCacheSun;
 static uint32_t s_terrainCacheLoads;
 
-// Not stock casters (terrain, far trees) stay out of the unit map unless shadowUnitTerrain: Update draws it through
-// band 0's slot with flags 13 at q5, so without this it took them at 40 yd wide and up to 40 / sin 4 deg = 573 yd
-// along the sun, with 1/2 of band 0's texel and bias, redrawn round the camera target each frame (treeshadow3).
+// Far tree impostors stay out of the unit map unless shadowUnitFarTrees: Update draws it through band 0's slot with
+// flags 13 at q5, so without this it took them at 40 yd wide and up to 40 / sin 4 deg = 573 yd along the sun, with
+// 1/2 of band 0's texel and bias, redrawn round the camera target each frame (treeshadow3). Terrain does cast into it
+// (unitterrain): the unit map replaces the bands inside its square, so without the land there it cut a lit diamond
+// out of a hill's shadow and let trees beyond a ridge shade the near side.
 static bool UnitMapExcluded() {
-    return CShadowCache::s_drawingUnitMap && !(s_cvShadowUnitTerrain && s_cvShadowUnitTerrain->m_intValue);
+    return CShadowCache::s_drawingUnitMap && !(s_cvShadowUnitFarTrees && s_cvShadowUnitFarTrees->m_intValue);
 }
 
 static bool TerrainCastWanted(const CShadowCacheQueryData& data, int32_t band) {
-    return !UnitMapExcluded() && s_cvShadowTerrainCast && s_cvShadowTerrainCast->m_intValue && band >= 0 && band < 3 && (data.m_queryFlags[band] & 0x8);
+    return s_cvShadowTerrainCast && s_cvShadowTerrainCast->m_intValue && band >= 0 && band < 3 && (data.m_queryFlags[band] & 0x8);
 }
 
 static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const C3Vector& camera) {

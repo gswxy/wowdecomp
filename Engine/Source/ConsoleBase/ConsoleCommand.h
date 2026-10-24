@@ -30,7 +30,7 @@ struct CONSOLECOMMAND : public TSHashObject<CONSOLECOMMAND, HASHKEY_CONSTSTRI> {
 };
 
 extern char g_commandHistory[32][1024];
-extern int32_t s_execState;
+extern EXECMODE s_execState;
 extern uint32_t g_commandHistoryIndex;
 extern COMMANDHANDLER g_defaultCommand;
 extern TSHashTable<CONSOLECOMMAND, HASHKEY_CONSTSTRI> g_consoleCommandHash;

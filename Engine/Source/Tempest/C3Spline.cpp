@@ -175,7 +175,7 @@ float C3Spline::SegLength(uint32_t seg, const C44Matrix& basis) {
 
     this->Evaluate(seg, 0.0f, basis, prev);
 
-    for (int32_t i = 20; i; i--) {
+    for (int32_t i = C3Spline::DEFAULT_STEPS; i; i--) {
         this->Evaluate(seg, step, basis, cur);
 
         float dx = cur.x - prev.x;

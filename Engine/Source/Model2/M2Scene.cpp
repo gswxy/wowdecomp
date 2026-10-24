@@ -971,11 +971,10 @@ void CM2Scene::SelectLights(CM2Lighting* lighting) {
             while (light) {
                 CM2Light* next = light->m_lightNext;
 
-                if (!light->m_scene || light->m_stamp == this->m_frameStamp) {
-                    lighting->AddLight(light);
-                } else {
-                    light->SetVisible(0);
-                }
+                // Not stock (lightstay, 0x81E548 je -> jmp, as St0ny's patch 70 / Luxvelum): a stale light (its model not
+                // animated this frame, e.g. culled behind the camera) still lights its neighbours instead of being
+                // SetVisible(0) -> Unlink()ed from the grid, which switched lamps off whenever their model left the view.
+                lighting->AddLight(light);
 
                 light = next;
             }

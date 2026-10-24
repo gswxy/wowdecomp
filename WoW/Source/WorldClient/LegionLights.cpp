@@ -94,8 +94,8 @@ uint32_t s_walk;
 // doodad is placed (CMapDoodadDef::UpdateBounds, ADT MDDF and WMO MODD alike) and dropped with it (~CMapDoodadDef),
 // in world space through the doodad's matrix, colour from the tracks' first keys. Keyed by the model's own CM2Light.
 // LAMPSON: a placed lamp is ALWAYS on at this colour. Its live light only moves it, on the frames its model animated
-// (stamp == frame stamp and visible); it never turns it off: a stale light is UNLINKED from the grid by
-// CM2Scene::SelectLights (SetVisible(0) -> Unlink) as soon as any model near it is lit, so "live wins" read every
+// (stamp == frame stamp and visible); it never turns it off: stock CM2Scene::SelectLights UNLINKED a stale light
+// from the grid (SetVisible(0) -> Unlink; since lightstay it no longer does) as soon as any model near it was lit, so "live wins" read every
 // lamp whose doodad had once animated and was then culled (camera passed under it) as switched off. WMO MOLT lights are not read: 12340 never loads them (baked into MOCV), and the lamps they
 // stand for are doodads with their own M2 lights.
 struct Static {

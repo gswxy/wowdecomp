@@ -67,7 +67,7 @@ CGxPool* CParticleEmitter2::s_indexPool;
 thread_local float CParticleEmitter2::s_viewDist;
 
 // STATIC: 0x00DCE690
-float CParticleEmitter2::m_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
+float CParticleEmitter2::s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
 
 // STATIC: 0x00DCE890
 uint8_t CParticleEmitter2::s_noIndexBuffer;
@@ -904,7 +904,7 @@ int32_t CParticleEmitter2::RenderParticle(CParticle2_Model& particle, const C44M
         twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
-    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::m_rndTable[twinkle]) {
+    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
         CM2Model* model = particle.m_model;
 
         if (model->m_attachParent) {
@@ -934,7 +934,7 @@ int32_t CParticleEmitter2::RenderParticle(CParticle2_Model& particle, const C44M
     uint8_t alphaByte = static_cast<uint8_t>(CMath::fint_(alpha));
     C2Vector scale = PartTrackSample(*this->m_params.m_scaleTrack, t);
 
-    float twinkleScale = CParticleEmitter2::m_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
+    float twinkleScale = CParticleEmitter2::s_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
     scale.x = scale.x * twinkleScale;
     scale.y = twinkleScale * scale.y;
 
@@ -1571,7 +1571,7 @@ int32_t CParticleEmitter2::BuildVertex(const CParticle2& particle, ParticleVerte
         twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
-    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::m_rndTable[twinkle]) {
+    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
         return 0;
     }
 
@@ -1596,7 +1596,7 @@ int32_t CParticleEmitter2::BuildVertex(const CParticle2& particle, ParticleVerte
         color.b = red;
     }
 
-    float twinkleScale = CParticleEmitter2::m_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
+    float twinkleScale = CParticleEmitter2::s_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
     scale.x = scale.x * twinkleScale;
     scale.y = twinkleScale * scale.y;
 
@@ -1818,7 +1818,7 @@ uint32_t CParticleEmitter2::BuildQuads(const CParticle2& particle, GxParticleQua
         twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
     }
 
-    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::m_rndTable[twinkle]) {
+    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
         return 0;
     }
 
@@ -1846,7 +1846,7 @@ uint32_t CParticleEmitter2::BuildQuads(const CParticle2& particle, GxParticleQua
     uint32_t packed;
     memcpy(&packed, &color, sizeof(packed));
 
-    float twinkleScale = CParticleEmitter2::m_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
+    float twinkleScale = CParticleEmitter2::s_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
     scale.x = scale.x * twinkleScale;
     scale.y = twinkleScale * scale.y;
 

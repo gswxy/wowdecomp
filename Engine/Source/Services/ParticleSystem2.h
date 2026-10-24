@@ -163,7 +163,7 @@ class CParticleEmitter2 {
     static uint8_t s_noIndexBuffer;
     // Not stock: per thread, since CM2SceneRender::Draw builds particle vertices on the Model2 workers
     static thread_local CSortableParticleQueue s_pq;
-    static float m_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
+    static float s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
     // Not stock: per thread, since CM2Scene::Animate updates emitters on the Model2 workers (set in Update, read in
     // EmitNewParticles of the same emitter tree)
     static thread_local float s_viewDist;

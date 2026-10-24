@@ -5,7 +5,7 @@
 #include "Engine/Source/Tempest/CRandom.h"
 
 // STATIC: 0x009F1700
-static const uint32_t m_rndTable[64] = {
+static const uint32_t s_rndTable[64] = {
     0x9927148E, 0x08C7AAFD, 0x1F3EE6D5, 0xDA55BBF6, 0x6A4AA075, 0xFF97BDE8, 0x9FBC9BDE, 0x46A18A81,
     0x63E30B6E, 0x5D6C7A76, 0xCA69D388, 0x25B947C3, 0x3FA2AB83, 0xBA7C41A6, 0x0195ACE5, 0xC109CF7E,
     0x717062D9, 0x0205DB8D, 0x54EF8724, 0x3037D4C6, 0x7BCB1BD0, 0xECD8E4B8, 0xDCADCE49, 0xC494A913,
@@ -43,7 +43,7 @@ uint32_t CRandom::uint32_(CRndSeed& seed) {
         i0 += 244;
     }
 
-    const uint8_t* table = reinterpret_cast<const uint8_t*>(m_rndTable);
+    const uint8_t* table = reinterpret_cast<const uint8_t*>(s_rndTable);
     uint32_t t3 = *reinterpret_cast<const uint32_t*>(table + i3);
     uint32_t t2 = *reinterpret_cast<const uint32_t*>(table + i2);
     uint32_t t1 = *reinterpret_cast<const uint32_t*>(table + i1);

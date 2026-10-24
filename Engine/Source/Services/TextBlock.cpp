@@ -38,11 +38,11 @@ static uint32_t ConvertStringFlags(uint32_t flags) {
         result |= 0x10;
     }
 
-    if (flags & 0x40) {
+    if (flags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP) {
         result |= 0x2;
     }
 
-    if (flags & 0x1000) {
+    if (flags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP) {
         result |= 0x40;
     }
 
@@ -66,7 +66,7 @@ static uint32_t ConvertStringFlags(uint32_t flags) {
         result |= 0x1000;
     }
 
-    if (flags & 0x20000) {
+    if (flags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED) {
         result |= 0x2000;
     }
 

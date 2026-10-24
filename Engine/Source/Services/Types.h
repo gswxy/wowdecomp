@@ -65,6 +65,12 @@ enum {
 #define ASYNC_SET_KIND(object, kind) ((void)0)
 #endif
 
+enum TEXTBLOCK_WRAP_FLAGS : uint32_t {
+    TEXTBLOCK_NO_WORD_WRAP = 0x40,
+    TEXTBLOCK_NON_SPACE_WRAP = 0x1000,
+    TEXTBLOCK_INDENTED = 0x20000,
+};
+
 struct HTEXTBLOCK__ {
     /* 0000 */ int32_t m_unused;
 };

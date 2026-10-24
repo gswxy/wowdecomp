@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "Engine/Source/Frame/CSimpleFont.h"
 #include <cmath>
+#include "Engine/Source/Services/Types.h"
 #include "Engine/Source/Base/Coordinate.h"
 #include "Engine/Source/Base/Status.h"
 #include "Engine/Source/FrameXML/LoadXML.h"
@@ -288,7 +289,7 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
     const char* nonSpaceWrap = node->GetAttributeByName("nonspacewrap");
 
     if (nonSpaceWrap && *nonSpaceWrap) {
-        uint32_t styleFlags = StringToBOOL(nonSpaceWrap) ? this->m_attributes.m_styleFlags | 0x1000 : this->m_attributes.m_styleFlags & ~0x1000u;
+        uint32_t styleFlags = StringToBOOL(nonSpaceWrap) ? this->m_attributes.m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP : this->m_attributes.m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP;
 
         if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT)) {
             this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_STYLE_UPDATE;
@@ -299,7 +300,7 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
     const char* indented = node->GetAttributeByName("indented");
 
     if (indented && *indented) {
-        uint32_t styleFlags = StringToBOOL(indented) ? this->m_attributes.m_styleFlags | 0x20000 : this->m_attributes.m_styleFlags & ~0x20000u;
+        uint32_t styleFlags = StringToBOOL(indented) ? this->m_attributes.m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED : this->m_attributes.m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
 
         if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT)) {
             this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_STYLE_UPDATE;

@@ -607,7 +607,7 @@ static int32_t Script_SetJustifyV(lua_State* L) {
 static int32_t Script_CanNonSpaceWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
 
-    if (string->m_styleFlags & 0x1000) {
+    if (string->m_styleFlags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -622,8 +622,8 @@ static int32_t Script_SetNonSpaceWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
     int32_t wrap = StringToBOOL(L, 2, 1);
 
-    string->m_settableStyleFlags &= ~0x1000u;
-    uint32_t styleFlags = wrap ? string->m_styleFlags | 0x1000 : string->m_styleFlags & ~0x1000u;
+    string->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP;
+    uint32_t styleFlags = wrap ? string->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP : string->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP;
 
     if (styleFlags != string->m_styleFlags) {
         string->m_styleFlags = styleFlags;
@@ -641,7 +641,7 @@ static int32_t Script_SetNonSpaceWrap(lua_State* L) {
 static int32_t Script_CanWordWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
 
-    if (string->m_styleFlags & 0x40) {
+    if (string->m_styleFlags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP) {
         lua_pushnil(L);
     } else {
         lua_pushnumber(L, 1.0);
@@ -656,8 +656,8 @@ static int32_t Script_SetWordWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
     int32_t wrap = StringToBOOL(L, 2, 1);
 
-    string->m_settableStyleFlags &= ~0x40u;
-    uint32_t styleFlags = wrap ? string->m_styleFlags & ~0x40u : string->m_styleFlags | 0x40;
+    string->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP;
+    uint32_t styleFlags = wrap ? string->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP : string->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP;
 
     if (styleFlags != string->m_styleFlags) {
         string->m_styleFlags = styleFlags;
@@ -675,7 +675,7 @@ static int32_t Script_SetWordWrap(lua_State* L) {
 static int32_t Script_GetIndentedWordWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
 
-    if (string->m_styleFlags & 0x20000) {
+    if (string->m_styleFlags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -690,8 +690,8 @@ static int32_t Script_SetIndentedWordWrap(lua_State* L) {
     CSimpleFontString* string = static_cast<CSimpleFontString*>(FrameScript_GetObjectThis(L, CSimpleFontString::GetObjectType()));
     int32_t indented = StringToBOOL(L, 2, 1);
 
-    string->m_settableStyleFlags &= ~0x20000u;
-    uint32_t styleFlags = indented ? string->m_styleFlags | 0x20000 : string->m_styleFlags & ~0x20000u;
+    string->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
+    uint32_t styleFlags = indented ? string->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED : string->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
 
     if (styleFlags != string->m_styleFlags) {
         string->m_styleFlags = styleFlags;

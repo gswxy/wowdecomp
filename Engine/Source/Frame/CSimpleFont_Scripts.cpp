@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "Engine/Source/Frame/CSimpleFont.h"
 #include <cmath>
+#include "Engine/Source/Services/Types.h"
 #include "Engine/Source/Base/Coordinate.h"
 #include "Engine/Source/Frame/CScriptObject.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
@@ -317,7 +318,7 @@ int32_t CSimpleFont_GetJustifyV(const char* name, CSimpleFont* font, lua_State* 
 // VERIFY: 5d813183 auto
 // OFFSET: 0x004A40E0
 int32_t CSimpleFont_GetIndentedWordWrap(const char* name, CSimpleFont* font, lua_State* L) {
-    if (font->m_attributes.m_styleFlags & 0x20000) {
+    if (font->m_attributes.m_styleFlags & TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -376,7 +377,7 @@ int32_t CSimpleFont_SetJustifyV(const char* name, CSimpleFont* font, lua_State* 
 // OFFSET: 0x004A4A50
 int32_t CSimpleFont_SetIndentedWordWrap(const char* name, CSimpleFont* font, lua_State* L) {
     int32_t indented = StringToBOOL(L, 2, 1);
-    uint32_t styleFlags = indented ? font->m_attributes.m_styleFlags | 0x20000 : font->m_attributes.m_styleFlags & ~0x20000u;
+    uint32_t styleFlags = indented ? font->m_attributes.m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED : font->m_attributes.m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
 
     if (styleFlags != font->m_attributes.m_styleFlags || !(font->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT)) {
         font->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_STYLE_UPDATE;

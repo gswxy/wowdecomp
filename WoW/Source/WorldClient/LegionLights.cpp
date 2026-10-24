@@ -278,9 +278,12 @@ void RunBake() {
     s_job.key = nullptr;
 }
 
+// The track's first key: its global sequence's, or sequence 0's when that sequence lives in the .m2 (flag 0x20; an
+// .anim one's keys are not relocated until it streams in, M2Shared.cpp M2Init, so the fallback stands).
 template <class T>
-T FirstKey(const M2Track<T>& track, T fallback) {
-    return track.m_sequenceKeys.m_count && track.m_sequenceKeys[0].m_count ? track.m_sequenceKeys[0][0] : fallback;
+T FirstKey(const M2Data& data, const M2Track<T>& track, T fallback) {
+    const bool loaded = track.m_loopIndex != 0xFFFF || (data.m_sequences.m_count && (data.m_sequences[0].m_flags & 0x20));
+    return loaded && track.m_sequenceKeys.m_count && track.m_sequenceKeys[0].m_count ? track.m_sequenceKeys[0][0] : fallback;
 }
 
 // The light's sphere against the view frustum's sides (view space, z forward, ndc = xy / z * scale + offset).
@@ -417,9 +420,9 @@ void AddDoodad(const CMapDoodadDef* def) {
     std::vector<const CM2Light*> keys;
     for (uint32_t i = 0; i < data->m_lights.m_count; i++) {
         const M2Light& light = data->m_lights[i];
-        const float intensity = FirstKey(light.m_diffuseIntensity, 1.0f);
-        const C3Vector colour = FirstKey(light.m_diffuseColor, C3Vector(0.0f, 0.0f, 0.0f));
-        if (light.m_type != M2LIGHT_POINT || !FirstKey<uint8_t>(light.m_visibility, 1) || !(intensity > 0.0f)) {
+        const float intensity = FirstKey(*data, light.m_diffuseIntensity, 1.0f);
+        const C3Vector colour = FirstKey(*data, light.m_diffuseColor, C3Vector(0.0f, 0.0f, 0.0f));
+        if (light.m_type != M2LIGHT_POINT || !FirstKey<uint8_t>(*data, light.m_visibility, 1) || !(intensity > 0.0f)) {
             continue;
         }
         // ponytail: the bone's rest pose taken as identity (lamps hang from static or barely swinging bones)

@@ -23,7 +23,7 @@ Grading (coa vp_grade): VFogGrade.
 Water (coa vw_*): VFogWaterDepth, VFogWaterMask, VFogWater{1,2,3} (SSR_STEPS 0/16/32) and VFogRippleStep;
 GPU waves VFogWave{Evolve,Fft,Surface,Mip,Pack}.
 Grass wind (wxl-grasswind, MULTI): Shaders/Vertex/vs_3_0|vs_4_0/DetailDoodad.bls, the stock grass VS's 6 permutations.
-Fading models (wxl-vfog 0.6.3): VFogDepthCopy. Legion FFX post: LegionPost{0,1,2}. Legion SSAO: LegionSsao{,Box,Bilateral,Apply}. Legion heat haze (refraction): LegionRefraction. Land shadow mask (shadowMask): VFogShadowMask. Lamps (lightMode): LegionLights. MSAA sample split (coa): VFogSilhouette and VFogCompositeSplit{Q}[L][N].
+Fading models (wxl-vfog 0.6.3): VFogDepthCopy. Legion FFX post: LegionPost{0,1,2}. Legion SSAO: LegionSsao{,Box,Bilateral,Apply}. Legion heat haze (refraction): LegionRefraction. Land shadow mask (shadowMask): VFogShadowMask, VFogShadowMaskPoint. Lamps (lightMode): LegionLights. MSAA sample split (coa): VFogSilhouette and VFogCompositeSplit{Q}[L][N].
 Soft particles (wxl-light Soft.cpp): SoftParticle{0,1}.
 Caustics (wxl-water): VFogCausticsAbove / VFogCausticsUnder.
 Sky and clouds under the sun arc (wxl-light Clouds.cpp, WorldClient/SkyClouds.cpp): SkyClouds.
@@ -89,6 +89,8 @@ SHADERS = {
     'LiquidProcMagma': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 2, 3), 0, 'LiquidProcMagma', {}),
     # shadowMask (Legion survey 2.7): the land's sun shadow over the opaque world, a multiply; s5/s6 cascades, s7 land, s10/s11 its fine level
     'VFogShadowMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
+    # its D3D11 hwPCF 0 twin: the same ps_3_0, no compare slots in the SM4 pack, so the R32F maps are point-compared
+    'VFogShadowMaskPoint': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
     # Legion lights (lightMode, docs/LEGION_PORT.md): the frame's M2 point lights on the surfaces, colour += colour * light
     'LegionLights': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4), 0, 'LegionLights', {}),
     # Legion FFX post (docs/LEGION_PORT.md): colour shift only, FXAA low + colour shift, FXAA high + colour shift

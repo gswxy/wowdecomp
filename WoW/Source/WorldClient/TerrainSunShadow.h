@@ -3,8 +3,8 @@
 
 class CGxTex;
 
-// Not stock (gfxTerrainShadow): the sun blocked by the land, near ADT and far WDL alike, which the engine's shadow
-// cascades do not cover (terrain does not cast into them, and they end at 640 yd). Built from the map's WDL heights
+// Not stock (gfxTerrainShadow): the sun blocked by the land, near ADT and far WDL alike, past what the engine's shadow
+// cascades cover (terrain casts into them, shadowTerrainCast, but they end at 640 yd and miss far land). Built from the map's WDL heights
 // (one height per 33.3 yd, the whole map) around the camera:
 // - a "lit height" texture, 256 x 256 texels on the WDL vertices (+-4.2 km): the lowest world z the sun reaches at
 //   each texel, swept toward the light; vf_shadow.hlsli tests the fog's march points against it;
@@ -18,8 +18,10 @@ void RegisterCVars();
 bool Enabled();
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height
+int DebugMode();            // shadowDebug 0..3: the mask pass draws a view of the sun shadow instead of darkening
+const float* LightDir();    // toward the light the land heights were last built for (Update), world
 
-// Rebuilds the texture when the light turned or the camera moved far enough. False (and no texture) with the CVar
+// Rebuilds the texture when the light turned (toLight is the true sun; gfxSunShadows' latched light replaces it) or the camera moved far enough. False (and no texture) with the CVar
 // off, no WDL on the map, or the light under the horizon. row = (u0, v0, k, 1/soft) for uv = row.xy - row.z * world.yx.
 bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float row[4]);
 

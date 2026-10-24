@@ -180,6 +180,7 @@ static const uint32_t kLatchWaitMs = 2000;     // a step waits for the near maps
 static C3Vector s_latch(0.0f, 0.0f, 1.0f);     // toward the light, as the shadow maps have it
 static int32_t s_haveLatch;
 static uint32_t s_latchMs;
+static uint32_t s_latchSeenMs;     // the last frame SunShadowDir took the latch (SunLatched)
 
 /// Toward the sun or moon (unit) and its height in degrees, as DayNight::SetPlanets placed the discs. (Kept from
 /// SetPlanets' own sines rather than disc minus camera: at world coordinates that difference is noisy enough, a few
@@ -277,7 +278,19 @@ static bool SunShadowDir(C3Vector& out) {
         }
     }
 
+    s_latchSeenMs = now;
     out = C3Vector(-s_latch.x, -s_latch.y, -s_latch.z);
+    return true;
+}
+
+// Toward the light the cascades were drawn for, while gfxSunShadows latches it. "Recently" rather than "this frame":
+// the one LOWEST frame of a map recreate must not flip the land shadow (TerrainSunShadow) to the true sun and back.
+bool CShadowQuery::SunLatched(C3Vector& toward) {
+    if (!s_haveLatch || OsGetAsyncTimeMs() - s_latchSeenMs > 1000u) {
+        return false;
+    }
+
+    toward = s_latch;
     return true;
 }
 

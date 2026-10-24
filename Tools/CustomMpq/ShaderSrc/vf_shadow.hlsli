@@ -29,7 +29,8 @@ float4 cShadowControl : register(c62);   // (on, hardware compare, canopy streng
 sampler2D sShadowNear : register(s5);
 sampler2D sShadowFar : register(s6);
 
-// gfxTerrainShadow (TerrainSunShadow.cpp): the land, near ADT and far WDL, which does not cast into the cascades. s7
+// gfxTerrainShadow (TerrainSunShadow.cpp): the land, near ADT and far WDL, past the cascades' 640 yd (it casts into them,
+// shadowTerrainCast, but they miss far land). s7
 // holds the lowest world z the light reaches per WDL vertex (+-4.2 km round the camera); a point under it is dark,
 // over kSoftYards (1 / c63.w). c63 = (u0, v0, k, 1 / soft): uv = c63.xy - c63.z * world.yx; w = 0: off. Clamped.
 float4 cTerrainShadow : register(c63);

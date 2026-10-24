@@ -25,6 +25,7 @@ class CShadowQuery {
     static float s_cutoffHeight;
 
     static void Update();
+    static bool SunLatched(C3Vector& toward);   // not stock: gfxSunShadows' latched light, if it is in use
 
     static void FreeBuffers();
     static void AllocBuffers();

@@ -950,7 +950,7 @@ void OnOpaqueDone() {
     // shadowMask needs the same frame inputs with the fog off (its DNInfo half is read here then: no push-out to undo).
     s_maskPending = false;
     s_ssaoPending = false;
-    const bool mask = TerrainSunShadow::MaskWanted() && RendererReady();
+    const bool mask = (TerrainSunShadow::MaskWanted() || TerrainSunShadow::DebugMode() > 0) && RendererReady();
     const bool ssao = CVarInt(s_ssaoCVars.mode, 0) > 0 && RendererReady();
     CGxDevice::SetDepthUser(CGxDevice::DepthUser_ShadowMask, mask);   // LEGION SetDepthUser: read in OnSolidDone
     CGxDevice::SetDepthUser(CGxDevice::DepthUser_Ssao, ssao);
@@ -979,8 +979,9 @@ void OnOpaqueDone() {
     }
 
     s_opaqueValid = viewValid && std::isfinite(in.fogStart) && std::isfinite(in.fogEnd);
-    // vfog38 (shadow audit L4): no land shadow indoors (strength 0): skip the pass and its depth copy.
-    s_maskPending = mask && s_opaqueValid && in.interiorBlend < 1.0f;
+    // vfog38 (shadow audit L4): no land shadow indoors (strength 0): skip the pass and its depth copy, unless shadowDebug
+    // wants the interior's unit map shown.
+    s_maskPending = mask && s_opaqueValid && (in.interiorBlend < 1.0f || TerrainSunShadow::DebugMode() > 0);
     CGxDevice::SetDepthUser(CGxDevice::DepthUser_ShadowMask, s_maskPending);
     s_ssaoPending = ssao && s_opaqueValid;
 }

@@ -48,6 +48,7 @@ constexpr uint32_t kShadowMaskRegister = 10;      // VFogShadowMask c10-c13 (lig
 constexpr float kShadowMaskSurfaceBias = 4.0f;     // yd: the ADT surface between WDL vertices may sit this far under them
 constexpr uint32_t kShadowMaskBandRegister = 65;   // VFogShadowMask c65-c67 band 0, c68-c70 unit map, c71 (band 0 on, unit on)
 constexpr uint32_t kShadowMaskFineRegister = 72;   // VFogShadowMask c72: TerrainSunShadow::Fine row (shadowMaskFine), s10 its texture; c73/s11 its fade
+constexpr uint32_t kShadowMaskPcfRegister = 74;    // VFogShadowMask c74-c75 PCF offsets, c76 cascade light + shadowDebug, c77 land light
 constexpr float kReceiverShadowStrength = 0.3f;    // stock receivers: lit colour x (0.7 + 0.3 x cascade lit)
 constexpr uint32_t kSsaoRegister = 10;             // LegionSsao c10 (radius, fade start, 1 / fade length, strength), c11 stock fog
 constexpr int kShadowStage = 5;                     // vf_shadow.hlsli s5 band 1, s6 band 2, s7 terrain
@@ -85,6 +86,7 @@ struct Shaders {
     CGxShader* grade;
     CGxShader* depthCopy;               // VFogDepthCopy: the scene depth into an R32F target (fading cross-fade)
     CGxShader* shadowMask;              // VFogShadowMask: the land's sun shadow over the opaque world (shadowMask)
+    CGxShader* shadowMaskPoint;         // VFogShadowMaskPoint: the same without SM4 compare slots (D3D11, hwPCF 0)
     CGxShader* post[3];                 // LegionPost{0,1,2}: colour shift, + FXAA low, + FXAA high (ffxAntiAliasingMode)
     CGxShader* ssao[4];                 // LegionSsao, LegionSsaoBox, LegionSsaoBilateral, LegionSsaoApply (SSAO)
     CGxShader* refraction;              // LegionRefraction: heat haze over one fire emitter (refraction)
@@ -712,15 +714,8 @@ static bool CompareUnusable(const ShadowView& view) {
     return !view.pcf && g_theGxDevicePtr->DeviceApi() == GxApi_D3d11;
 }
 
-// Shared with the caustics (VolumetricFogWater.h).
-void SunShadowRegisters(bool on, float canopy, const float viewToWorld[16], float shadow[7][4], CGxTex* maps[2]) {
-    std::memset(shadow, 0, sizeof(float) * 28);
-    maps[0] = maps[1] = nullptr;
-    ShadowView view;
-    if (!on || !CShadowCache::GetPublished(view) || CompareUnusable(view)) {
-        return;
-    }
-
+// c56-c62 for bands 1 and 2 of a published view.
+static void BandRegisters(const ShadowView& view, float canopy, const float viewToWorld[16], float shadow[7][4], CGxTex* maps[2]) {
     for (int band = 0; band < 2; band++) {
         ComposeShadowRows(viewToWorld, view, view.rows[band + 1], &shadow[band * 3]);
         maps[band] = view.map[band + 1];
@@ -729,6 +724,16 @@ void SunShadowRegisters(bool on, float canopy, const float viewToWorld[16], floa
     shadow[6][1] = static_cast<float>(view.pcf);
     shadow[6][2] = canopy;
     shadow[6][3] = static_cast<float>(view.size);
+}
+
+// Shared with the caustics (VolumetricFogWater.h).
+void SunShadowRegisters(bool on, float canopy, const float viewToWorld[16], float shadow[7][4], CGxTex* maps[2]) {
+    std::memset(shadow, 0, sizeof(float) * 28);
+    maps[0] = maps[1] = nullptr;
+    ShadowView view;
+    if (on && CShadowCache::GetPublished(view) && !CompareUnusable(view)) {
+        BandRegisters(view, canopy, viewToWorld, shadow, maps);
+    }
 }
 
 namespace {
@@ -794,7 +799,8 @@ void ShadowConstants(bool shadowedSun, float canopy, const FrameInputs& in, cons
                      CGxTex* (&shadowMaps)[2], CGxTex*& terrainShadow) {
     SunShadowRegisters(shadowedSun, canopy, viewToWorld, shadow, shadowMaps);   // c56-c62, shared with the caustics
     std::memset(shadow[7], 0, sizeof(shadow[7]));
-    // gfxTerrainShadow: the land (ADT and WDL) blocks the sun past the cascades, which terrain does not cast into.
+    // gfxTerrainShadow: the land (ADT and WDL) blocks the sun past the cascades (terrain casts into them,
+    // shadowTerrainCast, but only out to 640 yd).
     TerrainSunShadow::Update(in.toLight, in.camPos, terrainShadow, shadow[7]);
 }
 
@@ -1420,9 +1426,21 @@ bool RenderGrade(const float* curve32, float strength, int dither, uint32_t fram
 // ponytail: after the receivers, not before them (no depth pre-pass): the receivers keep their own cascade sampling, so
 // the cascades are not softened here and a stock tree shadow is not widened; that needs a depth pre-pass or two-phase
 // opaque so the receivers can read the mask (SHADOW_PORT_PLAN S4a/S4b replaced by one mask read).
+// shadowDebug (TerrainSunShadow::DebugMode) draws a view of the sun shadow from this pass instead, alpha blended,
+// with or without the land.
 bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInColour) {
     CGxDevice* device = g_theGxDevicePtr;
-    if (!device || s_depthUnsupported || !Shader(s_shaders.shadowMask, "VFogShadowMask")) {
+    if (!device || s_depthUnsupported) {
+        return false;
+    }
+    const int debug = TerrainSunShadow::DebugMode();
+    // D3D11 with R32F maps (hwPCF 0, shadow research 3.8f): the twin without SM4 compare slots point-compares them, so
+    // the mask still sees the cascades (with C zeroed it darkened their shadows a second time inside the land's).
+    ShadowView view;
+    const bool unitView = CShadowCache::GetPublishedUnit(view) != 0;
+    const bool point = unitView && CompareUnusable(view);
+    CGxShader* shader = point ? Shader(s_shaders.shadowMaskPoint, "VFogShadowMaskPoint") : Shader(s_shaders.shadowMask, "VFogShadowMask");
+    if (!shader) {
         return false;
     }
     float viewToWorld[16];
@@ -1434,18 +1452,23 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     CGxTex* maps[2];
     CGxTex* land = nullptr;
     ShadowConstants(true, 0.0f, in, viewToWorld, shadow, maps, land);
-    if (!land) {
+    if (!land && !debug) {
         return false;     // gfxTerrainShadow 0, no WDL, or the light under the horizon: nothing to add
     }
-    shadow[7][3] = 1.0f / std::max(softYards, 1.0f);
+    if (land) {
+        shadow[7][3] = 1.0f / std::max(softYards, 1.0f);
+    }
+    ShadowView bands;
+    if (point && CShadowCache::GetPublished(bands)) {
+        BandRegisters(bands, 0.0f, viewToWorld, shadow, maps);
+    }
     // vfog38 (shadow audit M1): the receivers take min(unit map, band 0/1/2); bands 1/2 are c56-c61, band 0 and the
     // unit map go in c65-c70 / s8, s9 (c71 = band 0 on, unit on). The unit map exists at every shadow quality, so
     // c62.y/w (compare mode, size) are set for it even where the bands are off (c62.x 0).
     float extra[7][4] = {};
     CGxTex* band0 = nullptr;
     CGxTex* unit = nullptr;
-    ShadowView view;
-    if (CShadowCache::GetPublishedUnit(view) && !CompareUnusable(view)) {
+    if (unitView) {
         ComposeShadowRows(viewToWorld, view, view.unitRows, &extra[3]);
         unit = view.unitMap;
         extra[6][1] = 1.0f;
@@ -1488,12 +1511,26 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
         { in.fogStart, span > 1.0f ? 1.0f / span : 0.0f, stockFogInColour && span > 1.0f ? 1.0f : 0.0f, 0.0f },
     };
 
+    // The receivers' own taps and lights (3.8 a, d, e): c74-c75 their PCF offsets (c5/c7/c9/c11 of the stock perms,
+    // shadowSoftness-scaled), c76 toward the light the cascades were drawn for, c77 toward the one the land heights were.
+    const C4Vector* pcf = CShadowCache::s_pcfOffsets;
+    const C3Vector& sunDir = CShadowCache::s_sunDir;
+    const float sunLen = std::max(std::sqrt(sunDir.x * sunDir.x + sunDir.y * sunDir.y + sunDir.z * sunDir.z), 1e-6f);
+    const float* landLight = TerrainSunShadow::LightDir();
+    const float receiver[4][4] = {
+        { pcf[0].x, pcf[0].y, pcf[2].x, pcf[2].y },
+        { pcf[4].x, pcf[4].y, pcf[6].x, pcf[6].y },
+        { -sunDir.x / sunLen, -sunDir.y / sunLen, -sunDir.z / sunLen, static_cast<float>(debug) },
+        { landLight[0], landLight[1], landLight[2], 0.0f },
+    };
+
     static SavedPassState s_saved;
     BeginPasses(s_saved);
-    GxRsSet(GxRs_BlendingMode, GxBlend_Mod);
+    GxRsSet(GxRs_BlendingMode, debug ? GxBlend_Alpha : GxBlend_Mod);
     GxRsSet(GxRs_ColorWrite, 7);
     SetPs(0, &common[0][0], 9);
     SetPs(kShadowMaskRegister, &mask[0][0], 4);
+    SetPs(kShadowMaskPcfRegister, &receiver[0][0], 4);
     SetPs(kShadowRegister, &shadow[0][0], 8);
     SetPs(kShadowMaskBandRegister, &extra[0][0], 7);
     SetPs(kHorizonBandRegister, in.horizonBand, 1);
@@ -1511,7 +1548,7 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     Bind(kShadowStage + 5, fine);
     Bind(kShadowStage + 6, fineFrom);
     BindNormalBuffer();
-    device->RsSet(GxRs_PixelShader, s_shaders.shadowMask);
+    device->RsSet(GxRs_PixelShader, shader);
     device->DeviceSceneDepthBound(false);   // D3D9: s0 is the INTZ depth-stencil the back buffer uses
     DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);
     device->DeviceSceneDepthBound(true);

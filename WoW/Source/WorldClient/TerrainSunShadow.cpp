@@ -19,6 +19,7 @@
 #include "WoW/Source/WorldClient/MapArea.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
 #include "WoW/Source/WorldClient/MapLowDetail.h"
+#include "WoW/Source/WorldClient/ShadowQuery.h"
 
 namespace TerrainSunShadow {
 
@@ -75,6 +76,7 @@ CVar* s_cvar;
 CVar* s_maskCvar;       // shadowMask (Legion survey 2.7)
 CVar* s_softCvar;       // shadowSoft
 CVar* s_fineCvar;       // shadowMaskFine
+CVar* s_debugCvar;      // shadowDebug
 Level s_coarse(kSize, kCell, kGridOrigin, true);
 Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
 // The fine level's land, (kFineSize + 2)^2 from (r0 - 1, c0 - 1): ADT heights where loaded, WDL beyond, kNone in holes.
@@ -549,7 +551,16 @@ void RegisterCVars() {
     s_cvar = CVar::Register("gfxTerrainShadow", "The land (near terrain and the far WDL horizon) blocks the sun for the volumetric fog's sun shafts and glow and for the sun glare: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_maskCvar = CVar::Register("shadowMask", "Mountains (near terrain and the far WDL horizon) cast the sun's shadow onto the world: terrain, buildings and models (needs gfxTerrainShadow): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_softCvar = CVar::Register("shadowSoft", "Softness of the mountains' shadow edge (shadowMask), 0 = hard .. 4 = very soft, default 1", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_debugCvar = CVar::Register("shadowDebug", "Shows the sun shadow through the shadow mask pass (any shadowMask): 1 = which map each pixel reads (yellow unit map, green band 0, blue band 1, orange band 2, red none), 2 = the sun's visibility in grey (cascades and land), 3 = magenta where no cascade is read, 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_fineCvar = CVar::Register("shadowMaskFine", "The mountains' shadow (shadowMask) from the loaded terrain's own heights (4 yd) within 1 km of the camera, the far WDL (33 yd) beyond: 1 = on (default), 0 = WDL only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+}
+
+int DebugMode() {
+    return s_debugCvar ? std::clamp(s_debugCvar->m_intValue, 0, 3) : 0;
+}
+
+const float* LightDir() {
+    return s_light;
 }
 
 bool MaskWanted() {
@@ -566,8 +577,20 @@ bool Enabled() {
     return (!s_cvar || s_cvar->m_intValue != 0) && CMap::s_lowDetail.m_data != nullptr;
 }
 
-bool Update(const float toLight[3], const float camPos[3], CGxTex*& tex, float row[4]) {
+bool Update(const float trueLight[3], const float camPos[3], CGxTex*& tex, float row[4]) {
     tex = nullptr;
+    // gfxSunShadows: the cascades' latched light (elevation 12-70 deg), so a mountain's shadow and a tree's next to it
+    // have the same length and side; stock light otherwise. The latch moves in steps far under kTurnCos, so they
+    // add up to a rebuild here (the land lags the cascades by at most that), and its 5 deg jumps fade (kSnapCos).
+    C3Vector latched;
+    float shadowLight[3];
+    const bool useLatch = CShadowQuery::SunLatched(latched);
+    if (useLatch) {
+        shadowLight[0] = latched.x;
+        shadowLight[1] = latched.y;
+        shadowLight[2] = latched.z;
+    }
+    const float* toLight = useLatch ? shadowLight : trueLight;
     if (!Enabled() || toLight[2] <= 0.0f || !g_theGxDevicePtr) {
         s_fineOn = false;
         return false;

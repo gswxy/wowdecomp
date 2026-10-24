@@ -251,7 +251,7 @@ void CParticleEmitter2::SetModel(CM2Scene* scene, const char* name) {
         this->m_model = scene->CreateModel(name, 0);
 
         if (this->m_model) {
-            this->m_params.m_hasModel = CParticleEmitter2::PT_MODEL;
+            this->m_params.m_particleType = CParticleEmitter2::PARTICLE_TYPE::PT_MODEL;
         }
     }
 }
@@ -1152,7 +1152,7 @@ void CParticleEmitter2::ChangeFrameOfReference(const C44Matrix* matrix) {
 
         for (uint32_t i = 0; i < count; i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
 
             particle->m_position *= *matrix;
 
@@ -1439,7 +1439,7 @@ int32_t CParticleEmitter2::HasLiveParticles() {
 uint32_t CParticleEmitter2::GetNumParticleModels() {
     uint32_t count = 0;
 
-    if (this->m_params.m_hasModel == CParticleEmitter2::PT_MODEL) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         count = this->m_liveList.Count();
     }
 
@@ -1453,7 +1453,7 @@ uint32_t CParticleEmitter2::GetNumParticleModels() {
 // VERIFY: 8d3bef82 auto
 // OFFSET: 0x0097BA70
 CM2Model* CParticleEmitter2::GetParticleModelInternal(uint32_t& index) {
-    if (this->m_params.m_hasModel == CParticleEmitter2::PT_MODEL) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         uint32_t count = this->m_liveList.Count();
 
         if (index < count) {
@@ -2145,7 +2145,7 @@ void CParticleEmitter2::EmitParticle(float time, const C44Matrix& transform) {
     uint32_t index = PopIndex(this->m_freeList);
     this->m_liveList.New(index);
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         this->CreateParticle(this->m_particleModels[index], time, transform);
     } else {
         this->CreateParticle(this->m_particles[index], time, transform);
@@ -2236,7 +2236,7 @@ int32_t CParticleEmitter2::UpdateLiveParticle(float deltaTime, CParticle2* parti
     C3Vector position = particle->m_position;
     int32_t alive;
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         alive = this->MoveParticle(*static_cast<CParticle2_Model*>(particle), deltaTime);
     } else {
         alive = this->MoveParticle(*particle, deltaTime);
@@ -2304,7 +2304,7 @@ void CParticleEmitter2::StepUpdate(float deltaTime, int32_t child) {
 
         while (i < this->m_liveList.Count()) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             particle->m_age = particle->m_age + deltaTime;
 
             if (particle->m_age < life) {
@@ -2322,7 +2322,7 @@ void CParticleEmitter2::StepUpdate(float deltaTime, int32_t child) {
         while (i < this->m_liveList.Count()) {
             float life = 0.001f;
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             particle->m_age = particle->m_age + deltaTime;
 
             float particleLife = particle->m_lifeSeed.m_value * this->m_params.m_lifeVariation * 0.000030518509f + this->m_params.m_life;
@@ -2398,7 +2398,7 @@ CSortableParticleRecord CSortableParticleQueue::Pop() {
 // VERIFY: eeea2b31 manual
 // OFFSET: 0x00979250
 CParticleEmitter2::Params::Params() {
-    this->m_hasModel = CParticleEmitter2::PT_QUAD;
+    this->m_particleType = CParticleEmitter2::PARTICLE_TYPE::PT_QUAD;
     this->m_emissionRate = 0.0f;
     this->m_emissionRateVariation = 0.0f;
     this->m_life = 0.0f;
@@ -2496,7 +2496,7 @@ void CParticleEmitter2::SyncReserve(uint32_t count, uint32_t used, uint32_t spar
 
     uint32_t shortfall = target - (used + spare);
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         if (shortfall + this->m_particleModels.Count() > this->m_particleModels.m_alloc) {
             this->m_particleModels.ReallocData(shortfall + this->m_particleModels.Count());
         }
@@ -2516,7 +2516,7 @@ void CParticleEmitter2::SyncReserve(uint32_t count, uint32_t used, uint32_t spar
 // VERIFY: e29c25ff manual
 // OFFSET: 0x0097E480
 void CParticleEmitter2::SyncAllocation(uint32_t count) {
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         uint32_t oldCount = this->m_particleModels.Count();
 
         if (oldCount >= count) {
@@ -2571,7 +2571,7 @@ void CParticleEmitter2::BuildParticleVertices(ParticleVertex& vertex, uint32_t c
     if (this->m_flags & 0x20) {
         for (; i < this->m_liveList.Count(); i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             float depth = s_particleXform.c2 * particle->m_position.z + s_particleXform.b2 * particle->m_position.y + s_particleXform.a2 * particle->m_position.x + s_particleXform.d2;
             CParticleEmitter2::s_pq.Push(depth, particle);
         }
@@ -2583,7 +2583,7 @@ void CParticleEmitter2::BuildParticleVertices(ParticleVertex& vertex, uint32_t c
     } else {
         for (; i < count; i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             this->BuildVertex(*particle, vertex);
         }
     }
@@ -2775,7 +2775,7 @@ void CParticleEmitter2::Render(const C44Matrix* frameOfReference, void* buffer, 
 
     this->m_batchFlags ^= (first ^ this->m_batchFlags) & 0x1;
 
-    if (!this->m_params.m_hasModel) {
+    if (!this->m_params.m_particleType) {
         this->RenderParticles(frameOfReference, buffer);
     }
 }
@@ -2857,7 +2857,7 @@ void CParticleEmitter2::Update(float deltaTime, const C44Matrix& transform, cons
     this->InternalUpdate(deltaTime, 0);
     this->m_flags |= 0x80;
 
-    if (this->m_params.m_hasModel == CParticleEmitter2::PT_MODEL) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         this->PlaceParticleModels(frameOfReference);
     }
 }
@@ -2961,7 +2961,7 @@ CParticleEmitter2::CParticleEmitter2(const CParticleEmitter2& source, int32_t co
 
     uint32_t liveCount = source.m_liveList.m_count;
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         for (uint32_t i = 0; i < liveCount; i++) {
             uint32_t index = source.m_liveList.m_data[i];
             *this->m_liveList.New() = index;

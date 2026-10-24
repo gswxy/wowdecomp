@@ -116,7 +116,7 @@ class CParticleEmitter2 {
     };
 
     struct Params {
-        /* 0000 */ uint32_t m_hasModel;
+        /* 0000 */ PARTICLE_TYPE m_particleType;
         /* 0004 */ float m_emissionRate;
         /* 0008 */ float m_emissionRateVariation;
         /* 000C */ float m_life;

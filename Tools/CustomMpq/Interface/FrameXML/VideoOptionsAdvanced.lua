@@ -156,6 +156,7 @@ table.insert(PAGES, #PAGES, { name = "Lights", parent = "Advanced", title = "Lam
 	{ "maxLightDist", "slider", "Lamp light distance (yards)", "How far away lamps still light the world.", 20, 2048, 20 },
 	{ "lightIntensity", "slider", "Lamp brightness", "How bright the lamp light on the world is.", 0, 4, 0.1 },
 	{ "lightShadows", "slider", "Lamp shadows", "Posts, walls and creatures between a lamp and a surface block its light. 0 turns it off.", 0, 1, 0.1 },
+	{ "lightBakedShadows", "slider", "Baked lamp shadows", "Walls, ground and buildings between a fixed lamp and a surface block its light, also where they are off screen. 0 turns it off.", 0, 1, 0.1 },
 })
 -- Soft particles (backlog #4, docs/BACKLOG_PORT.md): on the World Effects page.
 for _, page in ipairs(PAGES) do

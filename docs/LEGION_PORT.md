@@ -303,6 +303,8 @@ Both run before liquids, transparents and the fog composite, so the fog fogs the
 | `maxLightDist` | 20..2048 | 200 | yd; lights farther than this plus their radius are dropped, the light fades over the last quarter (Legion 2048) |
 | `lightIntensity` | 0..4 | 1 | scale on the added light |
 | `lightShadows` | 0..1 | 1 | screen-space shadow rays toward each lamp; a fully blocked lamp keeps 1 - 0.85 x this of its light |
+| `lightBakedShadows` | 0..1 | 1 | baked occlusion per static lamp (lightbake), combined as min() with the rays; same 0.85 x this floor |
+| `lightBakedShadowAtlas` | 64..4096 | 512 | texels high of the bake atlas (power of two): 10 lamps per 16 rows, 512 = 320 lamps, 2 MB GPU + 2 MB CPU |
 
 **Which lamps** (2026-10-24, lightocc; Undercity lanterns dark from afar, on with the camera close). The gate was
 the doodads' animation, not the light count: a CM2Light is refreshed (stamp, visible, position) only in
@@ -327,6 +329,32 @@ both ways; the light is scaled by 1 - max(blocked) x 0.85 x `lightShadows`. Cons
 depth taps + ~20 ALU per tap per lit lamp per pixel; a pixel near one or two lamps pays 12-24 taps, about
 0.2-0.5 ms at 1440p in a lamp-heavy town on a mid GPU, nothing where no lamp reaches. ps_3_0 31 KB (fxc accepts the
 slot count; D3D9 runs it too).
+
+**Static light list** (2026-10-24, lightbake; closes the "never animated since load" ceiling above). `CMapDoodadDef::UpdateBounds`
+(every placed doodad: ADT MDDF via `PrepareMapDoodadDefs`, WMO MODD sets via `UpdateDoodadDefBounds`; the model is loaded
+there) calls `LegionLights::AddDoodad`: each M2Light of type 1 (point) whose visibility track's first key is on, at
+`m_position * m_mat` (the bone's rest pose taken as identity), colour = first key of diffuse colour x first key of diffuse
+intensity (1 when absent), attenuation CM2Light's 0 / 0.7 / 0.03. `~CMapDoodadDef` (after `CMap::FreeDoodadDef`, every
+Purge) removes them. Keyed by the model's own `CM2Light` (`&m_lights[i].m_light`), with its `m_stamp` when placed: while
+the stamp is unchanged (the model never animated) the static entry lights; once it changes the grid (live value) owns it,
+on when linked and off when the model left it off, and a grid light known to be static needs one refresh, not two, to be
+kept stale. WMO MOLT is not read: nothing in 12340 loads it at run time (its lights are baked into MOCV), and the lamps it
+stands for are doodads with their own M2 lights. Cost: one loop over the list a frame (a few thousand entries in Undercity).
+
+**Baked shadows** (2026-10-24, lightbake; `RunBake`, `LegionLights.hlsl` `BakedVisibility`). Not a rendered cube depth
+map: each static lamp's cube is 6 x 16 x 16 rays cast once through `World::Intersect` (flags 0x111: terrain, WMO and
+doodad collision), from 0.5 yd out to the lamp's radius, hit distance / 40 yd in 8 bits (255 = open). Chosen over a GPU
+bake because it is backend-free (D3D9, D3D11 and Vulkan sample the same ps_3_0 texture) and could be written without
+the rig; ceiling: props without collision (fences, banners, many small doodads) do not cast, the screen-space rays still
+catch the visible ones; WMO groups not yet loaded when the lamp bakes are missed until the slot is evicted. A lamp with
+more than half its rays blocked inside 1 yd (shut in its own holder's collision) is marked `noBake`. Atlas: `GxTex_Argb8888`
+1024 x `lightBakedShadowAtlas`, point filtered, 10 slots of 96 x 16 a row (faces side by side, face f = axis f / 2,
+negative when f & 1, u along axis + 1, v along axis + 2), CPU mirror uploaded per slot (`GxTexUpdate`). LRU: a selected
+static lamp without a slot gets the free one or the least recently selected; one lamp bakes at a time, at most 1 ms of
+rays a frame (checked every 16 rays), best radius / distance first. Shader: the slot's texel origin rides in colour.w
+(y, -1 none) and attenuation.w (x), c4-c7 view to world, c60 (1 / w, 1 / h, 16, 0.85 x `lightBakedShadows`), s1 the atlas;
+2x2 PCF on the face, a texel open when its distance >= |lamp to p + 0.15 n| - 0.4 - L x 2 / 16 yd; result min() with
+`LightVisibility`, and applied past the rays' 120 yd too. ps_3_0 52 KB (fxc fits it, so D3D9 has it too).
 
 Default on since 2026-10-24 (it replaces the stock per-vertex lamps on terrain and WMOs); cost not measured (no rig by the rules). Estimate:
 per pass 5 depth taps and ~16 x 14 ALU a pixel over the world viewport, about 0.2-0.4 ms a pass at 1440p on a mid GPU

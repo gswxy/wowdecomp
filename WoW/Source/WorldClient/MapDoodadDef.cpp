@@ -21,6 +21,7 @@
 #include "Engine/Source/Model2/M2Scene.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "Engine/Source/Tempest/C3Segment.h"
+#include "WoW/Source/WorldClient/LegionLights.h"
 
 // VERIFY: 4012bf37 manual
 // OFFSET: 0x007B4FA0
@@ -107,6 +108,7 @@ void CMapDoodadDef::UpdateBounds() {
     if (!(CWorld::enables & Enable_NoAnimation) && fadeLevel < 3) {
         this->m_model->m_fFlags &= ~0x40u;
     }
+    LegionLights::AddDoodad(this);     // LIGHTBAKE (not in 12340): the static light list
 }
 
 // VERIFY: f560b093 manual
@@ -349,4 +351,5 @@ bool CMapDoodadDef::QueryInteriorLighting(CMapObjDef* mapObjDef, int32_t groupNu
 // VERIFY: aa96dd41 manual
 // OFFSET: [0x007C2350, 0x007C2E40]
 CMapDoodadDef::~CMapDoodadDef() {
+    LegionLights::RemoveDoodad(this);  // LIGHTBAKE (not in 12340)
 }

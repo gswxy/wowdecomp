@@ -92,7 +92,7 @@ SHADERS = {
     # its D3D11 hwPCF 0 twin: the same ps_3_0, no compare slots in the SM4 pack, so the R32F maps are point-compared
     'VFogShadowMaskPoint': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
     # Legion lights (lightMode, docs/LEGION_PORT.md): the frame's M2 point lights on the surfaces, colour += colour * light
-    'LegionLights': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4), 0, 'LegionLights', {}),
+    'LegionLights': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 4), 0, 'LegionLights', {}),
     # Legion FFX post (docs/LEGION_PORT.md): colour shift only, FXAA low + colour shift, FXAA high + colour shift
     'LegionPost0': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'LegionPost', {'FXAA_STEPS': 0}),
     'LegionPost1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'LegionPost', {'FXAA_STEPS': 5}),

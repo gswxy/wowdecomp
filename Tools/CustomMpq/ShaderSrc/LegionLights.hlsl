@@ -11,6 +11,9 @@
 // Shadows (2026-10-24, lightocc): per lit light a short ray from the pixel toward the lamp, marched in view space and
 // read back through the depth buffer (Bend-style contact shadows, docs/shadow-research/03-screenspace-cheap.md 1a,
 // as one SSAO-like tap loop): a sample behind the depth there by less than the thickness counts as blocked.
+// Baked shadows (2026-10-24, lightbake): a static lamp's colour.w / attenuation.w carry its slot's texel origin
+// (y, x; y -1 = none) in s1, the cube of ray hit distances / 40 yd cast once through the world's collision
+// (LegionLights.cpp RunBake), c4-c7 view to world, c60 (1 / atlas w, 1 / atlas h, face texels, darkness 0 = off).
 #include "vf_common.hlsli"
 #include "vf_gbuffer.hlsli"
 
@@ -19,7 +22,10 @@ float4 cLightControl : register(c10);
 float4 cLights[kLights * 3] : register(c11);
 float4 cLightShadow : register(c59);
 
+float4 cBake : register(c60);
+
 sampler2D sDepth : register(s0);
+sampler2D sBake : register(s1);
 
 float3 ViewAt(float2 pixel)
 {
@@ -66,6 +72,51 @@ float LightVisibility(float3 p, float3 n, float3 lamp, float steps, float jitter
     return 1 - blocked * cLightShadow.x;
 }
 
+// One cube texel's hit distance (fraction of the radius) of the slot at origin; face texel t clamped to the face.
+float BakeTap(float2 origin, float face, float2 t)
+{
+    t = clamp(t, 0, cBake.z - 1);
+    float2 texel = origin + float2(face * cBake.z + t.x, t.y) + 0.5;
+    return tex2Dlod(sBake, float4(texel * cBake.xy, 0, 0)).r;
+}
+
+// 1 = the baked world lets the lamp reach p (view space), down to 1 - darkness; 2x2 PCF over the cube face.
+// Faces as RayDir: major axis a, sign face & 1, u along axis a + 1, v along a + 2.
+static const float kBakeRange = 40;     // yd: LegionLights.cpp kMaxRadius, a texel's 254 (255 = no hit)
+
+float BakedVisibility(float3 p, float3 n, float3 lamp, float2 origin)
+{
+    float3 w = mul(float4(p + n * 0.15 - lamp, 0), cViewToWorld).xyz;
+    float3 aw = abs(w);
+    float L = length(w);
+    float face;
+    float2 uv;
+    if (aw.x >= aw.y && aw.x >= aw.z)
+    {
+        face = w.x < 0 ? 1 : 0;
+        uv = w.yz / aw.x;
+    }
+    else if (aw.y >= aw.z)
+    {
+        face = w.y < 0 ? 3 : 2;
+        uv = w.zx / aw.y;
+    }
+    else
+    {
+        face = w.z < 0 ? 5 : 4;
+        uv = w.xy / aw.z;
+    }
+    float2 t = (uv * 0.5 + 0.5) * cBake.z - 0.5;
+    float2 t0 = floor(t);
+    float2 f = t - t0;
+    // the bias grows with the distance: a texel spans about 2 / face texels of a radian
+    float reach = L - 0.4 - L * 2.0 / cBake.z;
+    float4 lit = float4(BakeTap(origin, face, t0), BakeTap(origin, face, t0 + float2(1, 0)),
+                        BakeTap(origin, face, t0 + float2(0, 1)), BakeTap(origin, face, t0 + 1)) * (kBakeRange * 255.0 / 254.0) >= reach;
+    float open = lerp(lerp(lit.x, lit.y, f.x), lerp(lit.z, lit.w, f.x), f.y);
+    return 1 - (1 - open) * cBake.w;
+}
+
 float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
 {
     float2 pixel = FullPixelFromUv(viewportUv);
@@ -99,8 +150,15 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
         float falloff = min(1 / max(att.x + att.y * d + att.z * d2, 1e-3), 1.5) * window * window;
         float ndl = saturate(dot(n, v) / max(d, 1e-3));
         float3 c = cLights[i * 3 + 1].rgb * (falloff * ndl);
-        [branch] if (steps > 0 && max(c.r, max(c.g, c.b)) > 1.0 / 512)  // only lamps that reach the pixel
-            c *= LightVisibility(p, n, cLights[i * 3].xyz, steps, jitter);
+        [branch] if (max(c.r, max(c.g, c.b)) > 1.0 / 512)  // only lamps that reach the pixel
+        {
+            float vis = 1;
+            if (steps > 0)
+                vis = LightVisibility(p, n, cLights[i * 3].xyz, steps, jitter);
+            if (cBake.w > 0 && cLights[i * 3 + 1].w >= 0)
+                vis = min(vis, BakedVisibility(p, n, cLights[i * 3].xyz, float2(cLights[i * 3 + 2].w, cLights[i * 3 + 1].w)));
+            c *= vis;
+        }
         light += c;
     }
     light *= cLightControl.x * fade;

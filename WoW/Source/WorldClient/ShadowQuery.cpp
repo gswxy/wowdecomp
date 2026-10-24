@@ -756,18 +756,16 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
         vcount = icount = chunks = 0;
     };
 
-    // keeps triangle (a, b, c) of the chunk's 145 vertices when it faces away from the light, by its face and by the
-    // smooth normals the ground is shaded with (MCNR, 1/127 units). The face test alone let every small bump near the
-    // terminator cast: its back triangle shades lit (smooth normals) yet shadowed the triangles behind it, so slopes
-    // under a low sun broke into hard-edged dark triangles.
+    // keeps triangle (a, b, c) of the chunk's 145 vertices when its face looks away from the light. Vertices whose
+    // smooth normal (MCNR, 1/127 units, the one the ground is shaded with) faces the sun are pushed kLitPush yd further
+    // along it: a small bump's back triangle then no longer shades the lit-shaded triangles behind it (hard-edged dark
+    // triangles near the terminator), yet stays in the caster. Dropping those triangles instead (ridgecast) left holes
+    // at every crest: lit diamonds in a hill's shadow, and trees beyond a ridge shading its near side through them.
+    const float kLitPush = 4.0f;    // one ADT vertex spacing (4.17 yd)
     auto lit = [&](const int8_t* nrm, int32_t v) {
         return nrm && nrm[3 * v] * sun.x + nrm[3 * v + 1] * sun.y + nrm[3 * v + 2] * sun.z < 0.0f;
     };
-    auto tri = [&](const C3Vector* p, const int8_t* nrm, std::vector<uint16_t>& out, int32_t a, int32_t b, int32_t c) {
-        if (lit(nrm, a) || lit(nrm, b) || lit(nrm, c)) {
-            return;
-        }
-
+    auto tri = [&](const C3Vector* p, std::vector<uint16_t>& out, int32_t a, int32_t b, int32_t c) {
         C3Vector e1 = p[b] - p[a];
         C3Vector e2 = p[c] - p[a];
         C3Vector n(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x);
@@ -812,6 +810,10 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
 
                 for (int32_t i = 0; i < 145; i++) {
                     chunk->GetVertexPosition(i, &caster.p[i]);
+
+                    if (lit(chunk->m_normals, i)) {
+                        caster.p[i] = caster.p[i] + sun * kLitPush;
+                    }
                 }
 
                 const uint32_t holes = chunk->m_header->m_holes;
@@ -823,10 +825,10 @@ static void RenderTerrainShadow(CShadowCacheQueryData& data, int32_t band, const
                         }
 
                         const int32_t tl = r * 17 + c, tr = tl + 1, ctr = tl + 9, bl = tl + 17, br = tl + 18;
-                        tri(caster.p, chunk->m_normals, caster.indices, ctr, tl, bl);
-                        tri(caster.p, chunk->m_normals, caster.indices, ctr, tr, tl);
-                        tri(caster.p, chunk->m_normals, caster.indices, ctr, br, tr);
-                        tri(caster.p, chunk->m_normals, caster.indices, ctr, bl, br);
+                        tri(caster.p, caster.indices, ctr, tl, bl);
+                        tri(caster.p, caster.indices, ctr, tr, tl);
+                        tri(caster.p, caster.indices, ctr, br, tr);
+                        tri(caster.p, caster.indices, ctr, bl, br);
                     }
                 }
             }

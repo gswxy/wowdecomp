@@ -10,6 +10,14 @@
 enum CVAR_FLAGS : uint32_t {
     CVAR_ARCHIVE = 1,
     CVAR_LATCH = 2,
+    CVAR_READ_ONLY = 0x4,
+};
+
+enum CVAR_ARCHIVE_SCOPE : uint32_t {
+    CVAR_SCOPE_CONFIG = 0,
+    CVAR_SCOPE_ACCOUNT = 0x10,
+    CVAR_SCOPE_CHARACTER = 0x20,
+    CVAR_SCOPE_MASK = 0x30,
 };
 
 struct CVar;

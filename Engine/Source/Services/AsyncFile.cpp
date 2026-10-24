@@ -8,6 +8,7 @@
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/BlizzardCore/Source/System/Hardware/Hardware.h"
 #include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Event/EvtSched.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
@@ -549,6 +550,45 @@ int32_t NetQueuePromoteLocalFiles(const void* data, void* param) {
     return 1;
 }
 
+#if defined(WOWDECOMP_ARCH_64)
+// Not stock (hangdiag): one line on a long AsyncFileReadWait (see there).
+static void AsyncFileReadWaitReport(CAsyncObject* object, const char* name, double waitMs) {
+    const AsyncLoadStats& stats = AsyncFileReadGetStats();
+
+    g_queueLock.Enter();
+
+    int32_t queueIndex = -1;
+
+    for (int32_t i = 0; i < 3; i++) {
+        if (object->m_queue && object->m_queue == s_asyncQueues[i]) {
+            queueIndex = i;
+        }
+    }
+
+    char readers[256] = "";
+    int32_t used = 0;
+
+    for (CAsyncThread* thread = s_asyncThreadList.Head(); !s_asyncThreadList.IsEnd(thread); thread = s_asyncThreadList.RawNext(thread)) {
+        int32_t queue = thread->m_queue == s_asyncQueues[0] ? 0 : thread->m_queue == s_asyncQueues[1] ? 1 : 2;
+        const char* state = thread->m_currentObject == object ? "WAITOBJ" : thread->m_currentObject ? "busy" : "idle";
+        int32_t n = static_cast<int32_t>(SStrPrintf(readers + used, sizeof(readers) - used, " q%d/%u:%s", queue, thread->m_index, state));
+
+        if (n <= 0 || used + n >= static_cast<int32_t>(sizeof(readers)) - 1) {
+            break;
+        }
+
+        used += n;
+    }
+
+    HangLog("AsyncFileReadWait %.0f ms: %s isCurrent=%d isRead=%d isProcessed=%d stale=%d queue=%d(%p) waitObj=%s prepare=%d diskThreadsActive=%u queued=%u reading=%u posted=%u readers:%s",
+        waitMs, name, object->m_isCurrent, object->m_isRead, object->m_isProcessed, object->m_char25, queueIndex, object->m_queue,
+        s_asyncWaitObject == object ? "self" : s_asyncWaitObject ? "OTHER" : "null", object->m_prepareCallback ? 1 : 0,
+        stats.m_threads, stats.m_queued, stats.m_reading, stats.m_posted, readers);
+
+    g_queueLock.Leave();
+}
+#endif
+
 // VERIFY: d0d6eee1 manual
 // OFFSET: 0x004BA060
 void AsyncFileReadWait(CAsyncObject* object) {
@@ -592,9 +632,20 @@ void AsyncFileReadWait(CAsyncObject* object) {
 
 #if defined(WOWDECOMP_ARCH_64)
     uint64_t waitStart = AsyncNow();
+    uint32_t reportAt = OsGetAsyncTimeMs() + 5000;
 #endif
 
     do {
+#if defined(WOWDECOMP_ARCH_64)
+        // Not stock (hangdiag): a wait past 5 s logs the object's state to Logs\hang.txt, again every 5 s. It keeps
+        // waiting: WaitForLoad callers (HasSequence, GetBoneSequenceInfo, ...) read m_shared->m_data right after, so
+        // giving up would trade the hang for a crash.
+        if (static_cast<int32_t>(OsGetAsyncTimeMs() - reportAt) >= 0) {
+            reportAt += 5000;
+            AsyncFileReadWaitReport(object, name, static_cast<double>(AsyncNow() - waitStart) * ASYNC_MS_PER_TICK);
+        }
+#endif
+
         if (s_ingameProgressCallback) {
             s_ingameProgressCallback(0.0f, 0);
         }

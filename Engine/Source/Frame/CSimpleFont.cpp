@@ -262,8 +262,8 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
         float spacing = SStrToFloat(spacingAttr);
         float ddcSpacing = NDCToDDCWidth(spacing / (CoordinateGetAspectCompensation() * 1024.0f));
 
-        if (fabsf(ddcSpacing - this->m_attributes.m_spacing) >= 0.00000023841858f || !(this->m_attributes.m_flags & 0x1000)) {
-            this->m_attributes.m_flags |= 0x1010;
+        if (fabsf(ddcSpacing - this->m_attributes.m_spacing) >= 0.00000023841858f || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_SPACING_PRESENT)) {
+            this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_SPACING_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_SPACING_UPDATE;
             this->m_attributes.m_spacing = ddcSpacing;
         }
 
@@ -290,8 +290,8 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
     if (nonSpaceWrap && *nonSpaceWrap) {
         uint32_t styleFlags = StringToBOOL(nonSpaceWrap) ? this->m_attributes.m_styleFlags | 0x1000 : this->m_attributes.m_styleFlags & ~0x1000u;
 
-        if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & 0x200)) {
-            this->m_attributes.m_flags |= 0x202;
+        if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT)) {
+            this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_STYLE_UPDATE;
             this->m_attributes.m_styleFlags = styleFlags;
         }
     }
@@ -301,8 +301,8 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
     if (indented && *indented) {
         uint32_t styleFlags = StringToBOOL(indented) ? this->m_attributes.m_styleFlags | 0x20000 : this->m_attributes.m_styleFlags & ~0x20000u;
 
-        if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & 0x200)) {
-            this->m_attributes.m_flags |= 0x202;
+        if (styleFlags != this->m_attributes.m_styleFlags || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT)) {
+            this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_STYLE_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_STYLE_UPDATE;
             this->m_attributes.m_styleFlags = styleFlags;
         }
     }
@@ -312,9 +312,9 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
             CImVector color;
             LoadXML_Color(child, color, status);
 
-            if (*reinterpret_cast<uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&this->m_attributes.m_color) || !(this->m_attributes.m_flags & 0x400)) {
+            if (*reinterpret_cast<uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&this->m_attributes.m_color) || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_COLOR_PRESENT)) {
                 this->m_attributes.m_color = color;
-                this->m_attributes.m_flags |= 0x404;
+                this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_COLOR_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_COLOR_UPDATE;
             }
 
             this->m_fontableFlags &= ~0x4u;
@@ -337,9 +337,9 @@ void CSimpleFont::LoadXML(XMLNode* node, CStatus* status) {
                 LoadXML_Dimensions(offsetNode, offset.x, offset.y, status);
             }
 
-            if (*reinterpret_cast<uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&this->m_attributes.m_shadowColor) || offset.x != this->m_attributes.m_shadowOffset.x || offset.y != this->m_attributes.m_shadowOffset.y || !(this->m_attributes.m_flags & 0x800)) {
+            if (*reinterpret_cast<uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&this->m_attributes.m_shadowColor) || offset.x != this->m_attributes.m_shadowOffset.x || offset.y != this->m_attributes.m_shadowOffset.y || !(this->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_SHADOW_PRESENT)) {
                 this->m_attributes.m_shadowColor = color;
-                this->m_attributes.m_flags |= 0x808;
+                this->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_SHADOW_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_SHADOW_UPDATE;
                 this->m_attributes.m_shadowOffset = offset;
             }
 

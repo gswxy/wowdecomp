@@ -668,9 +668,9 @@ void CSimpleButton::SetNormalFontColor(const CImVector& color) {
         return;
     }
 
-    if (*reinterpret_cast<const uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&font->m_attributes.m_color) || !(font->m_attributes.m_flags & 0x400)) {
+    if (*reinterpret_cast<const uint32_t*>(&color) != *reinterpret_cast<uint32_t*>(&font->m_attributes.m_color) || !(font->m_attributes.m_flags & FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_COLOR_PRESENT)) {
         font->m_attributes.m_color = color;
-        font->m_attributes.m_flags |= 0x404;
+        font->m_attributes.m_flags |= FONT_ATTRIBUTE_PRESENT_FLAGS::FLAG_COLOR_PRESENT | FONT_ATTRIBUTE_UPDATE_FLAGS::FLAG_COLOR_UPDATE;
     }
 
     this->m_normalFont->m_fontableFlags &= ~0x4u;

@@ -85,6 +85,9 @@ CVar* s_unifiedCvar;    // shadowUnified (docs/shadow-research/05-step2-consolid
 CVar* s_penumbraCvar;   // shadowPenumbra (docs/shadow-research/06-soft-shadows.md)
 CVar* s_throwCvar;      // shadowMaxThrow
 CVar* s_throwFadeCvar;  // shadowThrowFade
+CVar* s_crestCvar;      // shadowMaskCrest (fix/landedge)
+CVar* s_smoothCvar;     // shadowMaskSmooth
+float s_fineCrest;      // shadowMaskCrest the fine level was last built with
 Level s_coarse(kSize, kCell, kGridOrigin, true);
 Level s_fine(kFineSize, kFineCell, kFineOrigin, false);
 // The fine level's land, (kFineSize + 2)^2 from (r0 - 1, c0 - 1): ADT heights where loaded, WDL beyond, kNone in holes.
@@ -455,14 +458,23 @@ float CoarseLandAt(float r, float c) {
 }
 
 // Worker thread: the fine level's sweep over its land snapshot, its light-side edge from a copy of the coarse lit heights.
-FineJob MakeFine(FineJob job, std::vector<float> coarse, int cr0, int cc0, std::array<float, 3> L) {
+// shadowMaskCrest (crest yd, 0 off): the texels hold max(lit, H - crest), H the land at the texel. lit(p) leaves out the
+// land at p, so at a ridge's crest vertex it is the far upstream land and one vertex behind it the crest itself: a jump
+// of the ridge's whole height inside one 4 yd cell, which bilinear filtering put wherever the cell happened to be, so
+// the land shadow started at the next vertex (hard stepped shards along every crest, docs/shadow-research/07-land-edge.md).
+// With the land's own height (less the crest margin, under the mask's 4 yd surface bias) the field is continuous there
+// and the shadow's edge follows the ridge between the vertices. The CPU test (Visibility) keeps the plain lit heights.
+FineJob MakeFine(FineJob job, std::vector<float> coarse, int cr0, int cc0, std::array<float, 3> L, float crest) {
     job.lit.resize(kFineSize * kFineSize);
     Build(job.lit.data(), kFineSize, kFineCell, job.r0, job.c0, L.data(),
         [&](float qr, float qc) { return FineHeightAt(job.land.data(), job.r0, job.c0, qr, qc); },
         [&](float qr, float qc) { return CoarseLitAt(coarse.data(), cr0, cc0, qr / kFinePerCoarse, qc / kFinePerCoarse); });
     job.texels.resize(job.lit.size());
+    constexpr int n = kFineSize + 2;   // job.land's row, from (r0 - 1, c0 - 1)
     for (size_t i = 0; i < job.lit.size(); i++) {
-        job.texels[i] = Pack(job.lit[i]);
+        const int r = static_cast<int>(i) / kFineSize, c = static_cast<int>(i) % kFineSize;
+        const float h = job.land[(r + 1) * n + c + 1];
+        job.texels[i] = Pack(crest > 0.0f && h != kNone ? std::max(job.lit[i], h - crest) : job.lit[i]);
     }
     return job;
 }
@@ -507,7 +519,7 @@ void UpdateFine(bool due, bool fade, uint32_t now) {
     FillFineLand(job.r0, job.c0, job.land);     // world data: the main thread's share
     job.chunks = CountFineChunks(job.r0, job.c0);
     s_fineStale = false;
-    s_fineJob = std::async(std::launch::async, MakeFine, std::move(job), s_coarse.lit, s_coarse.r0, s_coarse.c0, std::array<float, 3> { s_light[0], s_light[1], s_light[2] });
+    s_fineJob = std::async(std::launch::async, MakeFine, std::move(job), s_coarse.lit, s_coarse.r0, s_coarse.c0, std::array<float, 3> { s_light[0], s_light[1], s_light[2] }, s_fineCrest);
 }
 
 }  // namespace
@@ -521,6 +533,8 @@ void RegisterCVars() {
     s_penumbraCvar = CVar::Register("shadowPenumbra", "Model shadows (shadowUnified) soften with the distance to their caster, sharp where a trunk meets the ground and soft far off; times the sun's real 0.53 degree disc: 0 = off (fixed edge, old), default 3", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_throwCvar = CVar::Register("shadowMaxThrow", "Model shadows (shadowUnified) fade out when their caster is more than this many yards back along the sun (the mountains' shadow and shadowMask are not affected): 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_throwFadeCvar = CVar::Register("shadowThrowFade", "Yards over which shadowMaxThrow fades a model shadow out, ending at shadowMaxThrow (default 20)", 1, "20", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_crestCvar = CVar::Register("shadowMaskCrest", "The mountains' shadow (shadowMask, near terrain within 1 km) starts at the true ridge line instead of the next 4 yd terrain vertex past it, so its edge is smooth instead of stepped: yards under the ground the near land's own height still counts as blocking, 0 = off (old), default 4", 1, "4", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_smoothCvar = CVar::Register("shadowMaskSmooth", "The mountains' shadow (shadowMask, near terrain within 1 km) reads its height map with a smooth cubic filter instead of bilinear, so its edges curve instead of showing the 4 yd grid: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_fineCvar = CVar::Register("shadowMaskFine", "The mountains' shadow (shadowMask) from the loaded terrain's own heights (4 yd) within 1 km of the camera, the far WDL (33 yd) beyond: 1 = on (default), 0 = WDL only", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
@@ -557,7 +571,8 @@ void SoftShadow(float params[4], float levels[4]) {
     params[0] = penumbra * 0.00465f;
     params[1] = clamp ? 1.0f : 0.0f;
     params[2] = penumbra > 0.0f || clamp ? 1.0f : 0.0f;
-    params[3] = 0.0f;
+    // shadowMaskSmooth: the fine level's texels per side for the mask's B-spline read of it (0: bilinear)
+    params[3] = !s_smoothCvar || s_smoothCvar->m_intValue != 0 ? static_cast<float>(kFineSize) : 0.0f;
 }
 
 float MaskSoftYards() {
@@ -623,7 +638,9 @@ bool Update(const float trueLight[3], const float camPos[3], CGxTex*& tex, float
         if (!fade && coarse) {
             s_fineOn = false;   // a new map or a snap: the old fine level is wrong until its rebuild arrives
         }
-        s_fineStale = s_fineStale || coarse;
+        const float crest = s_crestCvar && std::isfinite(s_crestCvar->m_floatValue) ? std::clamp(s_crestCvar->m_floatValue, 0.0f, 100.0f) : 4.0f;
+        s_fineStale = s_fineStale || coarse || crest != s_fineCrest;
+        s_fineCrest = crest;
         if (!s_fineStale && s_fine.built && now - s_finePoll >= kChunkPollMs) {
             s_finePoll = now;
             s_fineStale = CountFineChunks(s_fine.r0, s_fine.c0) != s_fineChunks;

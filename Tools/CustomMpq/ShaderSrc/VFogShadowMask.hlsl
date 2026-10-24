@@ -44,13 +44,33 @@ sampler2D sTerrainFineFrom : register(s11);
 
 float4 cMaskPcf[2] : register(c74);
 // shadowPenumbra / shadowMaxThrow (TerrainSunShadow::SoftShadow, docs/shadow-research/06-soft-shadows.md), unified pixels only:
-// c80 (filter radius per yard to the caster, throw clamp on, any on, 0), c81 the blocker search's reference offsets (yd).
+// c80 (filter radius per yard to the caster, throw clamp on, any on, shadowMaskSmooth: the fine level's texels per side or
+// 0), c81 the blocker search's reference offsets (yd).
 float4 cMaskSoft : register(c80);
 float4 cMaskSoftLevels : register(c81);
 float4 cMaskCascadeLight : register(c76);
 float4 cMaskLandLight : register(c77);
 
 sampler2D sDepth : register(s0);
+
+// The fine level's lit height (R + G) at uv: bilinear, or under shadowMaskSmooth (c80.w = texels per side) a cubic
+// B-spline from 4 bilinear taps, so the land shadow's edge curves through the 4 yd cells instead of running straight
+// across each one (docs/shadow-research/07-land-edge.md).
+float FineLit(sampler2D heights, float2 uv)
+{
+    float n = cMaskSoft.w;
+    [branch] if (n <= 0)
+        return dot(tex2Dlod(heights, float4(uv, 0, 0)).xy, 1);
+    float2 t = uv * n - 0.5;
+    float2 f = frac(t);
+    float2 i = t - f;
+    float2 f2 = f * f, f3 = f2 * f;
+    float2 w0 = (1 - 3 * f + 3 * f2 - f3) / 6, w1 = (4 - 6 * f2 + 3 * f3) / 6, w3 = f3 / 6;
+    float2 g0 = w0 + w1, g1 = 1 - g0;
+    float2 p0 = (i - 0.5 + w1 / g0) / n, p1 = (i + 1.5 + w3 / g1) / n;
+    return g0.y * (g0.x * dot(tex2Dlod(heights, float4(p0.x, p0.y, 0, 0)).xy, 1) + g1.x * dot(tex2Dlod(heights, float4(p1.x, p0.y, 0, 0)).xy, 1)) +
+           g1.y * (g0.x * dot(tex2Dlod(heights, float4(p0.x, p1.y, 0, 0)).xy, 1) + g1.x * dot(tex2Dlod(heights, float4(p1.x, p1.y, 0, 0)).xy, 1));
+}
 sampler2D sBand0 : register(s8);
 sampler2D sUnit : register(s9);
 
@@ -262,10 +282,10 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
             float w = saturate((0.5 - max(edge.x, edge.y)) * cTerrainFine.w);
             [branch] if (w > 0)
             {
-                float fine = dot(tex2Dlod(sTerrainFine, float4(uv, 0, 0)).xy, 1);
+                float fine = FineLit(sTerrainFine, uv);
                 float2 from = cTerrainFineFrom.xy - cTerrainFineFrom.z * world.yx;
                 [branch] if (cTerrainFineFrom.w < 1 && max(abs(from.x - 0.5), abs(from.y - 0.5)) < 0.5)
-                    fine = lerp(dot(tex2Dlod(sTerrainFineFrom, float4(from, 0, 0)).xy, 1), fine, cTerrainFineFrom.w);
+                    fine = lerp(FineLit(sTerrainFineFrom, from), fine, cTerrainFineFrom.w);
                 lit = lerp(lit, fine, w);
             }
         }

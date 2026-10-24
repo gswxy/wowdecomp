@@ -1761,7 +1761,7 @@ void CGQuestLog::LoadTrackedQuests() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("trackedQuests");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
 
     for (uint32_t questId = list.GetNextValue(); questId; questId = list.GetNextValue()) {
         CGQuestLog::AddQuestWatch(questId, 0);
@@ -1769,7 +1769,7 @@ void CGQuestLog::LoadTrackedQuests() {
 
     CGQuestLog::m_trackedQuestsLoaded = 1;
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         list.m_buffer[0] = 'v';
         list.m_buffer[1] = 1;
         list.m_buffer[list.m_pos] = 0;
@@ -2217,7 +2217,7 @@ void CGQuestLog::SaveTrackedQuests() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("trackedQuests");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
 
     for (uint32_t i = 0; i < CGQuestLog::m_numQuestWatches; i++) {
         if (!CGQuestLog::m_questWatches[i].m_expireTime) {
@@ -2225,7 +2225,7 @@ void CGQuestLog::SaveTrackedQuests() {
         }
     }
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         list.m_buffer[0] = 'v';
         list.m_buffer[1] = 1;
         list.m_buffer[list.m_pos] = 0;

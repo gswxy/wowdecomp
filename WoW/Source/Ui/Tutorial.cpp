@@ -161,14 +161,14 @@ void CGTutorial::LoadFlaggedTutorials() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("flaggedTutorials");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
     int32_t* tutorial = s_tutorialsCompleted;
 
     for (uint32_t value = list.GetNextValue(); value; value = list.GetNextValue()) {
         *tutorial++ = value;
     }
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         char text[256];
         text[0] = 'v';
         text[1] = 1;
@@ -224,7 +224,7 @@ void CGTutorial::SaveFlaggedTutorials() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("flaggedTutorials");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
 
     for (uint32_t i = 0; i < 60; i++) {
         if (!s_tutorialsCompleted[i]) {
@@ -234,7 +234,7 @@ void CGTutorial::SaveFlaggedTutorials() {
         list.AddNextValue(s_tutorialsCompleted[i]);
     }
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         list.m_buffer[0] = 'v';
         list.m_buffer[1] = 1;
         list.m_buffer[list.m_pos] = 0;

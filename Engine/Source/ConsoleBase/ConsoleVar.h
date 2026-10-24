@@ -87,10 +87,16 @@ class CVarArrayWrapper {
 
 class CVarIntListWrapper {
     public:
+    enum STATE : uint32_t {
+        INITIAL = 0,
+        READ = 1,
+        WRITE = 2,
+    };
+
     /* 0000 */ CVar* m_cvar;
     /* 0004 */ uint32_t m_pos;
     /* 0008 */ char m_buffer[256];
-    /* 0108 */ uint32_t m_state;
+    /* 0108 */ STATE m_state;
 
     void AddNextValue(uint32_t value);
     uint32_t GetNextValue();

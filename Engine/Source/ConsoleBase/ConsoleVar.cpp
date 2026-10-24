@@ -332,7 +332,7 @@ void CVar::SetReadOnly(bool readOnly) {
 // VERIFY: e41a25fd manual
 // OFFSET: 0x00766720
 void CVarIntListWrapper::AddNextValue(uint32_t value) {
-    this->m_state = 2;
+    this->m_state = CVarIntListWrapper::STATE::WRITE;
 
     if (value <= 93 * 93 * 93 - 1 && this->m_pos < 0xFD) {
         this->m_buffer[this->m_pos++] = static_cast<char>(value / (93 * 93) + 35);
@@ -629,7 +629,7 @@ uint32_t CVarIntListWrapper::GetNextValue() {
             this->m_pos = 2;
         }
 
-        this->m_state = 1;
+        this->m_state = CVarIntListWrapper::STATE::READ;
     }
 
     const char* str = this->m_cvar->m_stringValue.m_str + this->m_pos;

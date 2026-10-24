@@ -91,7 +91,7 @@ class CShadowCache {
     static int32_t s_haveBandCentre;  // gfxShadowAnchor: the bands follow s_bandCentre instead of the viewer
     static C3Vector s_bandCentre;
     // Not stock (Badgermilk0 port; CShadowQuery sets these from shadowMapSize / shadowSoftness / shadowCascadeReuse):
-    static uint32_t s_sizeOverride;   // texels per map side, 0 = stock (1024, 2048 from MEDIUM and HIGH up); PCF only
+    static uint32_t s_sizeOverride;   // texels per map side, 0 = stock (1024, 2048 from MEDIUM and HIGH up); PCF or Vulkan only
     static float s_pcfScale;          // scales the PCF tap offsets, 1 = stock (a kernel of about two texels)
     static int32_t s_cascadeReuse;    // VERY_HIGH: band 1 redrawn every 2nd frame, band 2 every 4th, sooner on a move
     static int32_t s_bandDoodads;     // not stock (shadowBandDoodads): extShadowQuality 3-4 bands take query flag 4 too

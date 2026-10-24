@@ -117,7 +117,7 @@ void CShadowQuery::Initialize() {
     s_cvShadowSnap = CVar::Register("gfxShadowSnap", "Shadow maps move in whole texels so shadow edges do not crawl (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowAnchor = CVar::Register("gfxShadowAnchor", "Shadow cascades stay put while the player jumps (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSlopeBias = CVar::Register("gfxShadowSlopeBias", "Extra shadow depth bias at a low sun, in band texels times cot(elevation) up to 3 (0 = stock)", 1, "1.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering or Vulkan only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSoftness = CVar::Register("shadowSoftness", "Scales the shadow PCF filter, 0.25 to 4 (1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowTerrainCast = CVar::Register("shadowTerrainCast", "ADT terrain casts into the sun shadow maps (0 = stock: models and WMOs only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCasterMinTexels = CVar::Register("shadowCasterMinTexels", "Smallest caster in the 320/1280 yd shadow bands, in band texels of radius (0 = stock 2/10 yd)", 1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);

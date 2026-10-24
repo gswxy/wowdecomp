@@ -1032,9 +1032,11 @@ void CShadowCache::Init() {
         CShadowCache::s_shadowSize = 2048;
     }
 
-    // Not stock (shadowMapSize): PCF only; the R32F path draws with the screen's depth buffer, which a map larger
-    // than the window would overrun.
-    if (CShadowCache::s_sizeOverride && CShaderEffect::s_usePcfFiltering) {
+    // Not stock (shadowMapSize): PCF, or Vulkan's R32F path. Elsewhere the R32F path draws with the screen's depth
+    // buffer, which a map larger than the window would overrun; Vulkan pairs every colour target with a depth
+    // buffer of its own size (Vulkan/Frame/Targets.cpp FramebufferFor/DepthFor), so the override is safe there.
+    if (CShadowCache::s_sizeOverride
+        && (CShaderEffect::s_usePcfFiltering || g_theGxDevicePtr->DeviceApi() == GxApi_Vulkan)) {
         uint32_t maxSize = g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d];
         CShadowCache::s_shadowSize = maxSize && CShadowCache::s_sizeOverride > maxSize ? maxSize : CShadowCache::s_sizeOverride;
     }

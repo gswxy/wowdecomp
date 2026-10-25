@@ -10,6 +10,7 @@ sampler2D sFoam   : register(s10);   // XTextures\foam\waterchop7bw.blp (Cata s7
 sampler2D sScene  : register(s12);   // the world viewport before the water (Cata s0 / s3)
 sampler2D sDepth  : register(s13);   // the raw scene depth before the water, R32F, whole window
 sampler2D sRipple : register(s11);   // vfog's ripple height field: r = height, g = previous step (Cata s4)
+sampler2D sRippleW: register(s3);    // the wide one, for ships (Cata s8; wxl-water s10)
 #ifdef PLANAR
 sampler2D sRefl   : register(s14);   // the planar reflection (Cata p = 1, s1), mirrored left to right
 #endif
@@ -29,6 +30,8 @@ float4 gSpecular : register(c28);    // sun specular colour
 float4 gRipWin   : register(c29);    // ripple window origin - camera (xy), 1 / window size (zw)
 float4 gRipTex   : register(c30);    // (1/N, 1/N, step fraction, P15 ripple strength; 0 = off)
 float4 gRefl     : register(c31);    // PLANAR: x = the mirrored plane's height - camera z, y = 1 / its tolerance
+float4 gRipWinW  : register(c32);    // the wide level's window and strength, same layout (wxl-water c38 / c39)
+float4 gRipTexW  : register(c33);
 #ifndef BELOW
 // shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades, c56-c62 + c64, s5/s6, over camera-relative world.
 static const float4x4 cViewToWorld = (float4x4)0;   // vf_shadow's land tap, unused here
@@ -39,10 +42,9 @@ sampler2D sPreMask  : register(s8);
 sampler2D sPostMask : register(s15);
 #endif
 
-// Cata ProcWaterAbove ripple slope (W1 8.2, wxl-water RippleSlope, one level): height interpolated between the last two
+// Cata ProcWaterAbove ripple slope (W1 8.2, wxl-water RippleSlope / RippleSlopeW, one level each): height interpolated between the last two
 // steps, finite differences at a lookup bent by the normal map, nothing outside the window.
-// b: the wide (ship wake) level the step adds in, 0 when the map is two-channel (its b reads 1, a constant, no slope).
-float RipH(float2 t) { float4 h = tex2D(sRipple, t); return lerp(h.g, h.r, gRipTex.z) + h.b; }
+float RipH(float2 t) { float4 h = tex2D(sRipple, t); return lerp(h.g, h.r, gRipTex.z); }
 float2 RippleSlope(float3 world, float2 nn)
 {
     float2 uv = (world.xy - gRipWin.xy) * gRipWin.zw - nn * 0.02 - 1e-6;
@@ -50,6 +52,16 @@ float2 RippleSlope(float3 world, float2 nn)
     float  dx = RipH(uv + float2(gRipTex.x, 0.0)) - h0, dy = RipH(uv + float2(0.0, gRipTex.y)) - h0;
     float2 sl = float2(dx, dy) / (sqrt(1.0 + dx * dx) * sqrt(1.0 + dy * dy)) * gRipTex.w;
     return (max(abs(2.0 * uv.x - 1.0), abs(2.0 * uv.y - 1.0)) >= 1.0 - gRipTex.x) ? float2(0.0, 0.0) : sl;
+}
+
+float RipHW(float2 t) { float4 h = tex2D(sRippleW, t); return lerp(h.g, h.r, gRipTexW.z); }
+float2 RippleSlopeW(float3 world, float2 nn)
+{
+    float2 uv = (world.xy - gRipWinW.xy) * gRipWinW.zw - nn * 0.02 - 1e-6;
+    float  h0 = RipHW(uv);
+    float  dx = RipHW(uv + float2(gRipTexW.x, 0.0)) - h0, dy = RipHW(uv + float2(0.0, gRipTexW.y)) - h0;
+    float2 sl = float2(dx, dy) / (sqrt(1.0 + dx * dx) * sqrt(1.0 + dy * dy)) * gRipTexW.w;
+    return (max(abs(2.0 * uv.x - 1.0), abs(2.0 * uv.y - 1.0)) >= 1.0 - gRipTexW.x) ? float2(0.0, 0.0) : sl;
 }
 
 // The viewport uv of a clip position, and the linear view depth of the scene there.
@@ -71,7 +83,7 @@ float4 main(float4 col : COLOR0, float4 coarse : TEXCOORD0, float4 fine : TEXCOO
     float2 nB = (tex2D(sNormal, fine.xy).xy + tex2D(sNormal, fine.zw).xy - 1.0) * 1.4;
     float2 n  = lerp(nB, 2.0 * nA, saturate(dist * 0.001 + 0.2)) * gP.x;
     float2 N2 = n * rsqrt(dot(n, n) + 1.0);
-    N2 += RippleSlope(world, N2);
+    N2 += RippleSlope(world, N2) + RippleSlopeW(world, N2);
 
     // --- shading (Cata 8.3) -------------------------------------------------------------------------
     float3 Nw  = normalize(float3(gP.w * N2 + vnrm.xy, vnrm.z));

@@ -50,8 +50,9 @@ constexpr int kFirstSurfaceStage = 3;
 constexpr int kFirstFoamStateStage = 7;
 constexpr int kWaveFoamMaskStage = 11;
 constexpr int kRippleStage = 12;
-constexpr int kShoreFoamMaskStage = 14;
-constexpr int kDepthFoamMaskStage = 15;
+constexpr int kShoreDepthFoamMaskStage = 14;   // the shore and depth foam masks packed in R and G (ShoreDepthMasks)
+constexpr int kRippleWideStage = 15;           // the ships' wide ripple level (VolumetricFogWaterRipples.cpp)
+constexpr uint32_t kRippleWideRegister = 70;   // c70 / c71: its window (vw_constants cRippleWinW / cRippleTexW)
 constexpr int kLastStage = 15;
 constexpr int kLandShadowStage = 13;      // shadowMask: TerrainSunShadow's lit-height texture (free slot)
 constexpr uint32_t kLandShadowRegister = 68;   // its row (u0, v0, k, 1/soft), w = 0: off
@@ -341,11 +342,10 @@ void PlanMasks(const std::vector<std::vector<const uint8_t*>>& levels) {
         if (wave[0] >= 0 || wave[1] >= 0 || wave[2] >= 0) {
             plan(wave, true);
         }
-        for (int slot : { kShoreFoamSlot, kDepthFoamSlot }) {
-            const int32_t single[kWaveFoamMaskSlots] = { p.masks[slot], -1, -1 };
-            if (single[0] >= 0) {
-                plan(single, false);
-            }
+        // Shore and depth foam share one texture (R, G; the shipped masks are all 1024^2), so s15 is free for the wakes.
+        const int32_t shoreDepth[kWaveFoamMaskSlots] = { p.masks[kShoreFoamSlot], p.masks[kDepthFoamSlot], -1 };
+        if (shoreDepth[0] >= 0 || shoreDepth[1] >= 0) {
+            plan(shoreDepth, true);
         }
     }
 }
@@ -396,9 +396,10 @@ const MaskTexture* WaveMasks(const WaterPreset& p) {
     return nullptr;
 }
 
-const MaskTexture* SingleMask(int32_t index) {
+const MaskTexture* ShoreDepthMasks(const WaterPreset& p) {
+    const int32_t sources[kWaveFoamMaskSlots] = { p.masks[kShoreFoamSlot], p.masks[kDepthFoamSlot], -1 };
     for (const MaskTexture& m : s_data.masks) {
-        if (!m.packed && index >= 0 && m.sources[0] == index) {
+        if (m.packed && std::equal(m.sources, m.sources + kWaveFoamMaskSlots, sources)) {
             return &m;
         }
     }
@@ -410,7 +411,8 @@ bool MaskPresent(const WaterPreset& p, int slot) {
         const MaskTexture* wave = WaveMasks(p);
         return wave && wave->present[slot];
     }
-    return SingleMask(p.masks[slot]) != nullptr;
+    const MaskTexture* shoreDepth = ShoreDepthMasks(p);
+    return shoreDepth && shoreDepth->present[slot - kShoreFoamSlot];
 }
 
 // ---- classification (coa water_classify.h; engine.cpp ClassifyWaterSettings) --------------------------------------
@@ -948,9 +950,14 @@ void ShadeClass(WaterClass waterClass, CGxTex* waterDepth = nullptr) {
         Bind(kFirstFoamStateStage + k, w ? w->state : FlatTex());
     }
     Bind(kWaveFoamMaskStage, MaskTex(WaveMasks(*preset)));
-    Bind(kShoreFoamMaskStage, MaskTex(SingleMask(preset->masks[kShoreFoamSlot])));
-    Bind(kDepthFoamMaskStage, MaskTex(SingleMask(preset->masks[kDepthFoamSlot])));
+    Bind(kShoreDepthFoamMaskStage, MaskTex(ShoreDepthMasks(*preset)));
     Bind(kRippleStage, s_pass.ripples.map ? s_pass.ripples.map : FlatTex());
+    // c70 / c71 (wxl-water c38 / c39, but world-absolute like c65): the wide level's window, its gain 0 when off.
+    const RippleShading& rs = s_pass.ripples;
+    const float wide[2][4] = { { rs.wideWindow[0], rs.wideWindow[1], rs.wideWindow[2], rs.wideWindow[2] },
+                               { rs.wideWindow[3], rs.wideWindow[3], rs.wideShape[0], rs.wideMap ? rs.wideShape[1] : 0.0f } };
+    SetPs(kRippleWideRegister, &wide[0][0], 2);
+    Bind(kRippleWideStage, rs.wideMap ? rs.wideMap : FlatTex());
     // shadowMask: the land's sun shadow on the glint, foam and in-scatter sun (VFogWater.hlsl LandSunVisibility).
     float land[4] = {};
     CGxTex* landTex = nullptr;

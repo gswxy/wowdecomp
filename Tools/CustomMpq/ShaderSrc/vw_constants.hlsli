@@ -36,6 +36,8 @@ float4 cRippleShape : register(c66);
 float4 cRippleFade : register(c67);
 float4 cLandShadow : register(c68);      // shadowMask: TerrainSunShadow row (u0, v0, k, 1 / soft), w = 0 off
 float4 cLandShadowFade : register(c69);  // gfxShadowFade: x = 1 - fade (0 = the full land shadow); y = shadowWaterStrength
+float4 cRippleWinW : register(c70);     // the wide level: window origin xy (yd), 1 / window size (zw) (wxl-water gRipWinW)
+float4 cRippleTexW : register(c71);     // (1/N, 1/N, step fraction, ripple gain; 0 = off) (wxl-water gRipTexW)
 sampler2D sLandShadow : register(s13);   // its lit-height texture
 static float gLandSun = 1;               // VFogWater.hlsl sets it per pixel (LandSunVisibility)
 
@@ -52,8 +54,8 @@ sampler2D sFoamState2 : register(s9);
 sampler2D sFoamState3 : register(s10);
 sampler2D sWaveFoamMasks : register(s11);
 sampler2D sRipples : register(s12);
-sampler2D sShoreFoamMask : register(s14);
-sampler2D sDepthFoamMask : register(s15);
+sampler2D sShoreDepthFoamMasks : register(s14);   // the shore foam mask in R, the depth foam mask in G (one texture: s15 is the wakes')
+sampler2D sRippleWide : register(s15);   // the wide ship-wake level (wxl-water s10), Gr1616F height / previous height
 
 static const int kHighFoamSlot = 0;
 static const int kMidFoamSlot = 1;

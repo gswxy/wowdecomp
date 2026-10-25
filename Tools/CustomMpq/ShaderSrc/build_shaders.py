@@ -20,7 +20,7 @@ VFog (docs/VFOG_PORT.md section 5): VFogMarch{Q}[L][N] and VFogComposite{Q}[L][N
 16/24/32 as coa-vfog CMakeLists.txt), L = LOCAL_LIGHTS, N = VF_NOISE (density variation + authored noise),
 plus VFogTemporal and VFogHistoryDepth, and the god rays VFogRayMask, VFogRayBlur and VFogRayComposite.
 Grading (coa vp_grade): VFogGrade.
-Water (coa vw_*): VFogWaterDepth, VFogWaterMask, VFogWater{1,2,3} (SSR_STEPS 0/16/32) and VFogRippleStep;
+Water (coa vw_*): VFogWaterDepth, VFogWaterMask, VFogWater{1,2,3} (SSR_STEPS 0/16/32), VFogRippleStep and VFogWakeSplat;
 GPU waves VFogWave{Evolve,Fft,Surface,Mip,Pack}.
 Grass wind (wxl-grasswind, MULTI): Shaders/Vertex/vs_3_0|vs_4_0/DetailDoodad.bls, the stock grass VS's 6 permutations.
 Fading models (wxl-vfog 0.6.3): VFogDepthCopy. Legion FFX post: LegionPost{0,1,2}. Legion SSAO: LegionSsao{,Box,Bilateral,Apply}. Legion heat haze (refraction): LegionRefraction. Land shadow mask (shadowMask): VFogShadowMask, VFogShadowMaskPoint. Lamps (lightMode): LegionLights. MSAA sample split (coa): VFogSilhouette and VFogCompositeSplit{Q}[L][N].
@@ -65,7 +65,9 @@ SHADERS = {
     'VFogWaterDepth': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaterDepth', {'MASK': 0}),
     'VFogWaterMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaterDepth', {'MASK': 1}),
     # water ripples and wakes (coa vw_ripple_step): one 30 Hz step of the Gr1616F height field
-    'VFogRippleStep': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogRippleStep', {}),
+    'VFogRippleStep': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogRippleStep', {}),
+    # ship wakes (wxl-water SplatHulls): the hull polygons added into the wide level before its step
+    'VFogWakeSplat': ('ps_3_0', TEXCOORD0, COLOR0, 0, 0, 'VFogWakeSplat', {}),
     # GPU waves (coa vw_fft_*, docs "Waves"): evolve + fold, radix-2 stages, surface moments / foam, moment mips, pack
     'VFogWaveEvolve': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaveEvolve', {}),
     'VFogWaveFft': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaveFft', {}),
@@ -114,9 +116,9 @@ SHADERS = {
 # Cata water (waterStyle 1, docs/BACKLOG_PORT.md "Cata water"): the ProcWater VS and ProcWaterAbove / Below PS,
 # drawn by the liquid material in place of vsLiquidWater / psLiquidWater (WorldClient/CataWater.cpp).
 SHADERS['CataWater'] = ('vs_3_0', 0, 0, 0, 0, 'CataWater', {})
-SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 8, 9, 10, 11, 12, 13, 15), 0, 'CataWaterPs', {})
-SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15), 0, 'CataWaterPs', {'PLANAR': 1})
-SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
+SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 5, 6, 8, 9, 10, 11, 12, 13, 15), 0, 'CataWaterPs', {})
+SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15), 0, 'CataWaterPs', {'PLANAR': 1})
+SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
 SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWaterTint', {})
 # Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).
 SHADERS['FarTreesVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesVS', {})

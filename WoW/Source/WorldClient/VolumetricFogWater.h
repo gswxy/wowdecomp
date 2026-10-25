@@ -118,6 +118,9 @@ struct RippleShading {
     float window[4];        // c65: origin xy (yd), 1 / extent, 1 / texels
     float shape[4];         // c66: step weight, gain (vfogWaterRipples), extent
     float fade[4];          // c67: fade end, 1 / fade width, texel yards
+    CGxTex* wideMap;        // the ships' wide level (wxl-water level 1); nullptr: no wakes this frame
+    float wideWindow[4];    // origin xy (yd), 1 / extent, 1 / texels
+    float wideShape[4];     // step weight, gain (the close level's), 0, 0
 };
 // From the water pass's Begin (water in view): reads the units in water, runs the due 30 Hz steps into the ripple maps
 // (render targets; restores vp's target and state) and fills the shading constants.

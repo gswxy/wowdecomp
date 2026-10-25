@@ -67,6 +67,7 @@ constexpr float kMinSize = 16.0f;
 constexpr int kNormalStage = 9;
 constexpr int kFoamStage = 10;
 constexpr int kRippleStage = 11;
+constexpr int kRippleWideStage = 3;       // the ships' wide level (wxl-water s10)
 constexpr int kSceneStage = 12;
 constexpr int kDepthStage = 13;
 constexpr int kReflStage = 14;
@@ -559,6 +560,13 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
     };
     device->ShaderConstantsSet(GxSh_Pixel, 29, &rc[0][0], 2);
     Bind(kRippleStage, rs.map ? rs.map : s_scene);  // off: any valid texture, its slope is scaled by 0
+    // c32 / c33 (wxl-water c38 / c39): the wide level the ships are drawn into, the same layout and strength.
+    const float wc[2][4] = {
+        { static_cast<float>(static_cast<double>(rs.wideWindow[0]) - cameraPos.x), static_cast<float>(static_cast<double>(rs.wideWindow[1]) - cameraPos.y), rs.wideWindow[2], rs.wideWindow[2] },
+        { rs.wideWindow[3], rs.wideWindow[3], rs.wideShape[0], rs.wideMap ? lp->p15 : 0.0f },
+    };
+    device->ShaderConstantsSet(GxSh_Pixel, 32, &wc[0][0], 2);
+    Bind(kRippleWideStage, rs.wideMap ? rs.wideMap : s_scene);
 
     Bind(kNormalStage, normal);
     Bind(kFoamStage, foam);

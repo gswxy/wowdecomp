@@ -121,24 +121,30 @@ float ShallowTileWeight(float inverseTileSize, float columnDepth)
 }
 
 // coa's ripples: s12 = the Gr1616F ripple map (height, previous height) around the camera target, c65-c67 its window.
-// x: the close field (units, rain); y: the wide ship-wake level the step adds in as b (VFogRippleStep c98).
-float2 RippleHeight(float2 uv)
+float RippleHeight(float2 uv)
 {
-    float3 state = tex2Dlod(sRipples, float4(uv, 0, 0)).rgb;
-    return float2(lerp(state.g, state.r, RippleWeight()), state.b);
-}
-
-float RippleWindow(float2 uv)
-{
-    float2 fromCentre = abs(uv - 0.5) * RippleExtent();
-    return saturate((RippleFadeEnd() - max(fromCentre.x, fromCentre.y)) * RippleInverseFadeWidth());
+    float2 state = tex2Dlod(sRipples, float4(uv, 0, 0)).rg;
+    return lerp(state.g, state.r, RippleWeight());
 }
 
 float RippleCoverage(WaterPixel w, float2 uv)
 {
-    float window = RippleWindow(uv);
+    float2 fromCentre = abs(uv - 0.5) * RippleExtent();
+    float window = saturate((RippleFadeEnd() - max(fromCentre.x, fromCentre.y)) * RippleInverseFadeWidth());
     float footprintTexels = max(length(w.footprintX), length(w.footprintY)) / RippleTexelYards();
     return window * saturate(1 - (footprintTexels - kRippleFullDetailTexels) / kRippleDetailFadeTexels);
+}
+
+// wxl-water RippleSlopeW: the wide map's height between its last two steps, finite differences over its own texel
+// (0.5 yd), nothing outside the window. Not bent by a normal map (Cata's nn): the waves here are the moments.
+float RipHW(float2 t) { float4 h = tex2Dlod(sRippleWide, float4(t, 0, 0)); return lerp(h.g, h.r, cRippleTexW.z); }
+float2 RippleSlopeW(float2 world)
+{
+    float2 uv = (world - cRippleWinW.xy) * cRippleWinW.zw - 1e-6;
+    float  h0 = RipHW(uv);
+    float  dx = RipHW(uv + float2(cRippleTexW.x, 0.0)) - h0, dy = RipHW(uv + float2(0.0, cRippleTexW.y)) - h0;
+    float2 sl = float2(dx, dy) / (sqrt(1.0 + dx * dx) * sqrt(1.0 + dy * dy));
+    return (max(abs(2.0 * uv.x - 1.0), abs(2.0 * uv.y - 1.0)) >= 1.0 - cRippleTexW.x) ? float2(0.0, 0.0) : sl;
 }
 
 RippleSample SampleRipples(WaterPixel w)
@@ -146,23 +152,19 @@ RippleSample SampleRipples(WaterPixel w)
     RippleSample ripples = (RippleSample)0;
     float2 uv = (w.position.xy - RippleOrigin()) * RippleInverseExtent();
     ripples.coverage = RippleGain() > 0 ? RippleCoverage(w, uv) : 0;
-    // The wide (ship) part is coarse: only the window fade, not the close detail's footprint fade.
-    float wideCoverage = RippleGain() > 0 ? RippleWindow(uv) : 0;
-    [branch] if (wideCoverage > 0)
+    [branch] if (ripples.coverage > 0)
     {
         float step = RippleTexelUv();
-        float2 h0 = RippleHeight(uv);
-        float2 dx = RippleHeight(uv + float2(step, 0)) - h0;
-        float2 dy = RippleHeight(uv + float2(0, step)) - h0;
-        // the wide part is 0 on a two-channel map (b reads 1 everywhere: no slope)
-        dx = float2(dx.x * ripples.coverage, dx.y * wideCoverage);
-        dy = float2(dy.x * ripples.coverage, dy.y * wideCoverage);
-        float gx = dx.x + dx.y;
-        float gy = dy.x + dy.y;
-        ripples.height = h0.x * ripples.coverage + h0.y * wideCoverage;
-        float2 gradient = float2(gx, gy) * rsqrt((1 + gx * gx) * (1 + gy * gy));
-        ripples.slope = gradient * kRippleSlopeScale * RippleGain();
-        ripples.coverage = max(ripples.coverage, wideCoverage);
+        ripples.height = RippleHeight(uv);
+        float dx = RippleHeight(uv + float2(step, 0)) - ripples.height;
+        float dy = RippleHeight(uv + float2(0, step)) - ripples.height;
+        float2 gradient = float2(dx, dy) * rsqrt((1 + dx * dx) * (1 + dy * dy));
+        ripples.slope = gradient * kRippleSlopeScale * RippleGain() * ripples.coverage;
+    }
+    // The ships' wide level (wxl-water RippleSlopeW, its own map and window), at the same gain as the close field.
+    [branch] if (cRippleTexW.w > 0)
+    {
+        ripples.slope += RippleSlopeW(w.position.xy) * kRippleSlopeScale * cRippleTexW.w;
     }
     return ripples;
 }
@@ -210,9 +212,9 @@ float4 TintedFoam(int slot, float maskCoverage)
     return float4(lerp(MaskTintLow(slot), MaskTintHigh(slot), coverage), coverage);
 }
 
-float4 FoamLayer(sampler2D mask, int slot, float2 uv, float2 dx, float2 dy)
+float4 FoamLayer(float4 channel, int slot, float2 uv, float2 dx, float2 dy)
 {
-    return TintedFoam(slot, tex2Dgrad(mask, uv, dx, dy).r);
+    return TintedFoam(slot, dot(tex2Dgrad(sShoreDepthFoamMasks, uv, dx, dy), channel));
 }
 
 float FoamFade(float distance, float fadeDistance)
@@ -248,10 +250,10 @@ float4 FoamAlbedo(WaterPixel w, WaveState waves)
     [branch] if (f * WaveFoamIntensity() > 0)
         foam = WaveFoam(adtUv, dx, dy, f);
     [branch] if (shoreWeight > 0)
-        foam += shoreWeight * FoamLayer(sShoreFoamMask, kShoreFoamSlot, adtUv * cShoreFoam.y + cFoamScroll.zw,
+        foam += shoreWeight * FoamLayer(float4(1, 0, 0, 0), kShoreFoamSlot, adtUv * cShoreFoam.y + cFoamScroll.zw,
                                         dx * cShoreFoam.y, dy * cShoreFoam.y);
     [branch] if (depthWeight > 0)
-        foam += depthWeight * FoamLayer(sDepthFoamMask, kDepthFoamSlot, adtUv * cDepthFadeFoam.y + cDepthFoamScroll.xy,
+        foam += depthWeight * FoamLayer(float4(0, 1, 0, 0), kDepthFoamSlot, adtUv * cDepthFadeFoam.y + cDepthFoamScroll.xy,
                                         dx * cDepthFadeFoam.y, dy * cDepthFadeFoam.y);
     return saturate(foam);
 }

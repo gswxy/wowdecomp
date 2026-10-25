@@ -27,6 +27,7 @@ class CShadowQuery {
     static void Update();
     static bool CameraIndoors();   // not stock: the camera counts as in a WMO interior (the steep stock light)
     static bool SunLatched(C3Vector& toward);   // not stock: gfxSunShadows' latched light, if it is in use
+    static float WaterShadowStrength();       // not stock: shadowWaterStrength, 0-1
 
     static void FreeBuffers();
     static void AllocBuffers();

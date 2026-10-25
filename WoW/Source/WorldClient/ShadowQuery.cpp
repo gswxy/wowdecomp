@@ -54,6 +54,7 @@ static CVar* s_cvShadowSlopeBias;
 // Not stock (Badgermilk0 port): shadowMapSize, shadowSoftness, shadowCascadeReuse.
 static CVar* s_cvShadowMapSize;
 static CVar* s_cvShadowSoftness;
+static CVar* s_cvShadowWaterStrength;
 static CVar* s_cvShadowCascadeReuse;
 static CVar* s_cvShadowTerrainCast;
 static CVar* s_cvShadowUnitFarTrees;
@@ -93,6 +94,12 @@ static float ShadowSoftness() {
     return value < 0.25f ? 0.25f : (value > 4.0f ? 4.0f : value);
 }
 
+/// shadowWaterStrength: how much of a sun shadow water shows, 0 to 1 (not stock).
+float CShadowQuery::WaterShadowStrength() {
+    float value = s_cvShadowWaterStrength ? s_cvShadowWaterStrength->m_floatValue : 0.5f;
+    return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+}
+
 // STATIC: 0x00D25300
 uint8_t CShadowQuery::s_stamp;
 
@@ -128,6 +135,7 @@ void CShadowQuery::Initialize() {
     s_cvShadowSlopeBias = CVar::Register("gfxShadowSlopeBias", "Extra shadow depth bias at a low sun, in band texels times cot(elevation) up to 3 (0 = stock)", 1, "1.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowMapSize = CVar::Register("shadowMapSize", "Shadow map size, a power of two from 1024 to 8192 (0 = stock 1024/2048; PCF filtering or Vulkan only)", 1, kShadowMapSizeDefault, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowSoftness = CVar::Register("shadowSoftness", "Scales the shadow PCF filter, 0.25 to 4 (1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowWaterStrength = CVar::Register("shadowWaterStrength", "How strong sun shadows are on water, 0 to 1 (1 = as strong as on land): the surface's sun light and glint and the lake bed seen through it", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowTerrainCast = CVar::Register("shadowTerrainCast", "ADT terrain casts into the sun shadow maps (0 = stock: models and WMOs only)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowUnitFarTrees = CVar::Register("shadowUnitFarTrees", "Far tree impostors also cast into the 20 yd unit map (0 = off, default: the bands carry them; at a low sun the unit map's square runs 40 / sin(elevation) yd along the sun with the finest bias, recentred on the camera every frame)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvShadowCasterMinTexels = CVar::Register("shadowCasterMinTexels", "Smallest caster in the 320/1280 yd shadow bands, in band texels of radius (0 = stock 2/10 yd)", 1, "6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);

@@ -27,6 +27,7 @@
 #include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
+#include "WoW/Source/WorldClient/ShadowQuery.h"
 #include "WoW/Source/WorldClient/World.h"
 
 namespace CataWater {
@@ -69,6 +70,8 @@ constexpr int kRippleStage = 11;
 constexpr int kSceneStage = 12;
 constexpr int kDepthStage = 13;
 constexpr int kReflStage = 14;
+constexpr int kPreMaskStage = 8;     // shadowWaterStrength: the frame before / after VFogShadowMask
+constexpr int kPostMaskStage = 15;
 
 CVar* s_style;
 CVar* s_ripples;
@@ -85,6 +88,12 @@ CTexture* s_foamTex;
 CGxTex* s_scene;
 CGxTex* s_depth;
 CGxTex* s_refl;             // the planar reflection, mirrored left to right
+// shadowWaterStrength: the world viewport around VFogShadowMask (BeforeShadowMask / AfterShadowMask), taken only
+// when the Cata water drew in the frame before; valid until this frame's OnWorldDone.
+CGxTex* s_preMask;
+CGxTex* s_postMask;
+bool s_drewSinceMask;
+bool s_maskCopies;
 bool s_callbackAdded;
 bool s_failed;              // a shader is missing: stay off until the device is restored
 
@@ -218,6 +227,9 @@ void DropTargets() {
     VolumetricFog::DestroyTex(s_scene);
     VolumetricFog::DestroyTex(s_depth);
     VolumetricFog::DestroyTex(s_refl);
+    VolumetricFog::DestroyTex(s_preMask);
+    VolumetricFog::DestroyTex(s_postMask);
+    s_maskCopies = false;
     s_reflection.drawn = false;
 }
 
@@ -447,7 +459,33 @@ bool Arm(Liquid::CInstance** instances, uint32_t count) {
         VolumetricFog::RippleFrame(s_in, 1.0f, 2, FrameTime::s_curTimeMs * 0.001, vp, s_pass.ripples);
     }
     s_pass.armed = true;
+    s_drewSinceMask = true;
     return true;
+}
+
+// shadowWaterStrength: copy the world viewport into tex (the mask covers the live world viewport, as the water does).
+bool CopyWorld(CGxTex*& tex, const char* name) {
+    const VolumetricFog::WorldViewport vp = VolumetricFog::LiveWorldViewport();
+    if (vp.target || vp.w < kMinSize || vp.h < kMinSize || !Target(tex, static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), GxTex_Argb8888, GxTex_Linear, name)) {
+        return false;
+    }
+    const C2iVector dest = { 0, 0 };
+    const C2iVector source = { static_cast<int32_t>(vp.x), static_cast<int32_t>(vp.y) };
+    const C2iVector size = { static_cast<int32_t>(vp.w), static_cast<int32_t>(vp.h) };
+    return GxTexCopy(tex, dest, source, size, 0, 0);
+}
+
+bool BeforeShadowMask() {
+    const bool drew = s_drewSinceMask;
+    s_drewSinceMask = false;
+    s_maskCopies = false;
+    // ponytail: keyed on last frame's water, so the first frame a lake comes into view shows its bed's shadow at full strength.
+    return drew && s_style && s_style->m_intValue == 1 && !s_failed && CShadowQuery::WaterShadowStrength() < 1.0f
+        && g_theGxDevicePtr && CopyWorld(s_preMask, "CataWaterPreMask");
+}
+
+void AfterShadowMask() {
+    s_maskCopies = CopyWorld(s_postMask, "CataWaterPostMask");
 }
 
 void Done() {
@@ -493,6 +531,8 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
     const C4Vector& sun = Liquid::s_vsConstants.m_sunDir;
     const float* d = &Liquid::s_vsConstants.m_sunDiffuse.x;
     const float* s = &Liquid::s_vsConstants.m_sunSpecular.x;
+    const float waterShadow = CShadowQuery::WaterShadowStrength();
+    const bool copies = s_maskCopies && s_preMask && s_postMask && s_preMask->m_width == s_scene->m_width && s_preMask->m_height == s_scene->m_height;
     const float pc[13][4] = {
         { vp.a0, vp.a1, vp.a2, vp.a3 },
         { vp.b0, vp.b1, vp.b2, vp.b3 },
@@ -501,7 +541,7 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
         { s_pass.depthTex[0], s_pass.depthTex[1], s_pass.depthTex[2], s_pass.depthTex[3] },
         { s_pass.vp.x, s_pass.vp.y, s_pass.vp.w, s_pass.vp.h },
         { lp->p6, lp->p9, specular ? lp->p10 : 0.0f, lp->p14 },     // the NoSpec material has no highlight
-        { s_pass.maxZ, s_pass.fogValid ? 1.0f : 0.0f, 0.0f, 0.0f },
+        { s_pass.maxZ, s_pass.fogValid ? 1.0f : 0.0f, copies ? 1.0f - waterShadow : 0.0f, waterShadow },   // shadowWaterStrength
         { s_pass.fogA[0], s_pass.fogA[1], s_pass.fogA[2], lp->p7 * 0.35f },
         { s_pass.fogColour[0], s_pass.fogColour[1], s_pass.fogColour[2], 0.0f },
         { -(sun.x * view.a0 + sun.y * view.a1 + sun.z * view.a2), -(sun.x * view.b0 + sun.y * view.b1 + sun.z * view.b2), -(sun.x * view.c0 + sun.y * view.c1 + sun.z * view.c2), 0.0f },
@@ -522,6 +562,8 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
     Bind(kFoamStage, foam);
     Bind(kSceneStage, s_scene);
     Bind(kDepthStage, s_depth);
+    Bind(kPreMaskStage, copies ? s_preMask : s_scene);    // off: any valid texture, its difference is scaled by 0
+    Bind(kPostMaskStage, copies ? s_postMask : s_scene);
     const bool planar = s_reflection.drawn && !s_pass.below;
     if (planar) {
         // c31: the drawn plane's height against the camera, 1 / its tolerance (2 yd on, fading out to 4 yd).
@@ -541,6 +583,7 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
 // times the underwater fog's hue (brightness kept, 30 %) and darkened toward the corners (0.45). One copy of the world
 // viewport and one opaque quad over it, only under water.
 void OnWorldDone() {
+    s_maskCopies = false;
     CGxDevice* device = g_theGxDevicePtr;
     const int32_t liquid = World::SceneCamLiquidStatus(nullptr);
     if (!s_style || s_style->m_intValue != 1 || !liquid || !device || s_failed || !Liquid::s_liquidTypeDB) {

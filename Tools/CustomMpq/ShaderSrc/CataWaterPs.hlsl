@@ -19,7 +19,8 @@ row_major float4x4 gVP : register(c16);   // camera-relative world -> clip (the 
 float4 gDepthTex : register(c20);    // xy = 1 / depth texture size, z w = (A, B): view depth = B / (d - A)
 float4 gScreen   : register(c21);    // world viewport in window pixels (x, y, w, h)
 float4 gP        : register(c22);    // (P6 normal strength, P9 diffuse, P10 specular, P14 normal to world)
-float4 gMisc     : register(c23);    // x = deepest world depth (past it: sky), y = thickness fog on (1) / off (0)
+float4 gMisc     : register(c23);    // x = deepest world depth (past it: sky), y = thickness fog on (1) / off (0),
+                                     // z = 1 - shadowWaterStrength with s8 / s15 valid (else 0), w = shadowWaterStrength
 float4 gFogA     : register(c24);    // Cata fog A from the zone's underwater fog: (-1/(end-start), end/(end-start), exponent, P7 * 0.35)
 float4 gFogAColor: register(c25);    // its colour
 float4 gLightW   : register(c26);    // world direction toward the light
@@ -32,6 +33,10 @@ float4 gRefl     : register(c31);    // PLANAR: x = the mirrored plane's height 
 // shadowFarReceivers (FarLand::BindSunShadow): the sun's cascades, c56-c62 + c64, s5/s6, over camera-relative world.
 static const float4x4 cViewToWorld = (float4x4)0;   // vf_shadow's land tap, unused here
 #include "vf_shadow.hlsli"
+// shadowWaterStrength: the world viewport just before / after VFogShadowMask laid the sun's shadow over the opaque
+// world (CataWater::BeforeShadowMask / AfterShadowMask), so what the mask took off the bed under the water is known.
+sampler2D sPreMask  : register(s8);
+sampler2D sPostMask : register(s15);
 #endif
 
 // Cata ProcWaterAbove ripple slope (W1 8.2, wxl-water RippleSlope, one level): height interpolated between the last two
@@ -132,7 +137,11 @@ float4 main(float4 col : COLOR0, float4 coarse : TEXCOORD0, float4 fine : TEXCOO
     float2 uvd = suv + off;
     float  Zd  = SceneZ(uvd);
     bool   keep = Zw - Zd >= 0.0;
-    float3 refr = tex2D(sScene, keep ? suv : uvd).rgb;
+    float2 ruv  = keep ? suv : uvd;
+    float3 refr = tex2D(sScene, ruv).rgb;
+    // shadowWaterStrength: part of the light the shadow mask took off the bed comes back (additive, so the passes drawn
+    // between the mask and the water, lights, SSAO, height fog, blended models, stay as they are).
+    refr += gMisc.z * max(tex2D(sPreMask, ruv).rgb - tex2D(sPostMask, ruv).rgb, 0.0);
     // Cata AboveFog folded in: the ground under the water fades into fog A with the thickness at the texel read.
     float  thR  = keep ? th : Zd - Zw;
     float  kFog = saturate(pow(saturate(thR * gFogA.x + gFogA.y), gFogA.z));
@@ -152,6 +161,7 @@ float4 main(float4 col : COLOR0, float4 coarse : TEXCOORD0, float4 fine : TEXCOO
     // lifted by gfxShadowFade as VFogWater's land tap), so a tree's shadow on a lake has no sun glint in it.
     float ndl = dot(L, Nw);
     float sh  = lerp(CascadeSunVisibility(world, 0.5), 1.0, saturate(pow(1.2 - abs(ndl), 4.0)));
+    sh = lerp(1.0, sh, gMisc.w);   // shadowWaterStrength
     sh += (1.0 - sh) * cShadowFade.x;
     c += saturate(ndl) * gP.y * gDiffuse.rgb * tint * sh;
     float3 H = normalize(-V + L + float3(0.0, 0.0, 1e-4));

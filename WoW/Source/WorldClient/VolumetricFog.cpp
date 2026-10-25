@@ -1082,8 +1082,11 @@ void OnSolidDone() {
     CShadowCache::s_unifiedNext = 0;
     if (s_maskPending) {
         s_maskPending = false;
+        const bool waterCopy = CataWater::BeforeShadowMask();   // shadowWaterStrength
         if (!RenderShadowMask(s_in, TerrainSunShadow::MaskSoftYards(), !s_pushed)) {
             CShadowCache::s_unifiedNext = 0;
+        } else if (waterCopy) {
+            CataWater::AfterShadowMask();
         }
     }
     CShadowCache::s_receiversUnified = 0;

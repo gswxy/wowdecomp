@@ -11,6 +11,7 @@
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/VolumetricFogModel.h"
+#include "WoW/Source/WorldClient/ShadowQuery.h"
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include <algorithm>
 #include <cctype>
@@ -960,7 +961,7 @@ void ShadeClass(WaterClass waterClass, CGxTex* waterDepth = nullptr) {
         land[3] = 0.0f;
     }
     SetPs(kLandShadowRegister, land, 1);
-    const float unfade[4] = { 1.0f - DayNight::g_shadowFade, 0.0f, 0.0f, 0.0f };   // gfxShadowFade: c69 cLandShadowFade
+    const float unfade[4] = { 1.0f - DayNight::g_shadowFade, CShadowQuery::WaterShadowStrength(), 0.0f, 0.0f };   // gfxShadowFade, shadowWaterStrength: c69 cLandShadowFade
     SetPs(kLandShadowRegister + 1, unfade, 1);
     Bind(kLandShadowStage, landTex);
     // coa ShadingVariant: the quality's reflection march, or sky reflections only when reflections are off.

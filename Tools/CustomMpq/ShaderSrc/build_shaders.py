@@ -114,8 +114,8 @@ SHADERS = {
 # Cata water (waterStyle 1, docs/BACKLOG_PORT.md "Cata water"): the ProcWater VS and ProcWaterAbove / Below PS,
 # drawn by the liquid material in place of vsLiquidWater / psLiquidWater (WorldClient/CataWater.cpp).
 SHADERS['CataWater'] = ('vs_3_0', 0, 0, 0, 0, 'CataWater', {})
-SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 9, 10, 11, 12, 13), 0, 'CataWaterPs', {})
-SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 9, 10, 11, 12, 13, 14), 0, 'CataWaterPs', {'PLANAR': 1})
+SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 8, 9, 10, 11, 12, 13, 15), 0, 'CataWaterPs', {})
+SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15), 0, 'CataWaterPs', {'PLANAR': 1})
 SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
 SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWaterTint', {})
 # Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).

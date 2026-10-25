@@ -194,6 +194,7 @@ for _, page in ipairs(PAGES) do
 		table.insert(page, { "shadowMapSize", "drop", "Shadow map size", "Sharpness of the sun shadows. Larger costs graphics memory. All renderers.",
 		  { { "0", "Stock" }, { "1024", "1024" }, { "2048", "2048" }, { "4096", "4096" }, { "8192", "8192" } } })
 		table.insert(page, { "shadowSoftness", "slider", "Shadow softness", "How soft shadow edges are. 1 is stock. All renderers.", 0.25, 4, 0.25 })
+		table.insert(page, { "shadowWaterStrength", "slider", "Shadows on water", "How strong sun shadows are on water. 1 is as strong as on land. All renderers.", 0, 1, 0.05 })
 		table.insert(page, { "shadowCascadeReuse", "check", "Reuse far shadows", "At the highest shadow quality, far shadows are redrawn every few frames instead of every frame. All renderers." })
 	end
 end

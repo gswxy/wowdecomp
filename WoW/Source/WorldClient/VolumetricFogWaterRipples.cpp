@@ -658,7 +658,7 @@ void EmitHullSlice(const float* m, float lx0, float lx1, float halfBeam, float a
 }
 
 // wxl-water GatherHulls, through the decomp's types.
-// waterWakeDebug 1: once a second, one chat (and console) line per transport saying which gate it stopped at.
+// waterWakeDebug 1: once a second, one console line (and Logs\\wake.txt) per transport saying which gate it stopped at.
 void WakeDebugPrint(const char* format, ...) {
     char text[320];
     va_list args;
@@ -666,7 +666,12 @@ void WakeDebugPrint(const char* format, ...) {
     vsnprintf(text, sizeof(text), format, args);
     va_end(args);
     ConsoleWrite(text, DEFAULT_COLOR);
-    CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    // the lines also go to Logs\wake.txt beside the exe, truncated at the first line of the session
+    static FILE* s_log = std::fopen("Logs\\wake.txt", "w");
+    if (s_log) {
+        std::fprintf(s_log, "%10.2f %s\n", FrameTime::s_curTimeSec, text);
+        std::fflush(s_log);
+    }
 }
 
 struct HullDebug {

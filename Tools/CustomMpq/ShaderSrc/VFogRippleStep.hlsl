@@ -1,6 +1,6 @@
 // VFogRippleStep (ps_3_0, into the 256^2 / 512^2 Gr1616F ripple map): port of coa-vfog shaders/vw_ripple_step.hlsl
 // (@ 4e31ddf, GPLv3). One 30 Hz step of the height field (r = height, g = previous height) around the camera target,
-// shifted with the window, plus up to 48 unit footprints / splashes. TEXCOORD0 = target uv instead of VPOS.
+// shifted with the window, plus up to 48 unit footprints / splashes / ship slices (c49+.w > 0). TEXCOORD0 = target uv instead of VPOS.
 // c97.x (new): 0 clears the map instead (coa ClearMaps; the Gx clear is viewport-dependent across backends).
 float4 cRippleStep : register(c0);
 float4 cRippleSegments[48] : register(c1);
@@ -67,9 +67,21 @@ float Footprint(float distance, float inverseRadius)
     return 1 - smoothstep(kFootprintCore, kFootprintRim, distance * inverseRadius);
 }
 
+// New: shape.w > 0 is a ship slice (wxl-water SplatHulls): weight 1 inside the rectangle shape.w texels either side of
+// segment from -> to, 0 outside, the far end open so neighbouring slices share their edge without overlap.
+float SlabWeight(float2 p, float2 from, float2 to, float halfWidth)
+{
+    float2 along = to - from;
+    float lengthSquared = dot(along, along);
+    float t = lengthSquared > 0 ? dot(p - from, along) / lengthSquared : -1;
+    float2 side = p - from - along * t;
+    return (t >= 0 && t < 1 && dot(side, side) <= halfWidth * halfWidth) ? 1 : 0;
+}
+
 float2 Disturb(float2 state, float2 texelCentre, float4 segment, float4 shape)
 {
-    float weight = Footprint(SegmentDistance(texelCentre, segment.xy, segment.zw), shape.x);
+    float weight = shape.w > 0 ? SlabWeight(texelCentre, segment.xy, segment.zw, shape.w)
+                               : Footprint(SegmentDistance(texelCentre, segment.xy, segment.zw), shape.x);
     float held = weight * shape.z;
     float height = lerp(state.x, shape.y, held) + shape.y * (weight - held);
     return float2(height, lerp(state.y, height, held));

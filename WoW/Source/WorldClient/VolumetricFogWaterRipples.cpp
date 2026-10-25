@@ -208,6 +208,7 @@ struct WaterRippleDisturbance {
     float radius = 0.0f;
     float amplitude = 0.0f;
     bool held = false;
+    bool slab = false;      // a ship slice: a hard-edged rectangle radius wide either side of from -> to (VFogRippleStep)
 };
 
 struct WaterEntryState {
@@ -503,9 +504,14 @@ private:
 // ---- moving ship hulls (wxl-water GatherHulls / BuildHullProfile / HullShape, Stage 7c) -----------------------------
 // Moving TRANSPORT / MO_TRANSPORT WMOs whose model bottom sits under a liquid surface (airborne zeppelins fail the test)
 // press their own waterline section into the field. The section is the WMO's triangles cut at the local waterline,
-// reduced to 12 half-beams along local x, cut once per root. wxl-water fills that polygon into its Cata height map;
-// here each slice becomes one held footprint (a capsule along the slice, its half-weight at the half-beam), the shape
-// the step shader already stamps for units. Strength as wxl-water: 0.8 * min(speed / 10 yd/s, 1), none when docked.
+// reduced to 12 half-beams along local x, cut once per root. As wxl-water SplatHulls (Cata PerturbDisplMapMesh), the
+// whole waterline area is pressed into the height additively every step (not held): a pressure that swings with one
+// shared 1 Hz sine, so the hull's long sides pump rings out all the time and a moving hull trails them as its wake.
+// Each slice is one hard-edged rectangle (half-beam either side of its length along the keel), so the 12 tile the
+// section without overlap; wxl-water draws the polygon through the slice midpoints. Strength as wxl-water:
+// 0.8 * min(speed / 10 yd/s, 1) times its wide level's splat 0.25 per 50 ms step, none when docked (under 0.5 yd/s).
+// The splat is rescaled for this sim: 30 steps a second instead of 20, and this field's heights run about 3x Cata's
+// (a swimmer here holds 3, in wxl-water it pushes 1).
 constexpr int kHullSlices = 12;
 constexpr uint32_t kMaxHullDisturbances = 2 * kHullSlices;   // two ships; the rest of the 48 stay for units
 constexpr double kHullSpeedSeconds = 0.1;
@@ -514,6 +520,8 @@ constexpr float kHullFullSpeed = 10.0f;
 constexpr float kHullStrength = 0.8f;
 constexpr float kHullDockedShare = 0.05f;
 constexpr float kFootprintHalfWeight = 0.5f;                 // VFogRippleStep Footprint() is 0.5 at about half the radius
+constexpr float kHullSplat = 0.25f * 3.0f * (20.0f / 30.0f);  // wxl-water level 1 splat, rescaled as above
+constexpr double kHullPulseSeconds = 1.0;                     // wxl-water: sin(2 pi ((now - t0) % 1000 ms) / 1000)
 
 struct HullProfile {
     const CMapObj* root = nullptr;
@@ -644,9 +652,9 @@ void EmitHullSlice(const float* m, float lx0, float lx1, float halfBeam, float a
     d.from[1] = lx0 * m[1] + m[13];
     d.to[0] = lx1 * m[0] + m[12];
     d.to[1] = lx1 * m[1] + m[13];
-    d.radius = halfBeam / kFootprintHalfWeight;
+    d.radius = halfBeam;
     d.amplitude = amplitude;
-    d.held = true;
+    d.slab = true;
 }
 
 // wxl-water GatherHulls, through the decomp's types.
@@ -766,14 +774,12 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
             dbg.Ship(guid, typeId, "no waterline cut (groups loading or no triangles)", speed, hit, level, probe.z, 0, 0);
             continue;                                  // groups still loading (wxl-water's box hexagon fallback skipped)
         }
-        const float amplitude = kFullyImmersedFootprintLevel * kHullStrength * it->speedShare * strength;
+        const float amplitude = kHullSplat * kHullStrength * it->speedShare * strength;   // times the pulse, per step
         const float w = (p->x1 - p->x0) / static_cast<float>(kHullSlices);
         const uint32_t first = count;
         int slices = 0;
         for (int i = 0; i < kHullSlices; ++i) {
             if (p->hb[i] > 0.0f) {
-                // ponytail: a capsule per slice overshoots a sharply tapering bow by about one half-beam; a polygon
-                // fill in the step shader would match wxl-water exactly if that shows.
                 EmitHullSlice(m, p->x0 + w * i, p->x0 + w * (i + 1), p->hb[i], amplitude, out[count++]);
                 ++slices;
             }
@@ -1008,7 +1014,7 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
         shapes[used][0] = 1.0f / radius;
         shapes[used][1] = d.amplitude;
         shapes[used][2] = d.held ? kHeldFootprint : kAddedImpulse;
-        shapes[used][3] = 0.0f;
+        shapes[used][3] = d.slab ? radius : 0.0f;
         ++used;
     }
     s_rows[kStepRegister][0] = static_cast<float>(shift[0]);
@@ -1073,7 +1079,12 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
                 for (int step = 0; step < schedule.steps; ++step) {
                     uint32_t count = r.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
                     const uint32_t extra = std::min(hulls, kMaxWaterRippleDisturbances - count);
-                    std::copy(s_hulls, s_hulls + extra, disturbances + count);
+                    // wxl-water's one shared pulse clock, read at this step's time
+                    const float pulse = static_cast<float>(std::sin(6.283185307179586 * std::fmod(schedule.stepSeconds[step], kHullPulseSeconds) / kHullPulseSeconds));
+                    for (uint32_t i = 0; i < extra; ++i) {
+                        disturbances[count + i] = s_hulls[i];
+                        disturbances[count + i].amplitude *= pulse;
+                    }
                     count += extra;
                     count += TakeDrops(centre, disturbances + count, kMaxWaterRippleDisturbances - count);
                     Step(centre, disturbances, count);

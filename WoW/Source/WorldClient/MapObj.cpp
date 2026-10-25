@@ -75,10 +75,10 @@ static int32_t s_portalExtCount = 2048;
 static TSGrowableArray<C3Vector> s_portalVerts;
 
 // STATIC: 0x00D1C3D4
-CShaderEffect* CMapObj::s_unifiedShaders[7];
+CShaderEffect* CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::SHADER_COUNT];
 
 // STATIC: 0x00D1C3F0
-CShaderEffect* CMapObj::s_classicShaders[7];
+CShaderEffect* CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::SHADER_COUNT];
 
 // STATIC: 0x00D1C40C
 uint32_t* CMapObj::occluderHeap;
@@ -977,10 +977,10 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
             }
         }
 
-        uint32_t shader = material.m_shader;
+        CMapObj::SHADER_TYPE shader = static_cast<CMapObj::SHADER_TYPE>(material.m_shader);
 
         if (!shader && !material.m_blendMode && !TextureIsOpaque(texture)) {
-            shader = 4;
+            shader = CMapObj::SHADER_TYPE::OPAQUE_EFFECT;
         }
 
         GxRsSet(GxRs_Culling, static_cast<int32_t>((material.m_flags & 0x4) == 0));
@@ -1402,10 +1402,10 @@ void CMapObj::ExteriorRender(CMapObjGroup* group, uint32_t index) {
             }
         }
 
-        uint32_t shader = material.m_shader;
+        CMapObj::SHADER_TYPE shader = static_cast<CMapObj::SHADER_TYPE>(material.m_shader);
 
         if (!shader && !material.m_blendMode && !TextureIsOpaque(texture)) {
-            shader = 4;
+            shader = CMapObj::SHADER_TYPE::OPAQUE_EFFECT;
         }
 
         SetShaderFogFromDayNight(~material.m_flags & 0x2);
@@ -1522,10 +1522,10 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
             }
         }
 
-        uint32_t shader = material.m_shader;
+        CMapObj::SHADER_TYPE shader = static_cast<CMapObj::SHADER_TYPE>(material.m_shader);
 
         if (!shader && !material.m_blendMode && !TextureIsOpaque(texture)) {
-            shader = 4;
+            shader = CMapObj::SHADER_TYPE::OPAQUE_EFFECT;
         }
 
         GxRsSet(GxRs_Culling, static_cast<int32_t>((material.m_flags & 0x4) == 0));
@@ -2209,21 +2209,21 @@ void CMapObj::Initialize() {
     s_portalVerts.Reserve(1024, 0);
     s_portalVerts.m_chunk = 1024;
 
-    CMapObj::s_classicShaders[0] = CShaderEffectManager::GetEffect("MapObjDiffuse");
-    CMapObj::s_classicShaders[1] = CShaderEffectManager::GetEffect("MapObjSpecular");
-    CMapObj::s_classicShaders[2] = CShaderEffectManager::GetEffect("MapObjMetal");
-    CMapObj::s_classicShaders[3] = CShaderEffectManager::GetEffect("MapObjEnv");
-    CMapObj::s_classicShaders[4] = CShaderEffectManager::GetEffect("MapObjOpaque");
-    CMapObj::s_classicShaders[5] = CShaderEffectManager::GetEffect("MapObjEnvMetal");
-    CMapObj::s_classicShaders[6] = nullptr;
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::DIFFUSE] = CShaderEffectManager::GetEffect("MapObjDiffuse");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::SPECULAR] = CShaderEffectManager::GetEffect("MapObjSpecular");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::METAL] = CShaderEffectManager::GetEffect("MapObjMetal");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::ENVIRONMENT] = CShaderEffectManager::GetEffect("MapObjEnv");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::OPAQUE_EFFECT] = CShaderEffectManager::GetEffect("MapObjOpaque");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::ENVIRONMENT_METAL] = CShaderEffectManager::GetEffect("MapObjEnvMetal");
+    CMapObj::s_classicShaders[CMapObj::SHADER_TYPE::COMPOSITE] = nullptr;
 
-    CMapObj::s_unifiedShaders[0] = CShaderEffectManager::GetEffect("MapObjUDiffuse");
-    CMapObj::s_unifiedShaders[1] = CShaderEffectManager::GetEffect("MapObjUSpecular");
-    CMapObj::s_unifiedShaders[2] = CShaderEffectManager::GetEffect("MapObjUMetal");
-    CMapObj::s_unifiedShaders[3] = CShaderEffectManager::GetEffect("MapObjUEnv");
-    CMapObj::s_unifiedShaders[4] = CShaderEffectManager::GetEffect("MapObjUOpaque");
-    CMapObj::s_unifiedShaders[5] = CShaderEffectManager::GetEffect("MapObjUEnvMetal");
-    CMapObj::s_unifiedShaders[6] = CShaderEffectManager::GetEffect("MapObjUComposite");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::DIFFUSE] = CShaderEffectManager::GetEffect("MapObjUDiffuse");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::SPECULAR] = CShaderEffectManager::GetEffect("MapObjUSpecular");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::METAL] = CShaderEffectManager::GetEffect("MapObjUMetal");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::ENVIRONMENT] = CShaderEffectManager::GetEffect("MapObjUEnv");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::OPAQUE_EFFECT] = CShaderEffectManager::GetEffect("MapObjUOpaque");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::ENVIRONMENT_METAL] = CShaderEffectManager::GetEffect("MapObjUEnvMetal");
+    CMapObj::s_unifiedShaders[CMapObj::SHADER_TYPE::COMPOSITE] = CShaderEffectManager::GetEffect("MapObjUComposite");
 
     CMapObj::bPoolsDirty = 1;
     CMapObj::occluderHeap = new (__FILE__, __LINE__) uint32_t(ObjectAllocAddHeap(sizeof(CMapObjOccluder), 128, "MAPOBJOCC", true));

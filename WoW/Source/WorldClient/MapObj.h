@@ -54,6 +54,17 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum SHADER_TYPE : uint32_t {
+        DIFFUSE = 0,
+        SPECULAR = 1,
+        METAL = 2,
+        ENVIRONMENT = 3,
+        OPAQUE_EFFECT = 4,
+        ENVIRONMENT_METAL = 5,
+        COMPOSITE = 6,
+        SHADER_COUNT = 7,
+    };
+
     enum SHADER_FOG_MODE : int32_t {
         CACHE_RESET = -1,
         DISABLED = 0,
@@ -104,8 +115,8 @@ class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> 
     static RENDER_MODE s_renderMode;
     static void (CMapObj::*s_renderGroupExterior)(CMapObjGroup* group, uint32_t index);
     static void (CMapObj::*s_renderGroupInterior)(CMapObjGroup* group, uint32_t index);
-    static CShaderEffect* s_classicShaders[7];
-    static CShaderEffect* s_unifiedShaders[7];
+    static CShaderEffect* s_classicShaders[SHADER_TYPE::SHADER_COUNT];
+    static CShaderEffect* s_unifiedShaders[SHADER_TYPE::SHADER_COUNT];
     static LIGHTING_MODE s_lightingMode;
     static uint32_t s_maxLiquidQueryDepth;
 

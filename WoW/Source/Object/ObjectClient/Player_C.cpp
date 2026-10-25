@@ -14742,7 +14742,7 @@ int32_t Packet_SMSG_VOICE_SESSION_LEAVE(void* param, NETMESSAGE msgId, uint32_t 
     msg->Get(talker);
     uint64_t session = 0;
     msg->Get(session);
-    VoiceSessionLeave(talker, session, 4);
+    VoiceSessionLeave(talker, session, COMSATDATA::SESSION_TYPE::NONE);
     return 1;
 }
 

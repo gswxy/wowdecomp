@@ -590,7 +590,7 @@ int32_t ComSatClient_GetCurrentSessionType() {
         return s_comsatData[s_currentSession].m_type;
     }
 
-    return 4;
+    return COMSATDATA::SESSION_TYPE::NONE;
 }
 
 // VERIFY: 706dd5de manual
@@ -689,7 +689,7 @@ static void ComSatClient_SetCurrentSessionI(int32_t index) {
     if (index == -1) {
         AddComSatEvent(ComSatEvent::COMMAND::SELECT_SESSION, 0u, 0ull);
         s_currentSession = -1;
-        type = 4;
+        type = COMSATDATA::SESSION_TYPE::NONE;
         name = "";
         WOWGUID player = ClntObjMgrGetActivePlayer();
 
@@ -748,15 +748,15 @@ const char* s_sessionTypeNames[3] = { "Battleground", "Party", "Raid" };
 // OFFSET: 0x007DB860
 int32_t ComSatClient_DetermineSessionTypeFromName(const char* name) {
     if (!name || !*name) {
-        return 4;
+        return COMSATDATA::SESSION_TYPE::NONE;
     }
 
     if (!SStrCmpI(name, s_sessionTypeNames[1], STORM_MAX_STR)) {
-        return 2;
+        return COMSATDATA::SESSION_TYPE::PARTY;
     }
 
     if (!SStrCmpI(name, s_sessionTypeNames[2], STORM_MAX_STR)) {
-        return 3;
+        return COMSATDATA::SESSION_TYPE::RAID;
     }
 
     return !SStrCmpI(name, s_sessionTypeNames[0], STORM_MAX_STR);
@@ -807,7 +807,7 @@ void ComSatClient_LeaveAllSessions(WOWGUID guid) {
             ComSatClient_LeaveSessionNotifyAll(index);
             s_comsatData[index].m_sessionID = 0;
             s_comsatData[index].m_name[0] = 0;
-            s_comsatData[index].m_type = 4;
+            s_comsatData[index].m_type = COMSATDATA::SESSION_TYPE::NONE;
             s_comsatData[index].m_numMembers = 0;
 
             if (s_currentSession == index) {
@@ -865,7 +865,7 @@ static bool FillComsatData(uint64_t session, int32_t type, const char* name) {
     }
 
     s_comsatData[index].m_sessionID = session;
-    s_comsatData[index].m_type = type;
+    s_comsatData[index].m_type = static_cast<COMSATDATA::SESSION_TYPE>(type);
     s_comsatData[index].m_numMembers = 0;
 
     if (type) {
@@ -911,7 +911,7 @@ void ComSatClient_PopulateSessionDataWithoutJoin(uint64_t session, int32_t type,
             return;
         }
 
-        if (type == 2 || type == 3 || type == 1) {
+        if (type == COMSATDATA::SESSION_TYPE::PARTY || type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND) {
             Script_SendUniqueSignal(SCRIPT_EVENT_VOICE_STATUS_UPDATE);
         }
 
@@ -922,8 +922,8 @@ void ComSatClient_PopulateSessionDataWithoutJoin(uint64_t session, int32_t type,
             ComSatClient_SendEvent(SCRIPT_EVENT_VOICE_PLATE_START, player);
         }
 
-        if ((type == 2 || type == 3 || type == 1) && (CGPartyInfo::m_members[0] || CGRaidInfo::m_numMembers)) {
-            CGChat::JoiningParty(type == 3 || type == 1, type == 1);
+        if ((type == COMSATDATA::SESSION_TYPE::PARTY || type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND) && (CGPartyInfo::m_members[0] || CGRaidInfo::m_numMembers)) {
+            CGChat::JoiningParty(type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND, type == COMSATDATA::SESSION_TYPE::BATTLEGROUND);
         }
     }
 
@@ -957,8 +957,8 @@ void VoiceSessionRosterUpdate(uint64_t session, uint16_t networkId, int32_t type
             ComSatClient_SendEvent(SCRIPT_EVENT_VOICE_PLATE_START, player);
         }
 
-        if ((type == 2 || type == 3 || type == 1) && (CGPartyInfo::m_members[0] || CGRaidInfo::m_numMembers)) {
-            CGChat::JoiningParty(type == 3 || type == 1, type == 1);
+        if ((type == COMSATDATA::SESSION_TYPE::PARTY || type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND) && (CGPartyInfo::m_members[0] || CGRaidInfo::m_numMembers)) {
+            CGChat::JoiningParty(type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND, type == COMSATDATA::SESSION_TYPE::BATTLEGROUND);
         }
     }
 
@@ -973,7 +973,7 @@ void VoiceSessionRosterUpdate(uint64_t session, uint16_t networkId, int32_t type
     }
 
     if (index < 32 && s_comsatData[index].m_type != type) {
-        s_comsatData[index].m_type = type;
+        s_comsatData[index].m_type = static_cast<COMSATDATA::SESSION_TYPE>(type);
 
         if (type) {
             s_comsatData[index].m_name[0] = 0;
@@ -1064,15 +1064,15 @@ void VoiceSessionRosterUpdate(uint64_t session, uint16_t networkId, int32_t type
 
     if (s_voiceChatWasEnabled) {
         switch (type) {
-            case 2:
+            case COMSATDATA::SESSION_TYPE::PARTY:
                 CGChat::JoiningParty(false, 0);
                 s_voiceChatWasEnabled = 0;
                 break;
-            case 3:
+            case COMSATDATA::SESSION_TYPE::RAID:
                 CGChat::JoiningParty(true, 0);
                 s_voiceChatWasEnabled = 0;
                 break;
-            case 1:
+            case COMSATDATA::SESSION_TYPE::BATTLEGROUND:
                 CGChat::JoiningParty(true, 1);
                 s_voiceChatWasEnabled = 0;
                 break;
@@ -1083,7 +1083,7 @@ void VoiceSessionRosterUpdate(uint64_t session, uint16_t networkId, int32_t type
 
     CGChat::VoiceSessionUpdate(type ? "" : name, type);
 
-    if (type == 2 || type == 3 || type == 1) {
+    if (type == COMSATDATA::SESSION_TYPE::PARTY || type == COMSATDATA::SESSION_TYPE::RAID || type == COMSATDATA::SESSION_TYPE::BATTLEGROUND) {
         Script_SendUniqueSignal(SCRIPT_EVENT_VOICE_STATUS_UPDATE);
     } else {
         Script_SendUniqueSignal(SCRIPT_EVENT_VOICE_CHANNEL_STATUS_UPDATE);
@@ -1108,7 +1108,7 @@ void VoiceSessionLeave(uint64_t talker, uint64_t session, int32_t type) {
     int32_t index;
 
     for (index = 0; index < 32; index++) {
-        if (s_comsatData[index].m_sessionID == session || (type == s_comsatData[index].m_type && (type == 2 || type == 3))) {
+        if (s_comsatData[index].m_sessionID == session || (type == s_comsatData[index].m_type && (type == COMSATDATA::SESSION_TYPE::PARTY || type == COMSATDATA::SESSION_TYPE::RAID))) {
             break;
         }
     }
@@ -1132,7 +1132,7 @@ void VoiceSessionLeave(uint64_t talker, uint64_t session, int32_t type) {
 
         s_comsatData[index].m_sessionID = 0;
         s_comsatData[index].m_name[0] = 0;
-        s_comsatData[index].m_type = 4;
+        s_comsatData[index].m_type = COMSATDATA::SESSION_TYPE::NONE;
         s_comsatData[index].m_numMembers = 0;
     }
 

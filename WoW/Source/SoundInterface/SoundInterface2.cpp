@@ -93,7 +93,7 @@ TSGrowableArray<uint32_t> SI2::s_suppressors;
 static const char* s_savedVoiceSession;
 
 // STATIC: 0x00AC3860
-static int32_t s_savedVoiceSessionType = 4;
+static int32_t s_savedVoiceSessionType = COMSATDATA::SESSION_TYPE::NONE;
 
 // STATIC: 0x00B4A3E4
 static float s_chaosRestartTimer;
@@ -372,7 +372,7 @@ int32_t SI2::OnFocusChanged(const void* data, void* param) {
         if (CGGameUI::m_initialized && enableVoiceChat && enableVoiceChat->m_intValue && s_savedVoiceSession) {
             CGChat::SetActiveVoiceSession(s_savedVoiceSession, s_savedVoiceSessionType, -1);
             s_savedVoiceSession = nullptr;
-            s_savedVoiceSessionType = 4;
+            s_savedVoiceSessionType = COMSATDATA::SESSION_TYPE::NONE;
         }
     } else if (s_enableSoundWhenGameIsInBG->m_intValue) {
         SE2::MuteAllSound(false);
@@ -383,7 +383,7 @@ int32_t SI2::OnFocusChanged(const void* data, void* param) {
 
         if (CGGameUI::m_initialized && !s_savedVoiceSession) {
             s_savedVoiceSession = CGChat::GetChannelStringForDisplay(CGChat::GetActiveVoiceSession(), &s_savedVoiceSessionType);
-            CGChat::SetActiveVoiceSession(nullptr, 4, -1);
+            CGChat::SetActiveVoiceSession(nullptr, COMSATDATA::SESSION_TYPE::NONE, -1);
         }
     }
 

@@ -99,8 +99,16 @@ struct COMSATMEMBER {
 };
 
 struct COMSATDATA {
+    enum SESSION_TYPE : int32_t {
+        CHANNEL = 0,
+        BATTLEGROUND = 1,
+        PARTY = 2,
+        RAID = 3,
+        NONE = 4,
+    };
+
     /* 0000 */ uint64_t m_sessionID;
-    /* 0008 */ int32_t m_type;
+    /* 0008 */ SESSION_TYPE m_type;
     /* 000C */ char m_name[128];
     /* 008C */ uint32_t m_numMembers;
     /* 0090 */ COMSATMEMBER m_members[40];

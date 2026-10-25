@@ -3719,8 +3719,8 @@ void RebuildDisplayChannelList(int32_t signal) {
 
     if (CGRaidInfo::m_numMembers && CGRaidInfo::IsPVPRaid()) {
         battleground = 1;
-        party = ComSatClient_HasSession(2, "") || CGPartyInfo::m_members[0];
-        raid = ComSatClient_HasSession(3, "");
+        party = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::PARTY, "") || CGPartyInfo::m_members[0];
+        raid = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::RAID, "");
     } else {
         battleground = 0;
         party = CGPartyInfo::m_members[0].m_guid != 0;
@@ -3754,7 +3754,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_flags = 0;
             entry->m_enabled = 1;
             entry->m_type = 2;
-            entry->m_voiceEnabled = ComSatClient_HasSession(2, "");
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::PARTY, "");
             entry->m_count = CGPartyInfo::GetNumPartyMembers() + 1;
 
             if (!s_collapsedHeaders[0]) {
@@ -3770,7 +3770,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_flags = 0;
             entry->m_enabled = 1;
             entry->m_type = 3;
-            entry->m_voiceEnabled = ComSatClient_HasSession(3, "");
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::RAID, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
             if (!s_collapsedHeaders[0]) {
@@ -3788,7 +3788,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_flags = 0;
             entry->m_enabled = 1;
             entry->m_type = 1;
-            entry->m_voiceEnabled = ComSatClient_HasSession(1, "");
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::BATTLEGROUND, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
             if (!s_collapsedHeaders[0]) {
@@ -3867,7 +3867,7 @@ void RebuildDisplayChannelList(int32_t signal) {
                     entry->m_flags = 0;
                     entry->m_enabled = channel->m_unkA0 == 0;
                     entry->m_type = 0;
-                    entry->m_voiceEnabled = ComSatClient_HasSession(0, channel->m_name);
+                    entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::CHANNEL, channel->m_name);
                     entry->m_count = 0;
 
                     if (customHeader < 0) {
@@ -5124,12 +5124,12 @@ void CGChat::JoiningParty(bool raid, int32_t pvp) {
     }
 
     if (pvp) {
-        if (g_autojoinBGVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == 4) {
-            CGChat::SetActiveVoiceSession("", 1, -1);
+        if (g_autojoinBGVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == COMSATDATA::SESSION_TYPE::NONE) {
+            CGChat::SetActiveVoiceSession("", COMSATDATA::SESSION_TYPE::BATTLEGROUND, -1);
             RebuildDisplayChannelList(0);
         }
-    } else if (g_autojoinPartyVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == 4) {
-        CGChat::SetActiveVoiceSession("", raid ? 3 : 2, -1);
+    } else if (g_autojoinPartyVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == COMSATDATA::SESSION_TYPE::NONE) {
+        CGChat::SetActiveVoiceSession("", raid ? COMSATDATA::SESSION_TYPE::RAID : COMSATDATA::SESSION_TYPE::PARTY, -1);
         RebuildDisplayChannelList(0);
     }
 }
@@ -5240,15 +5240,15 @@ int32_t CGChat::OnUserListUpdate(void* param, NETMESSAGE msgId, uint32_t time, C
 
         user->m_flags = memberFlags;
 
-        if (ComSatClient_IsMemberInVoiceSession(user->m_guid, 0, channelName)) {
+        if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
             user->m_flags |= 0x40;
         }
 
-        if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, 0, channelName)) {
+        if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
             user->m_flags |= 0x80;
         }
 
-        if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, 0, channelName)) {
+        if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
             user->m_flags |= 0x20;
         }
 
@@ -5401,7 +5401,7 @@ int32_t CGChat::GetActiveVoiceSession() {
 // VERIFY: 838b84c3 manual
 // OFFSET: 0x00500030
 int32_t CGChat::SetActiveVoiceSession(const char* name, int32_t type, int32_t index) {
-    if (type == 4) {
+    if (type == COMSATDATA::SESSION_TYPE::NONE) {
         if (CGChat::s_displayChannels[s_activeVoiceChannel].m_voiceEnabled) {
             FrameScript_SignalEvent(SCRIPT_EVENT_CHANNEL_VOICE_UPDATE, "%d%d", s_activeVoiceChannel + 1, CGChat::s_displayChannels[s_activeVoiceChannel].m_voiceEnabled);
         } else {
@@ -5527,15 +5527,15 @@ int32_t CGChat::OnDisplayChannelList(CDataStore* msg) {
             user->m_guid = guid;
             user->m_flags = userFlags;
 
-            if (ComSatClient_IsMemberInVoiceSession(user->m_guid, 0, name)) {
+            if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
                 user->m_flags |= 0x40;
             }
 
-            if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, 0, name)) {
+            if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
                 user->m_flags |= 0x80;
             }
 
-            if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, 0, name)) {
+            if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
                 user->m_flags |= 0x20;
             }
         }

@@ -17,6 +17,7 @@ namespace TerrainSunShadow {
 void RegisterCVars();
 bool Enabled();
 bool UnifiedWanted();       // shadowUnified (and MaskWanted): the mask takes the exterior receivers' cascade term
+float NormalOffset();       // shadowNormalOffset: the mask's normal offset in texels, back faces shadowed; 0 = old lift (c77.w)
 bool PlaneBiasWanted();     // shadowPlaneBias: the mask's taps take the receiver-plane depth bias (c71.w)
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height

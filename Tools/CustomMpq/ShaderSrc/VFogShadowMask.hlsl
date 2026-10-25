@@ -15,7 +15,7 @@
 // c10 (shading toLight world, strength), c11 (ambient rgb, surface bias yd), c12 (diffuse rgb, k), c13 (stock fog
 // start, 1 / span, on, 0), c65-c67 band 0 rows, c68-c70 unit rows, c71 (band 0 on, unit on), c72 the fine level, c73 its fade,
 // c74-c75 the receivers' PCF offsets in uv (CShadowCache::s_pcfOffsets 0, 2 / 4, 6), c76 (toward the cascades' light
-// world, shadowDebug), c77 (toward the land's light world, 0).
+// world, shadowDebug), c77 (toward the land's light world, shadowNormalOffset).
 // shadowUnified (c71.z, docs/shadow-research/05-step2-consolidation.md): the exterior receivers drew without their
 // cascade term (shadow value 0 permutations until this pass), so this pass is the sun's one visibility answer for them:
 // ratio = min(cascade target, land target) / lit, both terms lifted at the terminator the M2/WMO way (terrain too
@@ -24,6 +24,11 @@
 // shadowPlaneBias (c71.w, shadowbias 2026-10-25): every tap of a compare takes the receiver's own depth plane,
 // q.z + dot(dz/duv, offset) (Isidoro GDC 2006; NVIDIA PCSS gradient bias), from the rebuilt surface's shadow-space
 // slope, capped at 2 texels of depth: a tap one texel off a grazing wall otherwise reads the wall itself as a caster.
+// shadowNormalOffset (c77.w, texels; shadowfix 2026-10-26), unified pixels only: the compare point moves along the
+// surface normal by that many texels x sin(N, L) (normal offset, Holbein 2011), and a back face to the cascades' light
+// is in shadow (fading in over N.L 0 to 0.05) instead of being lifted at the terminator. The lift let a back face
+// read the map: a thin wall's inside, lit from behind, showed whatever stood outside between it and the sun
+// (DSNIGHTELFINN, shadowDebug 2 2026-10-26). 0: the old lift, no offset. Self-shadowed receivers keep the lift (stock).
 // VFogShadowMaskPoint is this source built with no hardware-compare slots, for D3D11 with R32F maps (hwPCF 0), whose
 // compare slots would need the comparison sampler only depth maps get (build_shaders.py compare_slots).
 #include "vf_common.hlsli"
@@ -194,12 +199,19 @@ float MapShadow(sampler2D maps, float3 q, float3 dqx, float3 dqy, bool soft, flo
 // What the receivers' shadow maps say, with their cutovers (Combiners_Opaque:3): the unit map inside 0.99 of its
 // square, min band 0 if |q| < 1, else band 1 if |q| < 1, else band 2 faded out over 0.9-0.99. which = the map read for
 // shadowDebug: 0 unit map, 1-3 bands 0-2, 4 none.
-float ReceiverShadow(float3 p, float3 dx, float3 dy, bool soft, out float which, out float unitOnly, out float bandOnly, out float distance, out float share)
+// p moved by shift (view-space yards per texel of normal offset) at one map's scale (rowX: its q.x row).
+float3 Shifted(float3 p, float3 shift, float4 rowX)
+{
+    return p + shift / max(cShadowControl.w * 0.5 * length(rowX.xyz), 1e-6);
+}
+
+float ReceiverShadow(float3 p0, float3 shift, float3 dx, float3 dy, bool soft, out float which, out float unitOnly, out float bandOnly, out float distance, out float share)
 {
     float c = 1;
     which = 4;
     distance = -1;
     share = 1;
+    float3 p = Shifted(p0, shift, cMaskRows[3]);
     [branch] if (cMaskMaps.y > 0)
     {
         float3 q = MaskCoord(3, p);
@@ -211,6 +223,7 @@ float ReceiverShadow(float3 p, float3 dx, float3 dy, bool soft, out float which,
     }
     float b = 1;
     float band = 4;
+    p = Shifted(p0, shift, cMaskRows[0]);
     float3 q0 = MaskCoord(0, p);
     [branch] if (cMaskMaps.x > 0 && max(abs(q0.x), abs(q0.y)) < 1)
     {
@@ -219,6 +232,7 @@ float ReceiverShadow(float3 p, float3 dx, float3 dy, bool soft, out float which,
     }
     else if (ShadowedSun())
     {
+        p = Shifted(p0, shift, cShadowBands[0]);
         float3 q = ShadowCoord(0, p);
         [branch] if (max(abs(q.x), abs(q.y)) < 1)
         {
@@ -227,6 +241,7 @@ float ReceiverShadow(float3 p, float3 dx, float3 dy, bool soft, out float which,
         }
         else
         {
+            p = Shifted(p0, shift, cShadowBands[3]);
             q = ShadowCoord(1, p);
             float fade = saturate(11 - 11.1111 * max(abs(q.x), abs(q.y)));
             [branch] if (fade > 0)
@@ -326,7 +341,8 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     float3 dy = Nearer(p, ViewAt(pixel + float2(0, 1)), ViewAt(pixel - float2(0, 1)));
     float3 n = cross(dx, dy);
     n *= dot(n, p) > 0 ? -1 : 1;    // toward the camera
-    n = normalize(ViewToWorldDirection(GBufferNormal(pixel, p, normalize(n))));
+    float3 nView = normalize(GBufferNormal(pixel, p, normalize(n)));
+    n = normalize(ViewToWorldDirection(nView));
     float ndl = saturate(dot(n, cMaskLight.xyz));
     // The cascade term lifts at the terminator as the receivers' does. The land term does not: lifting it too (step 1)
     // erased a mountain's shadow on every surface under 0.2 N.L, all flat ground once the sun is under 11.5 deg, which
@@ -336,16 +352,25 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
     // folded tops dark, the smooth foot not), and to the shading light, 6 deg higher than the shadows' at a low sun,
     // lighting slopes the shadows called dark (shadowvid video, 2026-10-24). At N.L 0 the target is the receivers' own
     // colour (cascade lifted; ndl under the shading light's 10 deg floor at most sin 6 deg), so the cut barely shows.
+    bool unified = cMaskMaps.z > 0 && !SelfShadowed(pixel);
     float liftCascade = TerminatorFade(n, cMaskCascadeLight.xyz);
+    float3 shift = 0;
+    float backFace = 1;
+    [branch] if (unified && cMaskLandLight.w > 0)    // shadowNormalOffset
+    {
+        float ndlCascade = dot(n, cMaskCascadeLight.xyz);
+        liftCascade = 0;
+        backFace = saturate(ndlCascade * 20);
+        shift = nView * cMaskLandLight.w * sqrt(saturate(1 - ndlCascade * ndlCascade));
+    }
     float landHeights = land;
     float facing = dot(n, cMaskLandLight.xyz) <= 0 ? 0 : 1;
     land *= facing;
-    bool unified = cMaskMaps.z > 0 && !SelfShadowed(pixel);
     [branch] if (land >= 1 && debug <= 0 && !unified)
         return 1;
 
     float which, unitOnly, bandOnly, distance, share;
-    float cascade = lerp(ReceiverShadow(p, dx, dy, unified && cMaskSoft.z > 0, which, unitOnly, bandOnly, distance, share), 1, liftCascade);
+    float cascade = lerp(min(ReceiverShadow(p, shift, dx, dy, unified && cMaskSoft.z > 0, which, unitOnly, bandOnly, distance, share), backFace), 1, liftCascade);
     float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;
     float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
     [branch] if (unified)

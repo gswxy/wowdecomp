@@ -85,6 +85,7 @@ CVar* s_unifiedCvar;    // shadowUnified (docs/shadow-research/05-step2-consolid
 CVar* s_penumbraCvar;   // shadowPenumbra (docs/shadow-research/06-soft-shadows.md)
 CVar* s_throwCvar;      // shadowMaxThrow
 CVar* s_planeBiasCvar;  // shadowPlaneBias (shadowbias)
+CVar* s_normalOffsetCvar;   // shadowNormalOffset (shadowfix)
 CVar* s_throwFadeCvar;  // shadowThrowFade
 CVar* s_crestCvar;      // shadowMaskCrest (fix/landedge)
 CVar* s_smoothCvar;     // shadowMaskSmooth
@@ -533,6 +534,7 @@ void RegisterCVars() {
     s_unifiedCvar = CVar::Register("shadowUnified", "One sun shadow answer per pixel (needs shadowMask): outdoor terrain, buildings and models leave their shadow-map term to the shadow mask, which combines it with the mountains' shadow (darker of the two, one fade into the fog, the same low-sun lift on ground and models): 1 = on (default), 0 = each surface shades its own shadow maps (old)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_penumbraCvar = CVar::Register("shadowPenumbra", "Model shadows (shadowUnified) soften with the distance to their caster, sharp where a trunk meets the ground and soft far off; times the sun's real 0.53 degree disc: 0 = off (fixed edge, old), default 3", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_planeBiasCvar = CVar::Register("shadowPlaneBias", "Shadow mask (shadowUnified): each shadow-map tap compares at the receiver's own depth plane (receiver-plane depth bias from the rebuilt surface, capped at 2 texels), so walls at a grazing sun do not streak: 1 = on (default), 0 = off (every tap at the centre depth, old)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_normalOffsetCvar = CVar::Register("shadowNormalOffset", "Shadow mask (shadowUnified): the shadow-map compare moves this many map texels out along the surface normal (more as the sun grazes it), and surfaces facing away from the sun are in shadow instead of lifted to lit, so the inside of a thin wall lit from behind no longer shows the shadows of things outside: default 1.5, 0 = off (old terminator lift)", 1, "1.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_throwCvar = CVar::Register("shadowMaxThrow", "Model shadows (shadowUnified) fade out when their caster is more than this many yards back along the sun (the mountains' shadow and shadowMask are not affected): 0 = off (default)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_throwFadeCvar = CVar::Register("shadowThrowFade", "Yards over which shadowMaxThrow fades a model shadow out, ending at shadowMaxThrow (default 20)", 1, "20", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_crestCvar = CVar::Register("shadowMaskCrest", "The mountains' shadow (shadowMask, near terrain within 1 km) starts at the true ridge line instead of the next 4 yd terrain vertex past it, so its edge is smooth instead of stepped: yards under the ground the near land's own height still counts as blocking, 0 = off (old), default 4", 1, "4", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -546,6 +548,10 @@ int DebugMode() {
 
 const float* LightDir() {
     return s_light;
+}
+
+float NormalOffset() {
+    return s_normalOffsetCvar && std::isfinite(s_normalOffsetCvar->m_floatValue) ? std::clamp(s_normalOffsetCvar->m_floatValue, 0.0f, 8.0f) : 0.0f;
 }
 
 bool PlaneBiasWanted() {

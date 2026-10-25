@@ -1530,7 +1530,7 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
         { pcf[0].x, pcf[0].y, pcf[2].x, pcf[2].y },
         { pcf[4].x, pcf[4].y, pcf[6].x, pcf[6].y },
         { -sunDir.x / sunLen, -sunDir.y / sunLen, -sunDir.z / sunLen, static_cast<float>(debug) },
-        { landLight[0], landLight[1], landLight[2], 0.0f },
+        { landLight[0], landLight[1], landLight[2], TerrainSunShadow::NormalOffset() },   // c77.w shadowNormalOffset (shadowfix)
     };
 
     static SavedPassState s_saved;

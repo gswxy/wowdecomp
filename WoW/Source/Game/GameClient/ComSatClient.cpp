@@ -318,7 +318,7 @@ void AddComSatEvent(uint32_t type, float value, uint64_t guid) {
 
     if (event) {
         event->m_floatValue = value;
-        event->m_type = type;
+        event->m_type = static_cast<ComSatEvent::COMMAND>(type);
         event->m_guid = guid;
     }
 }
@@ -329,7 +329,7 @@ void AddComSatEvent(uint32_t type, uint32_t value, uint64_t guid) {
     ComSatEvent* event = s_comSatEvents.New();
 
     if (event) {
-        event->m_type = type;
+        event->m_type = static_cast<ComSatEvent::COMMAND>(type);
         event->m_guid = guid;
         event->m_uintValue = value;
     }
@@ -687,7 +687,7 @@ static void ComSatClient_SetCurrentSessionI(int32_t index) {
     const char* name;
 
     if (index == -1) {
-        AddComSatEvent(5, 0u, 0ull);
+        AddComSatEvent(ComSatEvent::COMMAND::SELECT_SESSION, 0u, 0ull);
         s_currentSession = -1;
         type = 4;
         name = "";
@@ -698,7 +698,7 @@ static void ComSatClient_SetCurrentSessionI(int32_t index) {
             ComSatClient_SendEvent(SCRIPT_EVENT_VOICE_PLATE_STOP, player);
         }
     } else {
-        AddComSatEvent(5, 0u, s_comsatData[index].m_sessionID);
+        AddComSatEvent(ComSatEvent::COMMAND::SELECT_SESSION, 0u, s_comsatData[index].m_sessionID);
         s_currentSession = index;
         type = s_comsatData[index].m_type;
         name = s_comsatData[index].m_name;
@@ -1374,44 +1374,44 @@ static void DispatchComSatEvents() {
             ComSatEvent& event = s_comSatEvents[i];
 
             switch (event.m_type) {
-                case 1:
+                case ComSatEvent::COMMAND::SET_SESSION_VOLUME:
                     ComSatThread::s_comsat->LocalTalkerSetSessionVolume(0, event.m_guid, event.m_floatValue);
                     break;
 
-                case 2:
+                case ComSatEvent::COMMAND::ENABLE_LOCAL_TALKER:
                     s_pushToTalkDown = 0;
                     ComSatThread::s_comsat->LocalTalkerEnable(0, event.m_uintValue != 0);
                     break;
 
-                case 3:
+                case ComSatEvent::COMMAND::SET_TALKER_THRESHOLD:
                     ComSatThread::s_comsat->LocalTalkerThreshold(0, event.m_floatValue);
                     break;
 
-                case 4:
+                case ComSatEvent::COMMAND::MUTE_TALKER:
                     ComSatThread::s_comsat->MuteTalker(0, event.m_guid, static_cast<ComSat::MuteSetting>(event.m_uintValue));
                     break;
 
-                case 5:
+                case ComSatEvent::COMMAND::SELECT_SESSION:
                     ComSatThread::s_comsat->LocalTalkerSelectSession(0, event.m_guid);
                     break;
 
-                case 6:
+                case ComSatEvent::COMMAND::SET_SESSION_PRIORITY:
                     ComSatThread::s_comsat->LocalTalkerSetSessionPriority(0, event.m_guid, static_cast<uint8_t>(event.m_uintValue));
                     break;
 
-                case 7:
+                case ComSatEvent::COMMAND::MUTE_SESSION:
                     ComSatThread::s_comsat->MuteSession(0, event.m_guid, static_cast<ComSat::MuteSetting>(event.m_uintValue));
                     break;
 
-                case 8:
+                case ComSatEvent::COMMAND::SET_SEQUENCE_DELAY:
                     ComSatThread::s_comsat->DebugSetSequenceDelay(event.m_uintValue);
                     break;
 
-                case 9:
+                case ComSatEvent::COMMAND::SET_SOUND_OUTPUT_DELAY:
                     ComSatThread::s_comsat->DebugSetSoundOutputDelay(0, event.m_uintValue);
                     break;
 
-                case 10:
+                case ComSatEvent::COMMAND::UPDATE_PUSH_TO_TALK_KEY:
                     UpdatePushToTalkKey();
                     break;
             }
@@ -1526,7 +1526,7 @@ static void MarkPlayerMuted(WOWGUID guid, int32_t muted) {
 // VERIFY: af9c2575 auto
 // OFFSET: 0x007DF6F0
 void VoiceSessionSetTalkerMuted(WOWGUID guid, int32_t muted) {
-    AddComSatEvent(4, static_cast<uint32_t>(muted), guid.m_guid);
+    AddComSatEvent(ComSatEvent::COMMAND::MUTE_TALKER, static_cast<uint32_t>(muted), guid.m_guid);
 
     if (muted == 2) {
         MarkPlayerMuted(guid, s_mutedPlayers.Ptr(static_cast<uint32_t>(guid.m_guid), CHashKeyGUID(guid.m_guid)) == nullptr);

@@ -12,7 +12,20 @@ struct CVar;
 struct lua_State;
 
 struct ComSatEvent {
-    /* 0000 */ uint32_t m_type;
+    enum COMMAND : uint32_t {
+        SET_SESSION_VOLUME = 1,
+        ENABLE_LOCAL_TALKER = 2,
+        SET_TALKER_THRESHOLD = 3,
+        MUTE_TALKER = 4,
+        SELECT_SESSION = 5,
+        SET_SESSION_PRIORITY = 6,
+        MUTE_SESSION = 7,
+        SET_SEQUENCE_DELAY = 8,
+        SET_SOUND_OUTPUT_DELAY = 9,
+        UPDATE_PUSH_TO_TALK_KEY = 10,
+    };
+
+    /* 0000 */ COMMAND m_type;
     /* 0004 */ uint32_t unused_0004;
     /* 0008 */ uint64_t m_guid;
     /* 0010 */ union {

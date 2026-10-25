@@ -50,8 +50,8 @@ void EffectGlow::SetParameters(int32_t count, const int32_t* params) {
     color.r = params[2];
     color.a = params[1];
 
-    static_cast<PassGlowBase*>(this->m_altPasses[2])->m_color = color;
-    static_cast<PassGlowBase*>(this->m_passes[2])->m_color = color;
+    static_cast<PassGlowBase*>(this->m_altPasses[PASS_STAGE::COMBINE_PASS])->m_color = color;
+    static_cast<PassGlowBase*>(this->m_passes[PASS_STAGE::COMBINE_PASS])->m_color = color;
 }
 
 // VERIFY: 46600cfa manual

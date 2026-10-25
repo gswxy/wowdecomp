@@ -7,6 +7,13 @@
 
 class EffectGlow : public FFX::Effect {
     public:
+    enum PASS_STAGE : uint32_t {
+        DOWNSAMPLE_PASS = 0,
+        BLUR_PASS = 1,
+        COMBINE_PASS = 2,
+        PASS_COUNT = 3,
+    };
+
     enum PASS_SEQUENCE : int32_t {
         STANDARD_PASSES = 0,
         ALTERNATE_PASSES = 1,

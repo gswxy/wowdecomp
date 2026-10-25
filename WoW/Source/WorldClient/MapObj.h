@@ -54,6 +54,12 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum SHADOW_CONTEXT : int32_t {
+        INVALID = -1,
+        EXTERIOR = 0,
+        INTERIOR = 1,
+    };
+
     enum LIGHTING_MODE : int32_t {
         CACHE_INVALID = -1,
         UNLIT = 0,

@@ -1,7 +1,7 @@
 #ifndef WOW_SOURCE_WORLDCLIENT_TERRAINHEIGHTGEN_H
 #define WOW_SOURCE_WORLDCLIENT_TERRAINHEIGHTGEN_H
 
-// TERRAINPOM: not in 12340. The terrain parallax height map of one tileset texture, made at run time from the
+// TERRAINPOM: not in 12340. The terrain height-blend map of one tileset texture, made at run time from the
 // diffuse the client loaded (so a texture pack that replaces the tileset gets matching shapes), instead of a
 // pre-baked `_h.blp`. A port of wxl-light tools/make_heightmaps.py (commit f4d6271) to plain C++, no engine deps
 // (Tools/TerrainHeightGenCheck.py builds it natively and compares it against the Python).

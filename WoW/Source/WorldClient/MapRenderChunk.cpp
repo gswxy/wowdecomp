@@ -33,10 +33,8 @@
 #include "WoW/Source/WorldClient/TerrainHeightGen.h"
 #include <vector>
 
-// TERRAINPOM (not in 12340): height blend and parallax on the terrain (Tools/VulkanShaders/bls/terrainpom.py)
+// TERRAINPOM (not in 12340): height blend on the terrain (Tools/VulkanShaders/bls/terrainpom.py)
 float CMapRenderChunk::s_heightBlend = 1.0f;
-int32_t CMapRenderChunk::s_parallax = 1;
-float CMapRenderChunk::s_parallaxScale = 0.08f;
 
 namespace {
 
@@ -99,7 +97,7 @@ CTexture* TerrainHeightGenerate(const char* source, const char* name) {
             break;
         }
 
-        // box mips, so the last one is the map's mean (the polygon's height in terrainpom.py)
+        // box mips
         std::vector<float> next((size / 2) * (size / 2));
 
         for (uint32_t y = 0; y < size / 2; y++) {
@@ -116,7 +114,7 @@ CTexture* TerrainHeightGenerate(const char* source, const char* name) {
     return TextureCreate(outSide, outSide, GxTex_Argb8888, GxTex_Argb8888, CGxTexFlags(GxTex_LinearMipLinear, 1, 1, 0, 0, 0, 1), chain, TerrainHeightChainCallback, texName.c_str(), 0);
 }
 
-// the parallax height map of a tileset layer (height in alpha), made at first use from the diffuse the client
+// the height map of a tileset layer (height in alpha), made at first use from the diffuse the client
 // loaded (TerrainHeightGen), so it follows whatever archive won; failing that the baked "x_h.blp" beside it
 // (Data/patch-T.MPQ, made from the stock textures), else nullptr. Only D3D11 / Vulkan draw it.
 // ponytail: generated on the main thread, 50-90 ms per new 256 px tileset (14 at 128; -O2 on a busy 5825U), a hitch when new
@@ -166,12 +164,12 @@ CTexture* TerrainHeightTexture(const char* name, CTexture* diffuse) {
 }
 
 // the heights (s10 + layer) and the pixel constants c13 / c14 of one chunk draw; all zero (the stock picture) on
-// D3D9 or with both features off
+// D3D9 or with the height blend off
 void TerrainPomBind(CMapRenderChunk* chunk) {
     float has[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     float params[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     EGxApi api = g_theGxDevicePtr->DeviceApi();
-    bool on = (api == GxApi_D3d11 || api == GxApi_Vulkan) && (CMapRenderChunk::s_heightBlend > 0.0f || CMapRenderChunk::s_parallax);
+    bool on = (api == GxApi_D3d11 || api == GxApi_Vulkan) && CMapRenderChunk::s_heightBlend > 0.0f;
 
     for (uint32_t i = 0; i < 4; i++) {
         CGxTex* gxTex = nullptr;
@@ -183,17 +181,10 @@ void TerrainPomBind(CMapRenderChunk* chunk) {
         if (gxTex) {
             GxTexSetWrap(gxTex, GxTex_Wrap, GxTex_Wrap);
             has[i] = 1.0f;
-            params[2] = std::max(params[2], static_cast<float>(gxTex->m_width));
+            params[0] = std::min(CMapRenderChunk::s_heightBlend, 1.0f);
         }
 
         g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture10 + i), gxTex);
-    }
-
-    if (on && params[2] > 0.0f) {
-        params[0] = std::min(std::max(CMapRenderChunk::s_heightBlend, 0.0f), 1.0f);
-        params[1] = CMapRenderChunk::s_parallax ? std::min(std::max(CMapRenderChunk::s_parallaxScale, 0.0f), 0.5f) : 0.0f;
-        // the parallax fades out between the height map's mip 1.5 and 3.5 (patch-T's maps: 128 texels a 4 yd tile)
-        params[3] = 3.5f;
     }
 
     GxShaderConstantsSet(GxSh_Pixel, 13, has, 1);
@@ -2913,7 +2904,7 @@ void CMapRenderChunk::RenderSinglePassPixelShader() {
 
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), TextureGetGxTex(this->m_terrainBlendTexture, 1, nullptr));
     GxXformSet(static_cast<EGxXform>(GxXform_Tex0 + i), alphaMatrix);
-    static const float s_noPom[4] = { 0.0f, 0.0f, 0.0f, 0.0f };   // TERRAINPOM: no VS here, so no gxT: stock
+    static const float s_noPom[4] = { 0.0f, 0.0f, 0.0f, 0.0f };   // TERRAINPOM: no height maps bound here: stock
     GxShaderConstantsSet(GxSh_Pixel, 14, s_noPom, 1);
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
 

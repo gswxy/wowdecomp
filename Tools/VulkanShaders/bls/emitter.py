@@ -102,7 +102,7 @@ class Emitter(object):
         self.inputs = collections.OrderedDict()    # register name -> semantic (vertex) / pixel reads
         self.in_masks = {}
         self.out_sems = collections.OrderedDict()  # output register name -> [semantic]
-        self.tp, self.tp_reads, self.tp_vs = 0, None, None   # terrainpom.py
+        self.tp, self.tp_reads = 0, None   # terrainpom.py
         self.samplers = {}                         # slot -> '2d' | 'cube'
         self.temps = set()
         self.uses_odepth = False
@@ -642,9 +642,6 @@ class Emitter(object):
             self.surface = lighting.surface_outputs(self)
             if self.surface:
                 self.flags.add('lit_surface')
-            pos = next((nm for nm, sem in self.inputs.items() if sem == 'position0'), None)
-            self.tp_vs = terrainpom.vs_line(pos, 'glsl') if (self.surface and pos and
-                                                               terrainpom.is_terrain_vs(getattr(self.rec, 'names', None) or [])) else None
             self.vconst = VCONST_LARGE if (self.relative or self.cmax >= VCONST_SMALL) else VCONST_SMALL
         else:
             self.reads = []
@@ -657,7 +654,7 @@ class Emitter(object):
             if self.litpix and self.litpix[4]:
                 self.samplers[lighting.ARMOR_MASK_SLOT] = '2d'   # ARMORMASK: the armour metal mask
             self.vconst = VCONST_SMALL
-            # terrain height blend and parallax (terrainpom.py): the layer / blend reads, the height maps' samplers
+            # terrain height blend (terrainpom.py): the layer / blend reads, the height maps' samplers
             self.tp = terrainpom.layers(getattr(self.rec, 'names', None) or [], self.samplers)
             self.tp_reads = terrainpom.find_reads('\n'.join(self.body), self.tp, TP_SAMPLE) if self.tp else None
             if self.tp_reads:
@@ -694,8 +691,6 @@ class Emitter(object):
             if self.surface:
                 for nm, loc in lighting.VARYINGS:
                     P('layout(location = %d) out vec4 %s;   // lighting: the surface' % (loc, nm))
-            if self.tp_vs:
-                P('layout(location = %d) out vec4 gxT;   // terrainpom.py: view-space position' % terrainpom.LOCATION)
         else:
             P('// Varyings read, by semantic, at the same locations the vertex module writes them.')
             for sem in self.reads:
@@ -704,8 +699,6 @@ class Emitter(object):
             if self.litpix:
                 for nm, loc in lighting.VARYINGS:
                     P('layout(location = %d) in vec4 %s;   // lighting: the surface' % (loc, nm))
-            if self.tp_reads:
-                P('layout(location = %d) in vec4 gxT;   // terrainpom.py: view-space position' % terrainpom.LOCATION)
             P('')
             P('layout(location = 0) out vec4 oC0;')
             if self.uses_oc1:
@@ -794,8 +787,6 @@ class Emitter(object):
         P('')
         if self.surface:
             L.extend(self.surface)
-        if self.vs and self.tp_vs:
-            P(self.tp_vs)
         # epilogue
         if self.vs:
             for nm, sems in self.out_sems.items():

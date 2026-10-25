@@ -54,6 +54,16 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum SHADER_FOG_MODE : int32_t {
+        CACHE_RESET = -1,
+        DISABLED = 0,
+        INTERIOR_COLOR = 1,
+        EXTERIOR_COLOR = 2,
+        BLACK_COLOR = 4,
+        INTERIOR_BLACK = 5,
+        EXTERIOR_BLACK = 6,
+    };
+
     enum SHADOW_CONTEXT : int32_t {
         INVALID = -1,
         EXTERIOR = 0,

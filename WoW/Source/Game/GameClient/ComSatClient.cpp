@@ -387,19 +387,19 @@ static void ProcessComSatCallbacks() {
         ComSatCallback& callback = s_comsatCallbacks[i];
 
         switch (callback.m_type) {
-            case 0:
+            case ComSatCallback::TYPE::LOCAL_TALKER_START:
                 Comsat::VoiceStart();
                 break;
 
-            case 1:
+            case ComSatCallback::TYPE::LOCAL_TALKER_STOP:
                 Comsat::VoiceStop();
                 break;
 
-            case 2:
+            case ComSatCallback::TYPE::TALKER_START:
                 Comsat::VoicePlateStart(callback.m_sessionId, callback.m_guid);
                 break;
 
-            case 3:
+            case ComSatCallback::TYPE::TALKER_STOP:
                 Comsat::VoicePlateStop(callback.m_sessionId, callback.m_guid);
                 break;
 
@@ -1582,7 +1582,7 @@ void AddComSatCallback(uint32_t type, uint64_t sessionId, uint64_t guid) {
     ComSatCallback* callback = s_comsatCallbacks.New();
 
     if (callback) {
-        callback->m_type = type;
+        callback->m_type = static_cast<ComSatCallback::TYPE>(type);
         callback->m_sessionId = sessionId;
         callback->m_guid = guid;
     }
@@ -1594,7 +1594,7 @@ void ComSatClientCallback::NotifyLocalTalkerStart(uint8_t localTalker) {
     if (localTalker == 0 && s_currentSession >= 0) {
         DebugLog("COMSAT_START: NotifyLocalTalkerStart\r\n");
         s_localTalkerActive = 1;
-        AddComSatCallback(0, 0, 0);
+        AddComSatCallback(ComSatCallback::TYPE::LOCAL_TALKER_START, 0, 0);
     }
 }
 
@@ -1605,7 +1605,7 @@ void ComSatClientCallback::NotifyLocalTalkerStop(uint8_t localTalker) {
 
     if (localTalker == 0) {
         s_localTalkerActive = 0;
-        AddComSatCallback(1, 0, 0);
+        AddComSatCallback(ComSatCallback::TYPE::LOCAL_TALKER_STOP, 0, 0);
     }
 }
 
@@ -1615,7 +1615,7 @@ void ComSatClientCallback::NotifyTalkerStart(uint8_t localTalker, uint64_t sessi
     DebugLog("COMSAT_START: NotifyTalkerStart\r\n");
 
     if (localTalker == 0) {
-        AddComSatCallback(2, session, talker);
+        AddComSatCallback(ComSatCallback::TYPE::TALKER_START, session, talker);
     }
 }
 
@@ -1625,7 +1625,7 @@ void ComSatClientCallback::NotifyTalkerStop(uint8_t localTalker, uint64_t sessio
     DebugLog("COMSAT_STOP: NotifyTalkerStop\r\n");
 
     if (localTalker == 0) {
-        AddComSatCallback(3, session, talker);
+        AddComSatCallback(ComSatCallback::TYPE::TALKER_STOP, session, talker);
     }
 }
 

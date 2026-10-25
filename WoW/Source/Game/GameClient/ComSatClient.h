@@ -23,7 +23,14 @@ struct ComSatEvent {
 };
 
 struct ComSatCallback {
-    /* 0000 */ uint32_t m_type;
+    enum TYPE : uint32_t {
+        LOCAL_TALKER_START = 0,
+        LOCAL_TALKER_STOP = 1,
+        TALKER_START = 2,
+        TALKER_STOP = 3,
+    };
+
+    /* 0000 */ TYPE m_type;
     /* 0004 */ uint32_t unused_0004;
     /* 0008 */ uint64_t m_sessionId;
     /* 0010 */ uint64_t m_guid;

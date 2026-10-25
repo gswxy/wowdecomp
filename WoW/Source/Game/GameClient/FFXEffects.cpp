@@ -602,9 +602,9 @@ void PassPropagateFog::Execute() {
 // VERIFY: 7f8524f4 auto
 // OFFSET: 0x007E9010
 void EffectSwirlingFog::SetParameters(int32_t count, const int32_t* params) {
-    static_cast<PassFogSeed*>(this->m_passes[0])->m_color = params[0];
-    static_cast<PassPropagateFog*>(this->m_passes[1])->unk_005C = params[1] * 0.0039215689f;
-    PassFogCombine* combine = static_cast<PassFogCombine*>(this->m_passes[2]);
+    static_cast<PassFogSeed*>(this->m_passes[PASS_STAGE::SEED_PASS])->m_color = params[0];
+    static_cast<PassPropagateFog*>(this->m_passes[PASS_STAGE::PROPAGATION_PASS])->unk_005C = params[1] * 0.0039215689f;
+    PassFogCombine* combine = static_cast<PassFogCombine*>(this->m_passes[PASS_STAGE::COMBINE_PASS]);
     combine->m_density = params[2] * 0.0099999998f;
     combine->m_fadeTime = 3.0f;
 }

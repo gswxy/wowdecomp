@@ -238,5 +238,6 @@ bool WaterHidesClientRipples();              // CMap::CreateWaterRipple: the mod
 bool BatchFog(const float modelPos[3], float& start, float& end, float& density, float color[3]);
 float CameraInteriorBlend();                // DNInfo m_interiorFogBlend, 0 unless the camera is in an interior group
 float CameraRoofBlend();                    // 1 when exterior-flagged WMO geometry closes the camera in (shadowMaskRoofed)
+void RoofReadout(float interiorBlend, float roofBlend, float maskW);   // shadowMaskRoofed 2: chat line once a second
 
 }  // namespace VolumetricFog

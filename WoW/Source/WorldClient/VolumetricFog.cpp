@@ -21,6 +21,7 @@
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Services/ParticleSystem2.h"
 #include "WoW/Source/UIUtil/Camera.h"
+#include "WoW/Source/Ui/ChatFrame.h"
 #include "WoW/Source/Ui/WorldFrame.h"
 #include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/DayNight.h"
@@ -297,13 +298,18 @@ bool CameraInInteriorGroup() {
 // within 30 yd on at least 6 of 8 sides (a doorway or two stay open; a bridge or porch roof alone does not count).
 // WMO-only rays (0x10), up to nine every 100 ms. Only the land term reads it (CameraRoofBlend): the fog, its shadowed
 // sun and the cascades' light keep the group test (the room's sunbeams are a model, wanted). shadowMaskRoofed 0 = off.
+// wallshadow2: the viewer def cannot gate it. CMap::LocateViewerMapObjs (0x7D59B0, Ghidra) clears the def whenever the
+// group under the camera is exterior (MOGP 0x8), so s_viewerMapObjDef was null in exactly this inn and nothing ran.
+// A WMO floor ray (20 yd down) stands in for it. shadowMaskRoofed 2 = on + a chat readout once a second.
 CVar* s_roofCvar = nullptr;
+static bool s_roofHit = false;
+static int s_roofWalls = 0;
 
 bool CameraUnderWmoRoof() {
     static bool s_roofed = false;
     static double s_nextMs = 0.0;
     const double now = FrameTime::s_curTimeMs;
-    if (!s_roofCvar || !s_roofCvar->m_intValue || !CWorldScene::s_viewerMapObjDef) {
+    if (!s_roofCvar || !s_roofCvar->m_intValue) {
         s_roofed = false;
         return false;
     }
@@ -317,12 +323,14 @@ bool CameraUnderWmoRoof() {
             return World::Intersect(eye, end, &hit, &t, 0x10, nullptr) != 0;
         };
         int walls = 0;
-        if (blocked(0.0f, 0.0f, 40.0f)) {
+        s_roofHit = blocked(0.0f, 0.0f, 40.0f) && blocked(0.0f, 0.0f, -20.0f);
+        if (s_roofHit) {
             for (int i = 0; i < 8; ++i) {
                 const float a = static_cast<float>(i) * 0.785398163f;
                 walls += blocked(std::cos(a) * 30.0f, std::sin(a) * 30.0f, 0.0f) ? 1 : 0;
             }
         }
+        s_roofWalls = walls;
         s_roofed = walls >= 6;
     }
     return s_roofed;
@@ -887,7 +895,7 @@ void RegisterCVars() {
     s_cvars.dither = CVar::Register("vfogDither", "Volumetric fog dither against banding on the 8-bit outputs (composite, grade, water, and the fog targets when 8 bit): 0 = off, 1 = +-1/255 triangular (default), 2 = twice that", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.hdrTargets = CVar::Register("vfogHdrTargets", "Volumetric fog: 1 = half-float fog and god ray targets where the device has them (default), 0 = 8 bit (bands)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.godRays = CVar::Register("vfogGodRays", "Volumetric fog god rays from the bright sky around the sun: 0 = off, 1 = on (default), up to 4 = strength", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_roofCvar = CVar::Register("shadowMaskRoofed", "A camera closed in by an exterior-flagged WMO (roof and walls around it) counts as indoors, as an interior group does: no land shadow, indoor fog: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_roofCvar = CVar::Register("shadowMaskRoofed", "A camera closed in by an exterior-flagged WMO (floor, roof and walls around it) counts as indoors for the land shadow, as an interior group does: 1 = on (default), 2 = on + chat readout, 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shadowedSun = CVar::Register("vfogShadowedSun", "Volumetric fog sun shafts through the scene: the fog's sunlight is shadowed by trees, buildings and terrain casters (needs shadows above low): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shaftIntensity = CVar::Register("vfogShaftIntensity", "Volumetric fog sun shaft strength away from the sun, 0..2 (default 0.35), 0 = off", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.canopy = CVar::Register("vfogCanopy", "Volumetric fog darkening of the haze glow in sun shadow (under trees, beside buildings) while vfogShadowedSun is on, 0..1 (default 0.5)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -1476,6 +1484,21 @@ float CameraRoofBlend() {
     }
     s_lastMs = now;
     return s_blend;
+}
+
+// shadowMaskRoofed 2: what the roof test saw and what the land term got (c10.w), in the chat frame once a second.
+void RoofReadout(float interiorBlend, float roofBlend, float maskW) {
+    static double s_nextMs = 0.0;
+    const double now = FrameTime::s_curTimeMs;
+    if (!s_roofCvar || s_roofCvar->m_intValue != 2 || (now < s_nextMs && now + 2000.0 > s_nextMs)) {
+        return;
+    }
+    s_nextMs = now + 1000.0;
+    char text[256];
+    SStrPrintf(text, sizeof(text), "roof: viewerDef %s, roof+floor %s, walls %d/8, roofBlend %.2f, interiorBlend %.2f, c10.w %.2f",
+        CWorldScene::s_viewerMapObjDef ? "Y" : "N", s_roofHit ? "Y" : "N", s_roofWalls, static_cast<double>(roofBlend),
+        static_cast<double>(interiorBlend), static_cast<double>(maskW));
+    CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 }  // namespace VolumetricFog

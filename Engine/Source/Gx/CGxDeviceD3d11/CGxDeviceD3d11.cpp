@@ -2685,7 +2685,9 @@ void CGxDeviceD3d11::IStateSyncDeviceConstants(bool ffVs) {
     // LIGHTING: .y 1 = the bound VS writes the lit surface (gxN/gxP/gxM/gxF) the pixel shader may relight with
     CGxShader* vs = static_cast<CGxShader*>(this->m_appRenderStates[GxRs_VertexShader].m_value.m_data.p);
     // (1 + the PBR-lite material category, GxLighting.h)
-    dev[16 * 4 + 1] = !ffVs && vs->m_litSurface ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
+    // fogalpha: not on additive or modulating draws (as CGxDeviceVulkan::Draw: the specular lit their black texels)
+    const bool litBlend = this->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.u[0] <= GxBlend_Alpha;
+    dev[16 * 4 + 1] = !ffVs && vs->m_litSurface && litBlend ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
 
     uint32_t mask = this->m_appRenderStates[GxRs_ClipPlaneMask].m_value.m_data.u[0] & 0x3F;
 

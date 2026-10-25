@@ -276,7 +276,9 @@ void CGxDeviceVulkan::Draw(CGxBatch* batch, int32_t count) {
     d.misc[0] = d.params[0] / 255.0f;
     // LIGHTING (GxLighting.h): the bound vertex module writes the surface a lit pixel module relights
     // (1 + the PBR-lite material category)
-    d.misc[1] = d.vertexRecord && d.vertexRecord->litSurface ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
+    // fogalpha: only under Opaque/AlphaKey/Alpha. The lit pixel adds its specular after the texture, so on an additive
+    // or modulating draw (spell glow quads) it lit the whole quad, black texels too: a grey rectangle over the fog.
+    d.misc[1] = d.vertexRecord && d.vertexRecord->litSurface && static_cast<uint32_t>(d.blend) <= GxBlend_Alpha ? 1.0f + static_cast<float>(g_gxLightingMaterial) : 0.0f;
     d.misc[2] = static_cast<float>(colourOp0);
     d.misc[3] = static_cast<float>(alphaOp0);
     this->ITexTransforms(d);

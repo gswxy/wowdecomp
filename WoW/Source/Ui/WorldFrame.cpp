@@ -1830,12 +1830,25 @@ void CGWorldFrame::OnWorldRender() {
         CWorldScene::RenderLiquidPass();
         VolumetricFog::OnLiquidDone();   // VFOG: not in 12340 (early composite, above water only)
         VolumetricFog::OnHeatHaze();     // LEGION refraction: not in 12340 (heat haze over fires, above water only)
-        CWorldScene::RenderWeather();
+        // VFOG fogalpha: with the late composite the weather writes no depth, so drawn under it the rain took the fog
+        // of the land behind it (only near streaks showed). It draws after the composite with its own 70-75 yd fade.
+        const bool lateFog = VolumetricFog::LateComposite();
+
+        if (!lateFog) {
+            CWorldScene::RenderWeather();
+        }
+
         CWorldScene::RenderBarriers(this->m_elapsedSec);
         FrameProfileSwitch(FRAMEPROFILE_MODELS);
         SoftParticles::BeginPass();   // SOFTPARTICLES: not in 12340
         scene->Draw(M2PASS_1);
         SoftParticles::EndPass();
+
+        if (lateFog) {
+            VolumetricFog::OnTranslucentDone();   // VFOG: not in 12340 (late composite, then the depthless pass-1 elements)
+            FrameProfileSwitch(FRAMEPROFILE_LIQUID);
+            CWorldScene::RenderWeather();
+        }
     }
 
     FrameProfileSwitch(FRAMEPROFILE_EFFECTS);

@@ -226,6 +226,8 @@ void OnOpaqueDone();                        // after scene->Draw(M2PASS_0)
 void OnSolidDone();                         // after the detail doodads, before liquids: the shadow mask (shadowMask)
 void OnLiquidDone();                        // after RenderLiquidPass, above-water branch only
 void OnHeatHaze();                          // LEGION refraction: after OnLiquidDone, heat haze over tagged fire emitters
+bool LateComposite();                       // vfogTransparent 0 this frame: WorldFrame draws the weather after OnTranslucentDone
+void OnTranslucentDone();                   // after M2 pass 1, above-water branch: the late composite, before weather and spell effects
 void OnWorldDone();                         // end of CGWorldFrame::OnWorldRender
 void OnWorldUpscaled();                     // FSR: after g_gxUpscale->EndWorld, the full world viewport set
 void OnWorldRendered();                     // CGWorldFrame::RenderWorld, after OnWorldRender (glow done), before names

@@ -153,6 +153,7 @@ std::vector<uint32_t> s_glow;  // its pass-1 element indices, this frame
 GradeFrame s_grade = {};
 uint32_t s_frame = 0;
 bool s_late = false;         // the composite runs once after the world this frame (coa's TransparentFog=0 path)
+bool s_lateDone = false;     // OnTranslucentDone ran the late composite this frame (above water)
 bool s_glowFed = false;      // vfogForeverGlow replaces the glow amount this frame
 float s_glowAmount = 0.0f;
 
@@ -646,7 +647,7 @@ void FeedForeverGlow() {
 }
 
 bool FogParticles() {
-    return s_armed && s_cfg.transparentFog;
+    return s_armed && (s_cfg.transparentFog || s_lateGlow);
 }
 
 // LEGION FFX post (docs/LEGION_PORT.md): ffxAntiAliasingMode and FFXColorShift, decided at the end of the world (its
@@ -837,7 +838,7 @@ void RegisterCVars() {
     s_cvars.data = CVar::Register("vfogData", "Volumetric fog: 0 = derived layers only, 1 = authored fog data where it covers", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.transparent = CVar::Register("vfogTransparent", "Volumetric fog: 1 = composite before transparents and fit the fog onto them, 0 = one composite after the whole world", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.fadeEarly = CVar::Register("vfogFadeEarly", "Volumetric fog: 1 = M2s fading at their draw distance are drawn before the early composite, so it fogs them at their own depth (default), 0 = stock pass 1 with the fitted fog", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.lateGlow = CVar::Register("vfogLateGlow", "Volumetric fog with vfogTransparent 0: 1 = additive particles, ribbons and glow batches drawn after the late composite with the fitted fog, so flames are not fogged by what is behind them (default), 0 = drawn under it", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.lateGlow = CVar::Register("vfogLateGlow", "Volumetric fog with vfogTransparent 0: 1 = additive or depthless particles, ribbons and batches drawn after the late composite with the fitted fog, so flames are not fogged by what is behind them (default), 0 = drawn under it", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.fadeStencil = CVar::Register("vfogFadeStencil", "Volumetric fog: 1 = fading M2s drawn early cross-fade by their alpha between the fog behind them and their own (wxl-vfog 0.6.3, needs a stencil), 0 = they take their own fog at any alpha", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.msaaSplit = CVar::Register("vfogMsaaSplit", "Volumetric fog with MSAA: 1 = the near and far samples of an edge pixel each fogged at their own depth (coa sample split), 0 = the fog of one sample", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.startOffset = CVar::Register("vfogStartOffset", "Volumetric fog start distance (yards)", 1, "10", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -919,6 +920,7 @@ void OnWorldUpdate() {
         RestoreStockFog();
     }
     s_armed = false;
+    s_lateDone = false;
     s_opaqueValid = false;
     s_underValid = false;
     s_glareDrawn = false;
@@ -1170,7 +1172,11 @@ void DrawFadingEarly() {
 // stay under the composite (the Thorn Hill doodads vfogTransparent 0 is for are untouched).
 // ponytail: a flame now shows through blended smoke in front of it, and spell visuals / GxuCat_1 are not covered;
 // defer their additive entries the same way if that matters.
-bool AdditiveElement(const CM2Scene* scene, const M2Element& e) {
+// fogalpha (2026-10-25): also every element that writes no depth (material flag 0x10; a particle emitter without
+// flag 4, CM2SceneRender::DrawParticle). The composite fogs a pixel at the depth buffer's distance, so under it such an
+// element took the fog of the land behind it: smoke and alpha-blended spell quads over a far background vanished.
+// Depth-writing blended elements (fading doodads, the Thorn Hill case) stay under the composite, fogged at their depth.
+bool LateElement(const CM2Scene* scene, const M2Element& e) {
     const M2Data* data = e.m_model && e.m_model->m_shared ? e.m_model->m_shared->m_data : nullptr;
     if (!data) {
         return false;
@@ -1189,6 +1195,12 @@ bool AdditiveElement(const CM2Scene* scene, const M2Element& e) {
             material = data->m_ribbons[e.m_index].m_materialIndices[0];
             break;
         case 4: {
+            if (!e.m_emitter) {
+                return false;
+            }
+            if (!(e.m_emitter->m_params.m_materialFlags & 4)) {
+                return true;   // no depth write
+            }
             const uint32_t blend = (scene->m_cache->m_flags & 0x100) ? M2BLEND_ADD : ParticleBlendToM2Blend(e.m_emitter->m_params.m_materialBlend);
             return s_blendModes[1][blend] == 3 || s_blendModes[1][blend] == 10;
         }
@@ -1197,6 +1209,9 @@ bool AdditiveElement(const CM2Scene* scene, const M2Element& e) {
     }
     if (material >= data->m_materials.m_count) {
         return false;
+    }
+    if (data->m_materials[material].m_flags & 0x10) {
+        return true;   // no depth write
     }
     const uint32_t gx = s_blendModes[1][data->m_materials[material].m_blendMode];
     return gx == 3 || gx == 10;
@@ -1212,7 +1227,7 @@ void TakeGlow() {
     uint32_t kept = 0;
     for (uint32_t i = 0; i < list.m_count; ++i) {
         const uint32_t index = list.m_data[i];
-        if (AdditiveElement(scene, scene->m_elements.m_data[index])) {
+        if (LateElement(scene, scene->m_elements.m_data[index])) {
             s_glow.push_back(index);
         } else {
             list.m_data[kept++] = index;
@@ -1298,6 +1313,19 @@ bool GlareDrawn() {
     return s_glareDrawn;
 }
 
+bool LateComposite() {
+    return s_active && s_late;
+}
+
+// fogalpha: the late composite above water, right after M2 pass 1 instead of at the end of the world, so the weather,
+// spell visuals and GxuCat_1 (none writes depth) draw over the fog instead of taking the fog of what is behind them.
+void OnTranslucentDone() {
+    if (s_active && s_late && !s_lateDone) {
+        s_lateDone = true;
+        DrawGlowLate(Composite());
+    }
+}
+
 void OnWorldDone() {
     // Under water: caustics and the tint on the finished world, under the late fog (wxl-water CausticsUnder).
     if (World::SceneCamLiquidStatus(nullptr)) {
@@ -1306,9 +1334,10 @@ void OnWorldDone() {
         }
     }
     s_underValid = false;
-    if (s_active && s_late) {
+    if (s_active && s_late && !s_lateDone) {
         DrawGlowLate(Composite());
     }
+    s_lateDone = false;
     // coa RenderGodRaysOverTheWorld: after the whole world, before FFX glow. Only a RenderFog this frame arms it.
     RenderGodRays();
     PrepareGrade();

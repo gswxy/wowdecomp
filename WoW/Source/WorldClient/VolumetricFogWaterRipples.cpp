@@ -4,7 +4,7 @@
 // The units in water around the camera target (players, creatures, pets, mounts: the visible object list, coa
 // engine_actors) feed a tracker (coa water_contacts: held footprints along each unit's path, a splash on entering) that
 // disturbs a 30 Hz height field: VFogRippleStep ping-pongs two Gr1616F maps (height, previous height) of 0.125 yd
-// texels around the camera target, 1024^2 (512^2 at vfogWaterQuality 1; coa: 512^2 / 256^2). VFogWater samples it at s12 with c65-c67.
+// texels around the camera target, 1536^2 (768^2 at vfogWaterQuality 1; coa: 512^2 / 256^2). VFogWater samples it at s12 with c65-c67.
 // Moving ships (transport WMOs in water) stamp their waterline section too (wxl-water Stage 7c, CaptureHulls).
 // Nothing runs without water in view (called from the water pass) or when nothing moved for 15 s (coa quiet steps).
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
@@ -74,8 +74,8 @@ constexpr float kWaterRippleTexelYards = 0.125f;
 constexpr double kWaterRippleStepsPerSecond = 30.0;
 constexpr int kMaxWaterRippleStepsPerFrame = 4;
 constexpr uint32_t kMaxWaterRippleDisturbances = 48;
-constexpr int kWaterRippleTexelsLow = 512;     // coa 256 / 512; doubled (128 yd) so rain rings reach twice as far, same 0.125 yd texel
-constexpr int kWaterRippleTexels = 1024;
+constexpr int kWaterRippleTexelsLow = 768;     // coa 256 / 512; tripled (192 yd) so rain rings reach three times as far, same 0.125 yd texel
+constexpr int kWaterRippleTexels = 1536;
 constexpr uint32_t kWaterRippleQuietSteps = 450;
 constexpr float kMaxWindowCentreYards = 100000.0f;
 constexpr float kHeldFootprint = 1.0f;

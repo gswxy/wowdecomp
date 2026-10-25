@@ -290,6 +290,44 @@ bool CameraInInteriorGroup() {
     return false;
 }
 
+// wallshadow (2026-10-25): an exterior-flagged WMO can hold whole rooms (Stonetalon Peak's DSNightElfInn is one 0x8
+// group, MOGP 0xA09), so the group flags never say the camera is indoors there and the land's sun shadow
+// (VFogShadowMask) and the fog's shadowed sun cut sloping bands across the room. A camera over a WMO floor (the
+// viewer def, LocateViewer3) counts as indoors when WMO geometry closes it in: a roof within 40 yd above and walls
+// within 30 yd on at least 6 of 8 sides (a doorway or two stay open; a bridge or porch roof alone does not count).
+// WMO-only rays (0x10), up to nine every 100 ms. Only the land term reads it (CameraRoofBlend): the fog, its shadowed
+// sun and the cascades' light keep the group test (the room's sunbeams are a model, wanted). shadowMaskRoofed 0 = off.
+CVar* s_roofCvar = nullptr;
+
+bool CameraUnderWmoRoof() {
+    static bool s_roofed = false;
+    static double s_nextMs = 0.0;
+    const double now = FrameTime::s_curTimeMs;
+    if (!s_roofCvar || !s_roofCvar->m_intValue || !CWorldScene::s_viewerMapObjDef) {
+        s_roofed = false;
+        return false;
+    }
+    if (now >= s_nextMs || now + 1000.0 < s_nextMs) {
+        s_nextMs = now + 100.0;
+        C3Vector eye = CWorldScene::s_activeWorldView;
+        const auto blocked = [&eye](float dx, float dy, float dz) {
+            C3Vector end(eye.x + dx, eye.y + dy, eye.z + dz);
+            C3Vector hit;
+            float t = 1.0f;
+            return World::Intersect(eye, end, &hit, &t, 0x10, nullptr) != 0;
+        };
+        int walls = 0;
+        if (blocked(0.0f, 0.0f, 40.0f)) {
+            for (int i = 0; i < 8; ++i) {
+                const float a = static_cast<float>(i) * 0.785398163f;
+                walls += blocked(std::cos(a) * 30.0f, std::sin(a) * 30.0f, 0.0f) ? 1 : 0;
+            }
+        }
+        s_roofed = walls >= 6;
+    }
+    return s_roofed;
+}
+
 // vfogaudit: the group test is binary, so crossing a door stepped the indoor fade (density x0.15, sun off) in one
 // frame. Eased here (~0.25 s time constant, once per frame time); every reader goes through this.
 float SmoothedInteriorBlend() {
@@ -849,6 +887,7 @@ void RegisterCVars() {
     s_cvars.dither = CVar::Register("vfogDither", "Volumetric fog dither against banding on the 8-bit outputs (composite, grade, water, and the fog targets when 8 bit): 0 = off, 1 = +-1/255 triangular (default), 2 = twice that", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.hdrTargets = CVar::Register("vfogHdrTargets", "Volumetric fog: 1 = half-float fog and god ray targets where the device has them (default), 0 = 8 bit (bands)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.godRays = CVar::Register("vfogGodRays", "Volumetric fog god rays from the bright sky around the sun: 0 = off, 1 = on (default), up to 4 = strength", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_roofCvar = CVar::Register("shadowMaskRoofed", "A camera closed in by an exterior-flagged WMO (roof and walls around it) counts as indoors, as an interior group does: no land shadow, indoor fog: 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shadowedSun = CVar::Register("vfogShadowedSun", "Volumetric fog sun shafts through the scene: the fog's sunlight is shadowed by trees, buildings and terrain casters (needs shadows above low): 1 = on (default), 0 = off", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.shaftIntensity = CVar::Register("vfogShaftIntensity", "Volumetric fog sun shaft strength away from the sun, 0..2 (default 0.35), 0 = off", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.canopy = CVar::Register("vfogCanopy", "Volumetric fog darkening of the haze glow in sun shadow (under trees, beside buildings) while vfogShadowedSun is on, 0..1 (default 0.5)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -1422,6 +1461,21 @@ bool BatchFog(const float modelPos[3], float& start, float& end, float& density,
 
 float CameraInteriorBlend() {
     return SmoothedInteriorBlend();
+}
+
+// The land shadow's indoor gate: the interior groups' blend, or 1 under a closed-in WMO roof, eased as above.
+float CameraRoofBlend() {
+    static float s_blend = 0.0f;
+    static double s_lastMs = -1.0;
+    const float target = CameraUnderWmoRoof() ? 1.0f : 0.0f;
+    const double now = FrameTime::s_curTimeMs;
+    if (s_lastMs < 0.0 || now < s_lastMs || now - s_lastMs > 1000.0) {
+        s_blend = target;
+    } else if (now > s_lastMs) {
+        s_blend += (target - s_blend) * std::min(static_cast<float>(now - s_lastMs) * 0.004f, 1.0f);
+    }
+    s_lastMs = now;
+    return s_blend;
 }
 
 }  // namespace VolumetricFog

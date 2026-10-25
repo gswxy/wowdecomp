@@ -237,5 +237,6 @@ float GlowAmount(float client);             // coa ForeverGlow: the glow amount 
 bool WaterHidesClientRipples();              // CMap::CreateWaterRipple: the modern water's ripples replace the client's sprites
 bool BatchFog(const float modelPos[3], float& start, float& end, float& density, float color[3]);
 float CameraInteriorBlend();                // DNInfo m_interiorFogBlend, 0 unless the camera is in an interior group
+float CameraRoofBlend();                    // 1 when exterior-flagged WMO geometry closes the camera in (shadowMaskRoofed)
 
 }  // namespace VolumetricFog

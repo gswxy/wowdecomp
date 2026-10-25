@@ -1513,7 +1513,7 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     // gfxSunArcMatch's capped height, the handover's diffuse/ambient); the land texture keeps the true sun (in.toLight).
     // c12.w: how much of the light a stock receiver's cascade shadow takes away (0.7 + 0.3 x lit), times gfxShadowFade.
     const float mask[4][4] = {
-        { in.shadeToLight[0], in.shadeToLight[1], in.shadeToLight[2], (1.0f - in.interiorBlend) * DayNight::g_shadowFade },   // gfxShadowFade
+        { in.shadeToLight[0], in.shadeToLight[1], in.shadeToLight[2], (1.0f - std::max(in.interiorBlend, CameraRoofBlend())) * DayNight::g_shadowFade },   // gfxShadowFade; wallshadow: roofed exterior rooms too
         { channel(in.shadeAmbient, 16), channel(in.shadeAmbient, 8), channel(in.shadeAmbient, 0), kShadowMaskSurfaceBias },
         { channel(in.shadeDiffuse, 16), channel(in.shadeDiffuse, 8), channel(in.shadeDiffuse, 0), kReceiverShadowStrength * DayNight::g_shadowFade },
         { in.fogStart, span > 1.0f ? 1.0f / span : 0.0f, stockFogInColour && span > 1.0f ? 1.0f : 0.0f, 0.0f },

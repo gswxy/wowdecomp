@@ -75,6 +75,13 @@ int32_t CountQuestItemDropsNeeded(int32_t questId, void (*callback)(int32_t id, 
 
 class CGQuestLog {
     public:
+    enum TRACKER_SORT_MODE : int32_t {
+        DISABLED = 0,
+        DISTANCE = 1,
+        LEVEL_DESCENDING = 2,
+        LEVEL_ASCENDING = 3,
+    };
+
     static void LeaveWorld();
     static void SaveTrackedQuests();
     static int32_t UpdateAllQuestPOI();

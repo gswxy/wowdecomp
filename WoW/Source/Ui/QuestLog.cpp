@@ -2781,13 +2781,13 @@ static int QSortQuestWatches(const void* a, const void* b) {
     const QuestWatch* watchB = static_cast<const QuestWatch*>(b);
     int32_t questA = watchA->m_questId;
     int32_t questB = watchB->m_questId;
-    int32_t sort = g_trackerSortingCVar->m_intValue;
+    CGQuestLog::TRACKER_SORT_MODE sort = static_cast<CGQuestLog::TRACKER_SORT_MODE>(g_trackerSortingCVar->m_intValue);
 
-    if (sort == 1) {
+    if (sort == CGQuestLog::TRACKER_SORT_MODE::DISTANCE) {
         return watchB->m_distance >= watchA->m_distance ? -1 : 1;
     }
 
-    if (sort <= 1 || sort > 3) {
+    if (sort <= CGQuestLog::TRACKER_SORT_MODE::DISTANCE || sort > CGQuestLog::TRACKER_SORT_MODE::LEVEL_ASCENDING) {
         return questA - questB;
     }
 
@@ -2798,7 +2798,7 @@ static int QSortQuestWatches(const void* a, const void* b) {
         return questA - questB;
     }
 
-    return sort == 3 ? levelA - levelB : levelB - levelA;
+    return sort == CGQuestLog::TRACKER_SORT_MODE::LEVEL_ASCENDING ? levelA - levelB : levelB - levelA;
 }
 
 // VERIFY: 3900de0c manual
@@ -2861,13 +2861,13 @@ static float GetQuestPOIDistance(int32_t questId) {
 // VERIFY: b3c23830 manual
 // OFFSET: 0x005E5C10
 bool CGQuestLog::SortQuestWatches() {
-    int32_t sort = g_trackerSortingCVar->m_intValue;
+    CGQuestLog::TRACKER_SORT_MODE sort = static_cast<CGQuestLog::TRACKER_SORT_MODE>(g_trackerSortingCVar->m_intValue);
 
     if (!sort || CGQuestLog::m_numQuestWatches <= 1) {
         return false;
     }
 
-    if (sort == 1) {
+    if (sort == CGQuestLog::TRACKER_SORT_MODE::DISTANCE) {
         float last = 0.0f;
         bool sorted = true;
 

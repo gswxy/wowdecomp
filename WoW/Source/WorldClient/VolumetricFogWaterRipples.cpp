@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <vector>
+#include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/Gx/CGxTex.h"
@@ -26,6 +27,7 @@
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "WoW/Source/WorldClient/MapWeather.h"
 #include "WoW/Source/WorldClient/World.h"
 
 namespace VolumetricFog {
@@ -719,6 +721,55 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
     return count;
 }
 
+// ---- rain / snow drops (wxl-water GatherRain, Cata's rain dimples) ---------------------------------------------------
+// Cata: while it rains harder than 0.2 (CWeather m_rain, m_intensity), 20 dimples of 0.3 yd every 33 ms within 50 yd of
+// the camera, strength -(0.2..0.4) times the close level's 1.25. That density over this window, one sim step being Cata's
+// 33 ms tick, is 8 drops a step; scaled here by the intensity over the gate and by waterRainRipples. Snow: the same, a
+// quarter as many and a quarter as deep, by waterSnowRipples (default 0). The field carries the rings from there.
+constexpr float kRainGate = 0.2f;
+constexpr float kRainDropsPerStep = 20.0f * (kWaterRippleTexels * kWaterRippleTexelYards) * (kWaterRippleTexels * kWaterRippleTexelYards) / (100.0f * 100.0f);
+constexpr float kRainDropYards = 0.3f;
+constexpr float kRainDropImpulse = -1.25f * 0.2f;      // Cata's weakest drop; the strongest is twice that
+constexpr float kSnowShare = 0.25f;
+
+// 0 while it is not raining (or snowing with waterSnowRipples on); share is the snow's quarter.
+float DropStrength(float& share) {
+    static CVar* s_rain = CVar::LookupRegistered("waterRainRipples");
+    static CVar* s_snow = CVar::LookupRegistered("waterSnowRipples");
+    const Weather* weather = World::s_weather;
+    share = 1.0f;
+    if (!weather || !(weather->m_intensity > kRainGate)) {
+        return 0.0f;
+    }
+    if (weather->m_rain) {
+        return s_rain ? std::clamp(s_rain->m_floatValue, 0.0f, 1.0f) : 1.0f;
+    }
+    share = kSnowShare;
+    return weather->m_snow && s_snow ? std::clamp(s_snow->m_floatValue, 0.0f, 1.0f) : 0.0f;
+}
+
+uint32_t TakeDrops(const float centre[2], WaterRippleDisturbance* out, uint32_t capacity) {
+    static uint32_t s_seed = 0x2545F491u;
+    float share = 1.0f;
+    const float strength = DropStrength(share);
+    if (!(strength > 0.0f) || !capacity) {
+        return 0;
+    }
+    const auto next = [] { s_seed = s_seed * 1664525u + 1013904223u; return static_cast<float>(s_seed >> 8) / 16777216.0f; };
+    const float half = 0.5f * kWaterRippleTexels * kWaterRippleTexelYards;
+    const float want = kRainDropsPerStep * share * std::min(World::s_weather->m_intensity, 1.0f);
+    uint32_t count = std::min(capacity, static_cast<uint32_t>(want + next()));     // fractional counts carry as odds
+    for (uint32_t i = 0; i < count; ++i) {
+        WaterRippleDisturbance& d = out[i];
+        d = {};
+        d.from[0] = d.to[0] = centre[0] + (2.0f * next() - 1.0f) * half;
+        d.from[1] = d.to[1] = centre[1] + (2.0f * next() - 1.0f) * half;
+        d.radius = kRainDropYards / kFootprintHalfWeight;
+        d.amplitude = kRainDropImpulse * (1.0f + next()) * strength * share;
+    }
+    return count;
+}
+
 // ---- simulation (coa water_ripples.cpp) ----------------------------------------------------------------------------
 struct Ripples {
     CGxShader* step = nullptr;
@@ -941,7 +992,10 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
         r.contacts.Update(s_frame, seconds);
         static WaterRippleDisturbance s_hulls[kMaxHullDisturbances];
         const uint32_t hulls = CaptureHulls(in.camTarget, seconds, s_hulls, kMaxHullDisturbances);
-        if ((r.running || r.contacts.Emitting() || hulls) && Prepare(quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels)) {
+        const float centre[2] = { in.camTarget[0], in.camTarget[1] };
+        float dropShare = 1.0f;
+        const bool raining = DropStrength(dropShare) > 0.0f;
+        if ((r.running || r.contacts.Emitting() || hulls || raining) && Prepare(quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels)) {
             if (!r.running) {
                 r.contacts.PlaceFootprints(seconds);
             }
@@ -949,13 +1003,13 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
             if (schedule.steps) {
                 static SavedPassState s_saved;
                 BeginPasses(s_saved);
-                const float centre[2] = { in.camTarget[0], in.camTarget[1] };
                 WaterRippleDisturbance disturbances[kMaxWaterRippleDisturbances];
                 for (int step = 0; step < schedule.steps; ++step) {
                     uint32_t count = r.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
                     const uint32_t extra = std::min(hulls, kMaxWaterRippleDisturbances - count);
                     std::copy(s_hulls, s_hulls + extra, disturbances + count);
                     count += extra;
+                    count += TakeDrops(centre, disturbances + count, kMaxWaterRippleDisturbances - count);
                     Step(centre, disturbances, count);
                 }
                 GxRenderTargetSet(GxBuffers_Color, vp.target, 0);

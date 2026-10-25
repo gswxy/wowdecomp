@@ -387,6 +387,9 @@ void RegisterCVars() {
     s_ripples = CVar::Register("waterCataRipples", "Cataclysm water (waterStyle 1): ripples and wakes where units move through or jump into water (0 = off)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_reflMode = CVar::Register("waterCataReflection", "Cataclysm water (waterStyle 1) planar reflection, as Cata's reflectionMode: 0 = off (screen-space only), 1 = sky, 2 = + terrain, 3 = + buildings (WMOs)", 1, "3", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_reflScale = CVar::Register("waterCataReflScale", "Cataclysm water planar reflection target size against the world viewport (0.25 - 1)", 1, "0.6", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    // Read by the shared ripple sim (VolumetricFogWaterRipples.cpp TakeDrops), both water styles.
+    CVar::Register("waterRainRipples", "Ripples where rain lands on water, 0..1 (0 = off; both water styles, with their ripples on)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("waterSnowRipples", "Faint dimples where snow lands on water, 0..1 (0 = off)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
 bool Arm(Liquid::CInstance** instances, uint32_t count) {

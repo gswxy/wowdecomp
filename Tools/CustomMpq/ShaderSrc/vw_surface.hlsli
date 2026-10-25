@@ -212,9 +212,19 @@ float4 TintedFoam(int slot, float maskCoverage)
     return float4(lerp(MaskTintLow(slot), MaskTintHigh(slot), coverage), coverage);
 }
 
-float4 FoamLayer(float4 channel, int slot, float2 uv, float2 dx, float2 dy)
+// Shore and depth foam: LuxVelum's mask, scroll and fade, plus (2026-10-25) a second tap at 0.73x scale, axes swapped
+// and counter-scrolled (cDepthFoamScroll.zw) so the foam churns and the mask's holes fill, and erosion by the fade:
+// right at the edge most of the mask shows, further out only its peaks, so the band breaks up into lace instead of
+// fading as a flat white sheet.
+float4 FoamLayer(float4 channel, int slot, float2 uv, float2 dx, float2 dy, float fade)
 {
-    return TintedFoam(slot, dot(tex2Dgrad(sShoreDepthFoamMasks, uv, dx, dy), channel));
+    float a = dot(tex2Dgrad(sShoreDepthFoamMasks, uv, dx, dy), channel);
+    float b = dot(tex2Dgrad(sShoreDepthFoamMasks, uv.yx * 0.73 + cDepthFoamScroll.zw, dx.yx * 0.73, dy.yx * 0.73), channel);
+    float m = max(a, b);
+    float4 foam = TintedFoam(slot, m);
+    foam.rgb *= fade;   // LuxVelum: the tint scaled by the layer weight
+    foam.a = 0.8 * smoothstep(1 - fade, 1.35 - fade, m) * MaskPresent(slot);   // 0.8: the water shows through
+    return foam;
 }
 
 float FoamFade(float distance, float fadeDistance)
@@ -244,16 +254,19 @@ float4 FoamAlbedo(WaterPixel w, WaveState waves)
     float2 dx = -w.footprintX.yx * kAdtTilesPerYard;
     float2 dy = -w.footprintY.yx * kAdtTilesPerYard;
     float f = max(waves.foam.x, 0);
-    float shoreWeight = cShoreFoam.x * FoamFade(w.columnDepth * ShoreDistancePerDepth(), cShoreFoam.z);
-    float depthWeight = cDepthFadeFoam.x * FoamFade(w.sceneZ - w.waterZ, cDepthFadeFoam.z);
+    // The band surges: its width breathes +-30 % over ~7 s (cWaveFoamScaling.w = the phase), the swell's phase moving
+    // along the coast (about 90 yd from crest to crest).
+    float surge = 1 + 0.3 * sin(6.2831853 * cWaveFoamScaling.w + dot(adtUv, float2(37, 23)));
+    float shoreFade = FoamFade(w.columnDepth * ShoreDistancePerDepth(), cShoreFoam.z * surge);
+    float depthFade = FoamFade(w.sceneZ - w.waterZ, cDepthFadeFoam.z * surge);
     float4 foam = 0;
     [branch] if (f * WaveFoamIntensity() > 0)
         foam = WaveFoam(adtUv, dx, dy, f);
-    [branch] if (shoreWeight > 0)
-        foam += shoreWeight * FoamLayer(float4(1, 0, 0, 0), kShoreFoamSlot, adtUv * cShoreFoam.y + cFoamScroll.zw,
-                                        dx * cShoreFoam.y, dy * cShoreFoam.y);
-    [branch] if (depthWeight > 0)
-        foam += depthWeight * FoamLayer(float4(0, 1, 0, 0), kDepthFoamSlot, adtUv * cDepthFadeFoam.y + cDepthFoamScroll.xy,
-                                        dx * cDepthFadeFoam.y, dy * cDepthFadeFoam.y);
+    [branch] if (cShoreFoam.x * shoreFade > 0)
+        foam += cShoreFoam.x * FoamLayer(float4(1, 0, 0, 0), kShoreFoamSlot, adtUv * cShoreFoam.y + cFoamScroll.zw,
+                                         dx * cShoreFoam.y, dy * cShoreFoam.y, shoreFade);
+    [branch] if (cDepthFadeFoam.x * depthFade > 0)
+        foam += cDepthFadeFoam.x * FoamLayer(float4(0, 1, 0, 0), kDepthFoamSlot, adtUv * cDepthFadeFoam.y + cDepthFoamScroll.xy,
+                                             dx * cDepthFadeFoam.y, dy * cDepthFadeFoam.y, depthFade);
     return saturate(foam);
 }

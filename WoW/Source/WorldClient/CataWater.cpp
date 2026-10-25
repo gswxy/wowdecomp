@@ -536,6 +536,9 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
     const float* s = &Liquid::s_vsConstants.m_sunSpecular.x;
     const float waterShadow = CShadowQuery::WaterShadowStrength();
     const bool copies = s_maskCopies && s_preMask && s_postMask && s_preMask->m_width == s_scene->m_width && s_preMask->m_height == s_scene->m_height;
+    static CVar* s_foamWidth;   // vfogWaterFoam, the Foam slider: the shoreline band's width, 0..2
+    s_foamWidth = s_foamWidth ? s_foamWidth : CVar::LookupRegistered("vfogWaterFoam");
+    const float foamWidth = s_foamWidth && std::isfinite(s_foamWidth->m_floatValue) ? std::clamp(s_foamWidth->m_floatValue, 0.0f, 2.0f) : 1.0f;
     const float pc[13][4] = {
         { vp.a0, vp.a1, vp.a2, vp.a3 },
         { vp.b0, vp.b1, vp.b2, vp.b3 },
@@ -546,7 +549,7 @@ bool Bind(Liquid::CMaterialSettings* settings, bool specular, const C3Vector& ca
         { lp->p6, lp->p9, specular ? lp->p10 : 0.0f, lp->p14 },     // the NoSpec material has no highlight
         { s_pass.maxZ, s_pass.fogValid ? 1.0f : 0.0f, copies ? 1.0f - waterShadow : 0.0f, waterShadow },   // shadowWaterStrength
         { s_pass.fogA[0], s_pass.fogA[1], s_pass.fogA[2], lp->p7 * 0.35f },
-        { s_pass.fogColour[0], s_pass.fogColour[1], s_pass.fogColour[2], 0.0f },
+        { s_pass.fogColour[0], s_pass.fogColour[1], s_pass.fogColour[2], foamWidth },
         { -(sun.x * view.a0 + sun.y * view.a1 + sun.z * view.a2), -(sun.x * view.b0 + sun.y * view.b1 + sun.z * view.b2), -(sun.x * view.c0 + sun.y * view.c1 + sun.z * view.c2), 0.0f },
         { d[0], d[1], d[2], 1.0f },
         { s[0], s[1], s[2], 1.0f },

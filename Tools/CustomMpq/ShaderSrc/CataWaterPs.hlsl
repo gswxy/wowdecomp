@@ -23,7 +23,7 @@ float4 gP        : register(c22);    // (P6 normal strength, P9 diffuse, P10 spe
 float4 gMisc     : register(c23);    // x = deepest world depth (past it: sky), y = thickness fog on (1) / off (0),
                                      // z = 1 - shadowWaterStrength with s8 / s15 valid (else 0), w = shadowWaterStrength
 float4 gFogA     : register(c24);    // Cata fog A from the zone's underwater fog: (-1/(end-start), end/(end-start), exponent, P7 * 0.35)
-float4 gFogAColor: register(c25);    // its colour
+float4 gFogAColor: register(c25);    // its colour; w = vfogWaterFoam (the shoreline foam band's width)
 float4 gLightW   : register(c26);    // world direction toward the light
 float4 gDiffuse  : register(c27);    // sun diffuse colour
 float4 gSpecular : register(c28);    // sun specular colour
@@ -164,10 +164,12 @@ float4 main(float4 col : COLOR0, float4 coarse : TEXCOORD0, float4 fine : TEXCOO
 
     // 4 shoreline foam: the chop texture swirled by the normal, in the band where the water is thin, out to 150 yd.
     float3 foam = tex2D(sFoam, foamuv.xy - Nw.xy).rgb + tex2D(sFoam, foamuv.zw + Nw.yx * 0.2).rgb;
-    float  fs   = saturate((1.0 - V.z) * th / ((0.5 * f2 + 0.2) * 3.75));
-    float  fw   = (1.0 - fs * fs * (3.0 - 2.0 * fs)) * gFogA.w * (1.1 - saturate(dist * 0.006667)) * Nw.z;
+    // gFogAColor.w = vfogWaterFoam, the band's width (1 = Cata's; 0 = no foam).
+    float  band = (0.5 * f2 + 0.2) * 3.75 * gFogAColor.w;
+    float  fs   = saturate((1.0 - V.z) * th / max(band, 1e-4));
+    float  fw   = (1.0 - fs * fs * (3.0 - 2.0 * fs)) * gFogA.w * (1.1 - saturate(dist * 0.006667)) * Nw.z * step(1e-4, band);
     // A band narrower than a pixel lands on a pixel one frame and misses it the next: fade it out from 3 px to 1.
-    fw *= saturate(((0.5 * f2 + 0.2) * 3.75 / max(1.0 - V.z, 1e-3) / max(fwidth(th), 1e-4) - 1.0) * 0.5);
+    fw *= saturate((band / max(1.0 - V.z, 1e-3) / max(fwidth(th), 1e-4) - 1.0) * 0.5);
     c += fw * foam;
 
     // 5 lighting; shadowFarReceivers: the sun's diffuse and glint shadowed by the cascades (the terminator fade at N.L,

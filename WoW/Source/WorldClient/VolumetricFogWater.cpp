@@ -798,11 +798,16 @@ void FillClassConstants(ShadingConstants& c, const WaterPreset& preset, WaterCla
     c.scatteringTop = towardZone(preset.scatteringTop, closeWater, preset.scatteringTop[3]);
     c.scatteringBottom = towardZone(preset.scatteringBottom, farWater, preset.scatteringBottom[3]);
 
-    const float foam = std::max(cfg.foam, 0.0f);
-    c.depthFadeFoam = { std::max(preset.depthFadeFoam[0], 0.0f) * foam, preset.depthFadeFoam[1], preset.depthFadeFoam[2], 0.0f };
-    c.shoreFoam = { std::max(preset.shoreFoam[0], 0.0f) * foam, preset.shoreFoam[1], preset.shoreFoam[2], kShoreDistancePerDepth };
-    c.waveFoam = { std::max(preset.waveFoam[0], 0.0f) * foam, 0.0f, 0.0f, 0.0f };
-    c.waveFoamScaling = { preset.waveFoamScaling[0], preset.waveFoamScaling[1], preset.waveFoamScaling[2], 0.0f };
+    // vfogWaterFoam is the foam's width (2026-10-25): it scales the shore and depth fade distances (x 1.25 at 1, a little
+    // wider than LuxVelum's, which left steep shores bare); the strengths stay the preset's. 0 = no foam at all.
+    const float width = std::max(cfg.foam, 0.0f) * 1.25f;
+    const float on = width > 0.0f ? 1.0f : 0.0f;
+    c.depthFadeFoam = { std::max(preset.depthFadeFoam[0], 0.0f) * on, preset.depthFadeFoam[1], preset.depthFadeFoam[2] * width, 0.0f };
+    c.shoreFoam = { std::max(preset.shoreFoam[0], 0.0f) * on, preset.shoreFoam[1], preset.shoreFoam[2] * width, kShoreDistancePerDepth };
+    c.waveFoam = { std::max(preset.waveFoam[0], 0.0f) * on, 0.0f, 0.0f, 0.0f };
+    // w: the shore surge's phase, one cycle every 7 s (vw_surface.hlsli FoamAlbedo).
+    const double surge = s_pass.seconds / 7.0;
+    c.waveFoamScaling = { preset.waveFoamScaling[0], preset.waveFoamScaling[1], preset.waveFoamScaling[2], static_cast<float>(surge - std::floor(surge)) };
     c.surfaceResponse = { preset.roughness[0], preset.roughness[1], preset.roughness[2] * cfg.reflections, cfg.specular };
 
     float inverse[kWaterPresetTiles] = {};
@@ -820,7 +825,9 @@ void FillClassConstants(ShadingConstants& c, const WaterPreset& preset, WaterCla
     const double seconds = s_pass.seconds;
     c.foamScroll = { ScrollOffset(seconds, 0, preset.waveFoam[1]), ScrollOffset(seconds, 1, preset.waveFoam[1]),
                      ScrollOffset(seconds, 0, preset.shoreFoam[3]), ScrollOffset(seconds, 1, preset.shoreFoam[3]) };
-    c.depthFoamScroll = { ScrollOffset(seconds, 0, preset.depthFadeFoam[3]), ScrollOffset(seconds, 1, preset.depthFadeFoam[3]), 0.0f, 0.0f };
+    // zw: the shore and depth foam's second tap, counter-scrolled 2.3x faster (its axes are swapped in the shader).
+    c.depthFoamScroll = { ScrollOffset(seconds, 0, preset.depthFadeFoam[3]), ScrollOffset(seconds, 1, preset.depthFadeFoam[3]),
+                          ScrollOffset(seconds, 1, -2.3f * preset.shoreFoam[3]), ScrollOffset(seconds, 0, -2.3f * preset.shoreFoam[3]) };
     if (!noSun) {
         std::memcpy(c.reflectionFog, s_pass.reflectionFog, sizeof(c.reflectionFog));
         c.reflectionFogRange = s_pass.reflectionFogRange;
@@ -1020,7 +1027,7 @@ void RegisterWaterCVars() {
     s_cvars.quality = CVar::Register("vfogWaterQuality", "Modern water quality: 1 = 128 wave grid, sky reflections only; 2 = 256 grid, 16-step screen reflections; 3 = 32 steps", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.waves = CVar::Register("vfogWaterWaves", "Modern water wave height, 0..2 (0 = flat)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.wind = CVar::Register("vfogWaterWind", "Modern water wind speed, 0.5..10", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvars.foam = CVar::Register("vfogWaterFoam", "Modern water foam, 0..2", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvars.foam = CVar::Register("vfogWaterFoam", "Foam width on shores and shallows, 0..2, both water styles (0 = no foam)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.reflections = CVar::Register("vfogWaterReflections", "Modern water reflections, 0..2 (0 = sky only, no screen reflections)", 1, "0.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.specular = CVar::Register("vfogWaterSpecular", "Modern water sun and moon highlight, 0..4", 1, "1.5", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.clarity = CVar::Register("vfogWaterClarity", "Modern water clarity, 0.25..4 (larger is clearer)", 1, "1.4", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);

@@ -5,6 +5,7 @@
 // engine_actors) feed a tracker (coa water_contacts: held footprints along each unit's path, a splash on entering) that
 // disturbs a 30 Hz height field: VFogRippleStep ping-pongs two Gr1616F maps (height, previous height) of 0.125 yd
 // texels around the camera target, 512^2 (256^2 at vfogWaterQuality 1). VFogWater samples it at s12 with c65-c67.
+// Moving ships (transport WMOs in water) stamp their waterline section too (wxl-water Stage 7c, CaptureHulls).
 // Nothing runs without water in view (called from the water pass) or when nothing moved for 15 s (coa quiet steps).
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include <algorithm>
@@ -17,10 +18,15 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Services/Texture.h"
+#include "WoW/Source/Object/ObjectClient/GameObject_C.h"
 #include "WoW/Source/Object/ObjectClient/Unit_C.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/MapEntity.h"
+#include "WoW/Source/WorldClient/MapObj.h"
+#include "WoW/Source/WorldClient/MapObjDef.h"
+#include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "WoW/Source/WorldClient/World.h"
 
 namespace VolumetricFog {
 namespace {
@@ -486,6 +492,233 @@ private:
     double m_seconds = -1.0;
 };
 
+// ---- moving ship hulls (wxl-water GatherHulls / BuildHullProfile / HullShape, Stage 7c) -----------------------------
+// Moving TRANSPORT / MO_TRANSPORT WMOs whose model bottom sits under a liquid surface (airborne zeppelins fail the test)
+// press their own waterline section into the field. The section is the WMO's triangles cut at the local waterline,
+// reduced to 12 half-beams along local x, cut once per root. wxl-water fills that polygon into its Cata height map;
+// here each slice becomes one held footprint (a capsule along the slice, its half-weight at the half-beam), the shape
+// the step shader already stamps for units. Strength as wxl-water: 0.8 * min(speed / 10 yd/s, 1), none when docked.
+constexpr int kHullSlices = 12;
+constexpr uint32_t kMaxHullDisturbances = 2 * kHullSlices;   // two ships; the rest of the 48 stay for units
+constexpr double kHullSpeedSeconds = 0.1;
+constexpr double kStaleHullSeconds = 2.0;
+constexpr float kHullFullSpeed = 10.0f;
+constexpr float kHullStrength = 0.8f;
+constexpr float kHullDockedShare = 0.05f;
+constexpr float kFootprintHalfWeight = 0.5f;                 // VFogRippleStep Footprint() is 0.5 at about half the radius
+
+struct HullProfile {
+    const CMapObj* root = nullptr;
+    float zw = 0.0f;
+    float x0 = 0.0f;
+    float x1 = 0.0f;
+    float hb[kHullSlices] = {};
+    bool ok = false;
+};
+
+// wxl-water BuildHullProfile: cut the loaded groups at local z = zw (two passes: x extent, then the widest |y| per slice).
+bool BuildHullProfile(const CMapObj* root, float zw, HullProfile& out) {
+    if (!root || !root->m_isGroupLoaded || !root->m_groupInfo || root->m_groupInfoCount <= 0 || root->m_groupInfoCount > 512) {
+        return false;
+    }
+    float x0 = 1e30f;
+    float x1 = -1e30f;
+    float beamCap = 0.0f;
+    for (int pass = 0; pass < 2; ++pass) {
+        if (pass == 1) {
+            if (!(x1 - x0 > 2.0f)) {
+                return false;
+            }
+            out.x0 = x0;
+            out.x1 = x1;
+            std::fill(std::begin(out.hb), std::end(out.hb), 0.0f);
+        }
+        const float w = pass == 1 ? (x1 - x0) / static_cast<float>(kHullSlices) : 1.0f;
+        for (int i = 0; i < root->m_groupInfoCount; ++i) {
+            const CAaBox& box = root->m_groupInfo[i].m_boundingBox;
+            if (zw < box.b.z || zw > box.t.z) {
+                continue;
+            }
+            const CMapObjGroup* g = root->m_mapObjGroupArray[i];
+            if (!g || !(g->m_unkLoadedFlag & 1) || (g->m_flags & 0x80)) {
+                continue;
+            }
+            const uint32_t nTri = static_cast<uint32_t>(g->m_polyListSize);
+            if (!nTri || nTri > (1u << 20) || !g->m_indices || !g->m_vertexList) {
+                continue;
+            }
+            if (pass == 0) {
+                beamCap = std::max(beamCap, 0.5f * (box.t.y - box.b.y));
+            }
+            for (uint32_t t = 0; t < nTri; ++t) {
+                float sx[2];
+                float sy[2];
+                int n = 0;
+                for (int e = 0; e < 3 && n < 2; ++e) {
+                    const C3Vector& a = g->m_vertexList[g->m_indices[t * 3 + e]];
+                    const C3Vector& b = g->m_vertexList[g->m_indices[t * 3 + (e + 1) % 3]];
+                    const float da = a.z - zw;
+                    const float db = b.z - zw;
+                    if ((da < 0.0f) == (db < 0.0f)) {
+                        continue;
+                    }
+                    const float f = da / (da - db);
+                    sx[n] = a.x + f * (b.x - a.x);
+                    sy[n] = a.y + f * (b.y - a.y);
+                    ++n;
+                }
+                if (n != 2) {
+                    continue;
+                }
+                if (pass == 0) {
+                    x0 = std::min({ x0, sx[0], sx[1] });
+                    x1 = std::max({ x1, sx[0], sx[1] });
+                    continue;
+                }
+                const int ia = sx[0] <= sx[1] ? 0 : 1;
+                const int ib = 1 - ia;
+                const float ax = sx[ia], ay = sy[ia], bx = sx[ib], by = sy[ib];
+                const int i0 = std::clamp(static_cast<int>((ax - x0) / w), 0, kHullSlices - 1);
+                const int i1 = std::clamp(static_cast<int>((bx - x0) / w), 0, kHullSlices - 1);
+                for (int s = i0; s <= i1; ++s) {
+                    for (float cut : { std::max(ax, x0 + w * s), std::min(bx, x0 + w * (s + 1)) }) {
+                        const float f = bx > ax ? (cut - ax) / (bx - ax) : 0.0f;
+                        out.hb[s] = std::max(out.hb[s], std::fabs(ay + f * (by - ay)));
+                    }
+                }
+            }
+        }
+    }
+    for (float& h : out.hb) {
+        h = std::min(h, beamCap);
+    }
+    out.root = root;
+    out.zw = zw;
+    out.ok = std::any_of(std::begin(out.hb), std::end(out.hb), [](float h) { return h > 0.5f; });
+    return out.ok;
+}
+
+std::vector<HullProfile> s_hullCache;
+
+// wxl-water HullProfileFor: one section per root, recut only when the local waterline drifts over 1 yd.
+const HullProfile* HullProfileFor(const CMapObj* root, float zw) {
+    for (HullProfile& p : s_hullCache) {
+        if (p.root == root) {
+            return (p.ok && std::fabs(p.zw - zw) <= 1.0f) ? &p : (BuildHullProfile(root, zw, p) ? &p : nullptr);
+        }
+    }
+    if (s_hullCache.size() >= 32) {
+        s_hullCache.erase(s_hullCache.begin());     // ponytail: LRU-less, 32 roots is plenty (as wxl-water)
+    }
+    HullProfile p;
+    if (!BuildHullProfile(root, zw, p)) {
+        p.root = root;
+        p.ok = false;
+    }
+    s_hullCache.push_back(p);
+    return s_hullCache.back().ok ? &s_hullCache.back() : nullptr;
+}
+
+struct HullTrack {
+    uint64_t guid = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    double at = 0.0;
+    double seen = 0.0;
+    float speedShare = 0.0f;
+};
+
+std::vector<HullTrack> s_hullTracks;
+
+void EmitHullSlice(const float* m, float lx0, float lx1, float halfBeam, float amplitude, WaterRippleDisturbance& d) {
+    d = {};
+    d.from[0] = lx0 * m[0] + m[12];
+    d.from[1] = lx0 * m[1] + m[13];
+    d.to[0] = lx1 * m[0] + m[12];
+    d.to[1] = lx1 * m[1] + m[13];
+    d.radius = halfBeam / kFootprintHalfWeight;
+    d.amplitude = amplitude;
+    d.held = true;
+}
+
+// wxl-water GatherHulls, through the decomp's types.
+uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturbance* out, uint32_t capacity) {
+    uint32_t count = 0;
+    ObjectMgr* manager = ClntObjMgrGetCurrent();
+    if (!manager) {
+        s_hullTracks.clear();
+        return 0;
+    }
+    for (CGObject_C* object = manager->m_visibleObjects.Head(); object; object = manager->m_visibleObjects.Next(object)) {
+        if (!object->m_obj || !(object->m_obj->m_type & TYPE_GAMEOBJECT)) {
+            continue;
+        }
+        const CGGameObject_C* go = static_cast<const CGGameObject_C*>(object);
+        if (!go->m_gameObject || (go->m_gameObject->m_typeID != 11 && go->m_gameObject->m_typeID != 15) || !go->m_typeData) {
+            continue;
+        }
+        const auto* entity = reinterpret_cast<const CMapBaseObj*>(static_cast<const CGGameObject_C_Type_WorldObj*>(go->m_typeData)->m_worldObject);
+        if (!entity || !(entity->m_type & 0x8)) {
+            continue;                                  // WMO only (M2 lifts skipped)
+        }
+        const auto* def = reinterpret_cast<const CMapObjDef*>(entity);
+        const CMapObj* root = def->m_owner;
+        if (!root || !root->m_isGroupLoaded) {
+            continue;
+        }
+        const float* m = reinterpret_cast<const float*>(&def->m_mat);
+        const CAaBox& box = root->m_bbox;
+
+        const uint64_t guid = object->m_obj->m_guid.m_guid;
+        auto it = std::find_if(s_hullTracks.begin(), s_hullTracks.end(), [guid](const HullTrack& t) { return t.guid == guid; });
+        if (it == s_hullTracks.end()) {
+            s_hullTracks.push_back({ guid, m[12], m[13], seconds, seconds, 0.0f });
+            it = s_hullTracks.end() - 1;
+        }
+        it->seen = seconds;
+        if (seconds - it->at >= kHullSpeedSeconds) {
+            it->speedShare = std::min(std::hypot(m[12] - it->x, m[13] - it->y) / static_cast<float>(seconds - it->at) / kHullFullSpeed, 1.0f);
+            it->x = m[12];
+            it->y = m[13];
+            it->at = seconds;
+        }
+        if (it->speedShare < kHullDockedShare || count + kHullSlices > capacity) {
+            continue;
+        }
+        const float reach = kWaterRippleTexels * kWaterRippleTexelYards * 0.5f + std::max(box.t.x - box.b.x, box.t.y - box.b.y);
+        if (std::fabs(m[12] - centre[0]) > reach || std::fabs(m[13] - centre[1]) > reach) {
+            continue;
+        }
+        // waterline: box bottom under a liquid surface, box top above it
+        const float cx = 0.5f * (box.b.x + box.t.x);
+        const float cy = 0.5f * (box.b.y + box.t.y);
+        C3Vector probe(cx * m[0] + cy * m[4] + box.b.z * m[8] + m[12], cx * m[1] + cy * m[5] + box.b.z * m[9] + m[13],
+                       cx * m[2] + cy * m[6] + box.b.z * m[10] + m[14]);
+        int32_t type = 0;
+        float level = 0.0f;
+        if (!World::QueryLiquidStatus(&probe, &type, &level) || level > probe.z + (box.t.z - box.b.z) * m[10]) {
+            continue;
+        }
+        const float* w2l = reinterpret_cast<const float*>(&def->m_invMat);
+        const float zw = probe.x * w2l[2] + probe.y * w2l[6] + level * w2l[10] + w2l[14];
+        const HullProfile* p = HullProfileFor(root, zw);
+        if (!p) {
+            continue;                                  // groups still loading (wxl-water's box hexagon fallback skipped)
+        }
+        const float amplitude = kFullyImmersedFootprintLevel * kHullStrength * it->speedShare;
+        const float w = (p->x1 - p->x0) / static_cast<float>(kHullSlices);
+        for (int i = 0; i < kHullSlices; ++i) {
+            if (p->hb[i] > 0.0f) {
+                // ponytail: a capsule per slice overshoots a sharply tapering bow by about one half-beam; a polygon
+                // fill in the step shader would match wxl-water exactly if that shows.
+                EmitHullSlice(m, p->x0 + w * i, p->x0 + w * (i + 1), p->hb[i], amplitude, out[count++]);
+            }
+        }
+    }
+    s_hullTracks.erase(std::remove_if(s_hullTracks.begin(), s_hullTracks.end(), [seconds](const HullTrack& t) { return seconds - t.seen > kStaleHullSeconds || t.seen > seconds; }), s_hullTracks.end());
+    return count;
+}
+
 // ---- simulation (coa water_ripples.cpp) ----------------------------------------------------------------------------
 struct Ripples {
     CGxShader* step = nullptr;
@@ -680,6 +913,8 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
 
 void Release() {
     DestroyMaps();
+    s_hullCache.clear();
+    s_hullTracks.clear();
     s_ripples.contacts.Reset();
     s_ripples.lastSeconds = -1.0;
 }
@@ -704,7 +939,9 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
         static WaterContactFrame s_frame;
         CaptureWaterContacts(in.camTarget, s_frame);
         r.contacts.Update(s_frame, seconds);
-        if ((r.running || r.contacts.Emitting()) && Prepare(quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels)) {
+        static WaterRippleDisturbance s_hulls[kMaxHullDisturbances];
+        const uint32_t hulls = CaptureHulls(in.camTarget, seconds, s_hulls, kMaxHullDisturbances);
+        if ((r.running || r.contacts.Emitting() || hulls) && Prepare(quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels)) {
             if (!r.running) {
                 r.contacts.PlaceFootprints(seconds);
             }
@@ -715,7 +952,10 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
                 const float centre[2] = { in.camTarget[0], in.camTarget[1] };
                 WaterRippleDisturbance disturbances[kMaxWaterRippleDisturbances];
                 for (int step = 0; step < schedule.steps; ++step) {
-                    const uint32_t count = r.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
+                    uint32_t count = r.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
+                    const uint32_t extra = std::min(hulls, kMaxWaterRippleDisturbances - count);
+                    std::copy(s_hulls, s_hulls + extra, disturbances + count);
+                    count += extra;
                     Step(centre, disturbances, count);
                 }
                 GxRenderTargetSet(GxBuffers_Color, vp.target, 0);

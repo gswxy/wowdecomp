@@ -612,8 +612,8 @@ void EffectSwirlingFog::SetParameters(int32_t count, const int32_t* params) {
 // VERIFY: d2fd534c auto
 // OFFSET: 0x007E8E20
 void EffectNetherWorld::End() {
-    if (this->m_passes.Count() >= 2) {
-        static_cast<PassNetherCombine*>(this->m_passes[1])->m_fade = 0.0f;
+    if (this->m_passes.Count() >= PASS_STAGE::PASS_COUNT) {
+        static_cast<PassNetherCombine*>(this->m_passes[PASS_STAGE::COMBINE_PASS])->m_fade = 0.0f;
     }
 }
 

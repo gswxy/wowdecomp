@@ -14,6 +14,12 @@ class EffectDeath : public FFX::Effect {
 
 class EffectNetherWorld : public FFX::Effect {
     public:
+    enum PASS_STAGE : uint32_t {
+        BLUR_PASS = 0,
+        COMBINE_PASS = 1,
+        PASS_COUNT = 2,
+    };
+
     virtual ~EffectNetherWorld();
     void End() override;
 

@@ -54,7 +54,7 @@ struct GxLightingParams {
 
     // HDR and tonemap
     float m_exposure = 1.0f;
-    uint32_t m_tonemap = 1;          // 0 clamp (stock), 1 neutral (stock below a shoulder), 2 ACES
+    uint32_t m_tonemap = 1;          // 0 clamp (stock), 1 neutral (stock below a shoulder), 2 ACES, 3 Reinhard, 4 Hable, 5 AgX, 6 AgX punchy, 7 PBR Neutral, 8 Uchimura, 9 Lottes
     float m_bloomIntensity = 0.0f;
     float m_bloomThreshold = 1.0f;   // linear
 

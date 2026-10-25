@@ -162,7 +162,7 @@ uint32_t Features() {
 void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera) {
     p.m_features = features;
     p.m_exposure = s_cv.exposure->m_floatValue > 0.0f ? s_cv.exposure->m_floatValue : 1.0f;
-    p.m_tonemap = !s_cv.hdr->m_intValue || s_cv.tonemap->m_intValue < 0 ? 0u : static_cast<uint32_t>(s_cv.tonemap->m_intValue);
+    p.m_tonemap = !s_cv.hdr->m_intValue || s_cv.tonemap->m_intValue < 0 ? 0u : static_cast<uint32_t>(std::min(s_cv.tonemap->m_intValue, 9));   // the shader modes 0-9
     p.m_bloomIntensity = Positive(s_cv.bloom);
     p.m_bloomThreshold = s_cv.bloomThreshold->m_floatValue > 0.01f ? s_cv.bloomThreshold->m_floatValue : 0.01f;
     p.m_ssaoIntensity = Positive(s_cv.ssao);
@@ -707,7 +707,7 @@ void WriteGpu(const GxLightingParams& p) {
 
 void WorldLightingRegisterCVars() {
     s_cv.exposure = Reg("hdrExposure", "HDR exposure (D3D11/Vulkan)", "1");
-    s_cv.tonemap = Reg("hdrTonemap", "HDR tonemap: 0 clamp (stock), 1 neutral, 2 ACES", "1");
+    s_cv.tonemap = Reg("hdrTonemap", "HDR tonemap: 0 clamp (stock), 1 neutral, 2 ACES, 3 Reinhard, 4 Uncharted 2 (Hable), 5 AgX, 6 AgX punchy, 7 Khronos PBR Neutral, 8 Gran Turismo (Uchimura), 9 Lottes", "1");
     s_cv.bloom = Reg("bloom", "Bloom intensity, 0 = off (D3D11/Vulkan)", "0");
     s_cv.bloomThreshold = Reg("bloomThreshold", "Bloom threshold (linear light; the stock shaders never pass 1)", "0.6");
     s_cv.ssao = Reg("lightingSsao", "Post-pass ambient occlusion intensity, 0 = off (D3D11/Vulkan)", "0");

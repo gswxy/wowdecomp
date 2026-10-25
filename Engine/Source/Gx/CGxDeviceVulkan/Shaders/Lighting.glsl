@@ -26,7 +26,7 @@ layout(std140, set = 0, binding = 4) uniform GxPost {
     vec4 gxHeightFog;                  // x density, y falloff, z base height, w most opacity
     vec4 gxCamera;                     // xyz camera (world), w time
     vec4 gxBloom;                      // x threshold, y knee, z intensity, w 1 = on
-    vec4 gxTone;                       // x exposure, y mode (0 clamp, 1 neutral, 2 ACES), z lightingDebug
+    vec4 gxTone;                       // x exposure, y mode (0 clamp, 1 neutral, 2 ACES, 3 Reinhard, 4 Hable, 5 AgX, 6 AgX punchy, 7 PBR Neutral, 8 Uchimura, 9 Lottes), z lightingDebug
     vec4 gxSource;                     // the texture sampled: xy 1 / size; zw the blur direction
     vec4 gxProjW;                      // clip w = dot(vec4(view position, 1), gxProjW)
     vec4 gxPass;                       // Vulkan only: apply x 1 = SSAO, y 1 = fog; bloom x 0 prefilter, 1 down, 2 up

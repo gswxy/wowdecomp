@@ -16,7 +16,7 @@ cbuffer GxPost : register(b0) {
     float4 gxHeightFog;            // x density, y falloff, z base height (world z), w most opacity
     float4 gxCamera;               // xyz camera (world), w time
     float4 gxBloom;                // x threshold, y knee, z intensity, w 1 = on
-    float4 gxTone;                 // x exposure, y mode (0 clamp, 1 neutral, 2 ACES)
+    float4 gxTone;                 // x exposure, y mode (0 clamp, 1 neutral, 2 ACES, 3 Reinhard, 4 Hable, 5 AgX, 6 AgX punchy, 7 PBR Neutral, 8 Uchimura, 9 Lottes)
     float4 gxSource;               // the texture sampled: xy 1 / size; zw the blur direction
     float4 gxProjW;                // clip w = dot(float4(view position, 1), gxProjW)
 };
@@ -288,6 +288,112 @@ float3 GxAces(float3 c) {
     return saturate(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14));
 }
 
+// the curves below return linear [0, 1] like GxAces; TonemapPs encodes after
+float3 GxReinhard(float3 c) {
+    // extended Reinhard on luminance, white at 4
+    const float white = 4.0;
+    float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float m = l * (1.0 + l / (white * white)) / (1.0 + l);
+    return saturate(c * (m / max(l, 1e-6)));
+}
+
+float3 GxHableCurve(float3 x) {
+    const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+    return (x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F) - E / F;
+}
+
+float3 GxHable(float3 c) {
+    // Uncharted 2 filmic: exposure bias 2, white 11.2
+    return saturate(GxHableCurve(2.0 * c) / GxHableCurve(float3(11.2, 11.2, 11.2)));
+}
+
+float3 GxAgx(float3 c, bool punchy) {
+    // AgX (Troy Sobotka), Benjamin Wrensch's sixth-order fit; the rows of mul(v, M) are the GLSL columns
+    const float3x3 inset = float3x3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+                                    0.0784335999999992, 0.878468636469772, 0.0784336,
+                                    0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const float3x3 outset = float3x3(1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+                                     -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+                                     -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+    const float minEv = -12.47393, maxEv = 4.026069;
+    float3 x = clamp(log2(max(mul(c, inset), 1e-10)), minEv, maxEv);
+    x = (x - minEv) / (maxEv - minEv);
+    float3 x2 = x * x;
+    float3 x4 = x2 * x2;
+    x = 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+
+    if (punchy) {
+        float luma = dot(x, float3(0.2126, 0.7152, 0.0722));
+        x = luma + 1.4 * (pow(max(x, 0.0), 1.35) - luma);
+    }
+
+    // the fit is display encoded (2.2)
+    return pow(saturate(mul(x, outset)), 2.2);
+}
+
+float3 GxPbrNeutral(float3 c) {
+    // Khronos PBR Neutral, the reference implementation
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    float x = min(c.r, min(c.g, c.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    c -= offset;
+    float peak = max(c.r, max(c.g, c.b));
+
+    if (peak < startCompression) {
+        return saturate(c);
+    }
+
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    c *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return saturate(lerp(c, newPeak, g));
+}
+
+float3 GxUchimura(float3 x) {
+    // Gran Turismo (Uchimura 2017), the default parameters
+    const float P = 1.0, a = 1.0, m = 0.22, l = 0.4, c = 1.33, b = 0.0;
+    float l0 = (P - m) * l / a;
+    float S0 = m + l0;
+    float S1 = m + a * l0;
+    float C2 = a * P / (P - S1);
+    float CP = -C2 / P;
+    float3 w0 = 1.0 - smoothstep(0.0, m, x);
+    float3 w2 = step(m + l0, x);
+    float3 w1 = 1.0 - w0 - w2;
+    float3 T = m * pow(x / m, c) + b;
+    float3 S = P - (P - S1) * exp(CP * (x - S0));
+    float3 L = m + a * (x - m);
+    return saturate(T * w0 + L * w1 + S * w2);
+}
+
+float3 GxLottes(float3 x) {
+    // Lottes 2016, the default parameters
+    const float a = 1.6, d = 0.977, hdrMax = 8.0, midIn = 0.18, midOut = 0.267;
+    float ad = a * d;
+    float b = (-pow(midIn, a) + pow(hdrMax, a) * midOut) / ((pow(hdrMax, ad) - pow(midIn, ad)) * midOut);
+    float c = (pow(hdrMax, ad) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, ad) * midOut) / ((pow(hdrMax, ad) - pow(midIn, ad)) * midOut);
+    return saturate(pow(x, a) / (pow(x, ad) * b + c));
+}
+
+float3 GxTonemap(float3 c, float mode) {
+    int m = int(mode + 0.5);
+
+    switch (m) {
+    case 0: return saturate(c);
+    case 1: return GxNeutral(c);
+    case 2: return GxAces(c);
+    case 3: return GxReinhard(c);
+    case 4: return GxHable(c);
+    case 5: return GxAgx(c, false);
+    case 6: return GxAgx(c, true);
+    case 7: return GxPbrNeutral(c);
+    case 8: return GxUchimura(c);
+    default: return GxLottes(c);
+    }
+}
+
 float4 TonemapPs(GxPostVaryings i) : SV_Target0 {
     float4 s = gxColor.Load(int3(i.pos.xy, 0));
     float3 c = GxDec(s.rgb) * gxTone.x;
@@ -300,14 +406,6 @@ float4 TonemapPs(GxPostVaryings i) : SV_Target0 {
     // no NaN or negative light reaches the frame
     c = max((asuint(c) & 0x7FFFFFFFu) > 0x7F800000u ? 0.0 : c, 0.0);
 
-    if (gxTone.y > 1.5) {
-        c = GxAces(c);
-    } else if (gxTone.y > 0.5) {
-        c = GxNeutral(c);
-    } else {
-        c = saturate(c);
-    }
-
-    return float4(GxEnc(c), s.a);
+    return float4(GxEnc(GxTonemap(c, gxTone.y)), s.a);
 }
 

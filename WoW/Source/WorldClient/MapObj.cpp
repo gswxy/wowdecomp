@@ -105,7 +105,7 @@ RENDER_CALLBACK CMapObj::gRenderCallback;
 void* CMapObj::gRenderUserParam;
 
 // STATIC: 0x00ADFE44
-int32_t CMapObj::s_renderMode = 5;
+CMapObj::RENDER_MODE CMapObj::s_renderMode = CMapObj::RENDER_MODE::DEFAULT_RENDER;
 
 // STATIC: 0x00CFBEC4
 void (CMapObj::*CMapObj::s_renderGroupExterior)(CMapObjGroup* group, uint32_t index);
@@ -1627,27 +1627,27 @@ void CMapObj::PrepareUpdate() {
     s_portalVerts.SetCount(0);
 
     switch (CMapObj::s_renderMode) {
-        case 0:
+        case CMapObj::RENDER_MODE::COLLISION_FACES:
             CMapObj::s_renderGroupExterior = &CMapObj::RenderGroupCollisionFaces;
             CMapObj::s_renderGroupInterior = &CMapObj::RenderGroupCollisionFaces;
             break;
 
-        case 1:
+        case CMapObj::RENDER_MODE::DETAIL_FACES:
             CMapObj::s_renderGroupExterior = &CMapObj::RenderGroupDetailFaces;
             CMapObj::s_renderGroupInterior = &CMapObj::RenderGroupDetailFaces;
             break;
 
-        case 2:
+        case CMapObj::RENDER_MODE::RENDER_FACES:
             CMapObj::s_renderGroupExterior = &CMapObj::RenderGroupRenderFaces;
             CMapObj::s_renderGroupInterior = &CMapObj::RenderGroupRenderFaces;
             break;
 
-        case 3:
+        case CMapObj::RENDER_MODE::TRANSPARENT_FACES:
             CMapObj::s_renderGroupExterior = &CMapObj::RenderGroupTransFaces;
             CMapObj::s_renderGroupInterior = &CMapObj::RenderGroupTransFaces;
             break;
 
-        case 4:
+        case CMapObj::RENDER_MODE::COLLIDABLE:
             CMapObj::s_renderGroupExterior = &CMapObj::RenderGroupCollidable;
             CMapObj::s_renderGroupInterior = &CMapObj::RenderGroupCollidable;
             break;

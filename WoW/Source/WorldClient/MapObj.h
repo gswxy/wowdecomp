@@ -54,6 +54,15 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum RENDER_MODE : int32_t {
+        COLLISION_FACES = 0,
+        DETAIL_FACES = 1,
+        RENDER_FACES = 2,
+        TRANSPARENT_FACES = 3,
+        COLLIDABLE = 4,
+        DEFAULT_RENDER = 5,
+    };
+
     static void RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* groupData, const C44Matrix& translation, CFrustum& frustum);
     bool QueryLighting(uint32_t groupNum, const C3Vector& point, uint16_t face, CImVector* color, uint8_t* flag);
     bool QueryLighting(uint32_t groupNum, const C3Segment& seg, CImVector* color, uint8_t* flag);
@@ -68,7 +77,7 @@ class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> 
     static void* gRenderUserParam;
     static int32_t bPoolsDirty;
     static uint32_t* occluderHeap;
-    static int32_t s_renderMode;
+    static RENDER_MODE s_renderMode;
     static void (CMapObj::*s_renderGroupExterior)(CMapObjGroup* group, uint32_t index);
     static void (CMapObj::*s_renderGroupInterior)(CMapObjGroup* group, uint32_t index);
     static CShaderEffect* s_classicShaders[7];

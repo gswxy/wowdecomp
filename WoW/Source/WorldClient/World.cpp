@@ -1,5 +1,6 @@
 #include "World.h"
 #include "WoW/Source/WorldClient/FarLand.h"
+#include "WoW/Source/WorldClient/FarTrees.h"
 #include "Engine/Source/Base/FrameProfile.h"
 #include "WoW/Source/WorldClient/TreeLeaves.h"   // TREELEAVES
 #include "WoW/Source/WorldClient/WorldConstants.h"
@@ -5029,6 +5030,7 @@ void CWorldScene::RenderHorizon() {
         CMap::RenderLowDetail(area);
         area->m_horizonLink.Unlink();
     }
+    FarTrees::DrawBeyond();   // FARTREES: not in 12340 (farTreesBeyond: the impostors past farclip, on the far land)
 
     uint32_t count = 0;
     CMapObjGroup** groups = static_cast<CMapObjGroup**>(alloca(256 * sizeof(CMapObjGroup*)));

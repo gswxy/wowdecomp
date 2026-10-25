@@ -221,6 +221,23 @@ void SolidDxt1(const uint8_t rgb[3], uint8_t out[8]) {
     std::memset(out + 4, 0, 4);
 }
 
+uint32_t TexturesKey(Context& ctx, const uint8_t* adt, size_t size) {
+    const Span s { adt, size };
+    std::vector<std::pair<uint32_t, Chunk>> top;
+    Walk(s, 0, s.n, top);
+    std::vector<uint32_t> means;
+    for (auto& c : top)
+        if (c.first == Tag("MTEX")) {
+            const char* p = reinterpret_cast<const char*>(adt + c.second.data);
+            for (size_t i = 0; i < c.second.size;) {
+                const size_t len = strnlen(p + i, c.second.size - i);
+                if (len) means.push_back(TexMean(ctx, std::string(p + i, len)));
+                i += len + 1;
+            }
+        }
+    return Crc32(reinterpret_cast<const uint8_t*>(means.data()), means.size() * 4);
+}
+
 bool ReadBigAlpha(const std::vector<uint8_t>& wdt) {
     Span s { wdt.data(), wdt.size() };
     std::vector<std::pair<uint32_t, Chunk>> top;

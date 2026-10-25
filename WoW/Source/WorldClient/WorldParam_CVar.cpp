@@ -750,12 +750,21 @@ void CWorldParam::Initialize() {
     }, CATEGORY_GRAPHICS, false, nullptr, false);
 
     // FARTREES: not in 12340. Trees past the doodad fade drawn to farclip as baked impostors (FarTrees.cpp).
-    CVar::Register("farTrees", "Far trees as impostors past the doodad fade, baked at run time and cached in Cache/FarTrees (needs the FarTrees shaders in custom.MPQ)", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+    CVar::Register("farTrees", "Far trees as impostors past the doodad fade, baked at run time and cached in Cache/FarTrees (needs the FarTrees shaders in custom.MPQ)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         FarTrees::s_enabled = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("farTreesShadow", "The far trees (farTrees) cast the sun's shadow: into the shadow cascades, and onto the far land past them: 1 = on (default), 0 = off", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         FarTrees::s_shadow = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farTreesBeyond", "The far trees (farTrees) also past the view distance, on the far land (farLand), fading into its haze: 1 = on (default), 0 = to the view distance only", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        FarTrees::s_beyond = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farTreesReach", "farTreesBeyond: how far out the far trees are placed and drawn, in yards (0 = auto: where the far land's haze ends, 2.5 x the view distance; at most the horizon's reach). Farther costs memory and background loading", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+        const float v = SStrToFloat(value);
+        FarTrees::s_reachSetting = v > 0.0f ? v : 0.0f;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
 

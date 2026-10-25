@@ -43,6 +43,9 @@ struct Context {
 };
 
 uint32_t Crc32(const uint8_t* data, size_t size);
+// CRC of the MTEX layer textures' means, the only thing Bake reads from them: a retexture MPQ that changes a
+// ground BLP changes the key (memoised in ctx.texMean, so Bake re-reads nothing).
+uint32_t TexturesKey(Context& ctx, const uint8_t* adt, size_t size);
 bool ReadBigAlpha(const std::vector<uint8_t>& wdt);
 bool Bake(Context& ctx, const uint8_t* adt, size_t size, Tile& out);
 

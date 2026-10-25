@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 
@@ -19,7 +20,8 @@ namespace FarTreesBake {
 namespace {
 
 constexpr float kMapC = 32.0f * 533.33333f;
-constexpr uint32_t kCacheVersion = 1;   // bump when the picture code changes: every cache file re-bakes
+constexpr uint32_t kCacheVersion = 3;   // bump when the picture code changes: every cache file re-bakes (3: wxl 4-view billboards)
+constexpr float kTreeMinHeight = 6.0f;   // yd as placed (wraithhost-lite FarLod.hpp): smaller trees never get a card
 
 // ---------------------------------------------------------------- queue
 
@@ -60,16 +62,41 @@ std::string Lower(std::string s) {
     return s;
 }
 
-// A tree or bush by its file name (the leaf of the path), as Tools' wraithhost rules.
-bool IsTree(const std::string& path) {
-    const std::string leaf = path.substr(path.find_last_of('\\') + 1);
-    auto has = [&](const char* w) { return leaf.find(w) != std::string::npos; };
-    for (const char* w : { "street", "stump", "log0", "_log", "fallen", "treehouse", "leaves0", "fx_", "smoke", "firefl" })
+// wraithhost-lite FarLod.cpp ModelInfo, on the whole path ("...\\TREES\\...", "PineTree04", "Palm..."): the
+// night-elf and Felwood tree-sized bushes too; fallen leaves, stumps, logs and roots are not (a giant's own
+// "TreeRoots" and the leafless "NoLeaves" trees are). Plus the tree-named props the stock listfile has.
+bool IsTree(const std::string& lowerPath) {
+    auto has = [&](const char* w) { return lowerPath.find(w) != std::string::npos; };
+    const bool treeish = has("tree") || has("palm") || has("kalidarbush") || has("felwoodbush");
+    if (!treeish || has("street") || (has("leaves") && !has("noleaves")) || has("stump") || has("log")
+        || (has("root") && !has("treeroot")))
+        return false;
+    for (const char* w : { "banner", "hut", "bridge", "dock", "cloak", "spine" })   // not wxl: props named after trees
         if (has(w)) return false;
-    for (const char* w : { "tree", "pine", "spruce", "redwood", "palm", "oak", "willow", "birch", "aspen", "canopy",
-                           "conifer", "cedar", "larch", "juniper", "cypress", "sapling", "bush", "shrub" })
-        if (has(w)) return true;
-    return false;
+    return true;
+}
+
+// Per file name (the leaf: the game shares one CM2Shared per leaf, M2Cache.cpp, so the first path seen is the model
+// for every placement of that name): the path, and its header box if it passes FarLod's 0.5 - 500 yd test.
+struct Header { std::string path; bool tree = false; float height = 0, size = 0; };
+std::unordered_map<std::string, Header> s_headers;   // worker thread only
+
+const Header& HeaderOf(const std::string& model) {
+    const std::string leaf = model.substr(model.find_last_of('\\') + 1);
+    auto it = s_headers.find(leaf);
+    if (it != s_headers.end()) return it->second;
+    Header& h = s_headers[leaf];
+    h.path = model;
+    std::vector<uint8_t> b;
+    if (IsTree(model) && ReadFile(model, b) && b.size() >= 0xBC && !std::memcmp(b.data(), "MD20", 4)) {
+        float box[6];
+        for (int k = 0; k < 6; ++k) box[k] = Get<float>(b, 0xA0 + 4 * k);
+        h.height = box[5] - box[2];
+        const float width = std::max(box[3] - box[0], box[4] - box[1]);
+        h.size = std::max(h.height, width);
+        h.tree = h.height > 0.5f && width > 0.1f && h.height <= 500.0f;
+    }
+    return h;
 }
 
 // ---------------------------------------------------------------- ADT
@@ -99,16 +126,19 @@ void ScanTile(const std::string& map, int32_t tx, int32_t ty, TileResult& r) {
         std::string model = Lower(std::string(str, strnlen(str, mmdxN - off)));
         const size_t dot = model.rfind('.');
         if (dot != std::string::npos) model = model.substr(0, dot) + ".m2";
-        if (!IsTree(model)) continue;
+        const Header& h = HeaderOf(model);
+        const float scale = Get<uint16_t>(d, e + 32) / 1024.0f;
+        if (!h.tree || h.height * scale < kTreeMinHeight) continue;
         Place p;
-        p.model = model;
+        p.model = h.path;
+        p.size = h.size;
         p.uniqueId = Get<uint32_t>(d, e + 4);
         p.x = kMapC - Get<float>(d, e + 16);   // as CMap::CreateDoodadDef
         p.y = kMapC - Get<float>(d, e + 8);
         p.z = Get<float>(d, e + 12);
         float yaw = (Get<float>(d, e + 24) + 180.0f) / 360.0f;   // RotateAroundZ(rot.y + pi)
         p.yaw = yaw - std::floor(yaw);
-        p.scale = Get<uint16_t>(d, e + 32) / 1024.0f;
+        p.scale = scale;
         p.rot[0] = Get<float>(d, e + 20); p.rot[1] = Get<float>(d, e + 24); p.rot[2] = Get<float>(d, e + 28);
         r.places.push_back(p);
     }
@@ -252,270 +282,366 @@ std::vector<uint8_t> EncodeDxt5(const std::vector<float>& img, uint32_t w, uint3
 }
 
 // ---------------------------------------------------------------- model
+// A port of wraithhost-lite Impostor.cpp Render (the wxl-pack far trees): skin-00 rest pose, kViews orthographic side
+// views every 90 deg about z, rastered at 2 x kPx and boxed down, the textures at their <= 256 px level, batch colour
+// x transparency at frame 0, the two-texture combiners, the game's alpha keys.
 
-struct Batch { std::vector<uint32_t> idx; Image* tex; int blend; };
+uint32_t Rd32(const std::vector<uint8_t>& d, size_t o) { return Get<uint32_t>(d, o); }
+uint16_t Rd16(const std::vector<uint8_t>& d, size_t o) { return Get<uint16_t>(d, o); }
+float RdF(const std::vector<uint8_t>& d, size_t o) { return Get<float>(d, o); }
+
+// Impostor.cpp BatchColour: rgb from the colour track, alpha = its alpha x the transparency, frame 0 of the first
+// animation; white where it has none. b: the 24-byte skin batch.
+void BatchColour(const std::vector<uint8_t>& m, const std::vector<uint8_t>& s, size_t b, float rgba[4]) {
+    rgba[0] = rgba[1] = rgba[2] = rgba[3] = 1.0f;
+    if (m.size() < 0xBC) return;
+    auto frame0 = [&](uint32_t at, uint32_t comps, float* v) {
+        if (uint64_t(at) + 20 > m.size() || !Rd32(m, at + 12)) return;
+        const uint32_t o = Rd32(m, at + 16);
+        if (uint64_t(o) + 8 > m.size() || !Rd32(m, o)) return;
+        const uint32_t o2 = Rd32(m, o + 4);
+        if (uint64_t(o2) + comps * 4 > m.size()) return;
+        if (comps == 3) for (uint32_t k = 0; k < 3; ++k) v[k] = std::clamp(RdF(m, o2 + k * 4), 0.0f, 1.0f);
+        else v[0] = std::clamp(float(int16_t(Rd16(m, o2))) / 32767.0f, 0.0f, 1.0f);   // fixed16
+    };
+    const int16_t colour = int16_t(Rd16(s, b + 8));
+    if (colour >= 0 && uint32_t(colour) < Rd32(m, 0x48)) {
+        const uint32_t at = Rd32(m, 0x4C) + uint32_t(colour) * 0x28;   // M2Color: rgb track, alpha track
+        frame0(at, 3, rgba);
+        frame0(at + 20, 1, rgba + 3);
+    }
+    const uint32_t weight = Rd16(s, b + 20);
+    if (weight < Rd32(m, 0x90) && uint64_t(Rd32(m, 0x94)) + (weight + 1) * 2 <= m.size()) {
+        const uint32_t t = Rd16(m, Rd32(m, 0x94) + weight * 2);
+        float tr = 1.0f;
+        if (t < Rd32(m, 0x58)) frame0(Rd32(m, 0x5C) + t * 20, 1, &tr);
+        rgba[3] *= tr;
+    }
+}
+
+enum : uint8_t { kOne = 0, kMul, kMul2, kAdd };
+enum : uint8_t { kAlphaT1 = 0, kAlphaT2, kAlphaT1T2, kAlphaT1PlusT2 };
+struct Layer {
+    uint32_t start = 0, count = 0, blend = 0; bool unlit = false; const Image* tex = nullptr; float colour[4];
+    const Image* tex2 = nullptr; uint8_t op2 = kOne, uv2 = 0, alpha2 = kAlphaT1; bool alphaX2 = false;
+};
 struct Mesh {
-    std::vector<float> pos, nrm, uv;   // 3, 3, 2 per vertex
-    std::vector<Batch> batches;
-    std::vector<Image> textures;
+    std::vector<uint8_t> m2, skin;
+    std::vector<Layer> layers;                 // blend 0-2 (Impostor.cpp layers[0]; the glow layers are left out)
+    std::deque<Image> textures;                // stable addresses for Layer::tex
     float box[6] = {};
     uint64_t fingerprint = 0;
 };
 
-// decode false: only the files the fingerprint covers are read (a cache hit needs no pictures); batches are built
-// as if every readable texture decoded.
-bool LoadMesh(const std::string& path, Mesh& m, bool decode) {
-    std::vector<uint8_t> d, s;
-    if (!ReadFile(path, d) || d.size() < 0x108 || std::memcmp(d.data(), "MD20", 4)) return false;
+// decode false: only the files the fingerprint covers are read (a cache hit needs no pictures).
+bool LoadMesh(const std::string& path, Mesh& M, bool decode) {
+    std::vector<uint8_t>& m = M.m2;
+    std::vector<uint8_t>& s = M.skin;
+    if (!ReadFile(path, m) || m.size() < 0x108 || std::memcmp(m.data(), "MD20", 4)) return false;
     if (!ReadFile(path.substr(0, path.size() - 3) + "00.skin", s) || s.size() < 48 || std::memcmp(s.data(), "SKIN", 4)) return false;
-    m.fingerprint = Fnv(s.data(), s.size(), Fnv(d.data(), d.size(), Fnv(&kCacheVersion, 4)));
-    const uint32_t nv = Get<uint32_t>(d, 0x3C), ov = Get<uint32_t>(d, 0x40);
-    if (uint64_t(ov) + uint64_t(nv) * 48 > d.size()) return false;
-    m.pos.resize(nv * 3); m.nrm.resize(nv * 3); m.uv.resize(nv * 2);
-    for (uint32_t i = 0; i < nv; ++i) {
-        std::memcpy(&m.pos[i * 3], &d[ov + i * 48], 12);
-        std::memcpy(&m.nrm[i * 3], &d[ov + i * 48 + 20], 12);
-        std::memcpy(&m.uv[i * 2], &d[ov + i * 48 + 32], 8);
-    }
-    for (int k = 0; k < 6; ++k) m.box[k] = Get<float>(d, 0xA0 + 4 * k);
-    const uint32_t nt = Get<uint32_t>(d, 0x50), ot = Get<uint32_t>(d, 0x54);
-    const uint32_t nm = Get<uint32_t>(d, 0x70), om = Get<uint32_t>(d, 0x74);
-    const uint32_t nl = Get<uint32_t>(d, 0x80), ol = Get<uint32_t>(d, 0x84);
-    const uint32_t nsub = Get<uint32_t>(s, 28), osub = Get<uint32_t>(s, 32), nu = Get<uint32_t>(s, 36), ou = Get<uint32_t>(s, 40);
-    if (uint64_t(ot) + uint64_t(nt) * 16 > d.size() || uint64_t(osub) + uint64_t(nsub) * 48 > s.size() || uint64_t(ou) + uint64_t(nu) * 24 > s.size())
-        return false;
-    m.textures.resize(nt);
-    std::vector<int> texOk(nt, -1);
-    const uint32_t ni = Get<uint32_t>(s, 4), oi = Get<uint32_t>(s, 8), nt3 = Get<uint32_t>(s, 12), ot3 = Get<uint32_t>(s, 16);
-    for (uint32_t i = 0; i < nu && !s_stop; ++i) {
-        const size_t u = ou + 24 * size_t(i);
-        const uint16_t sub = Get<uint16_t>(s, u + 4), mat = Get<uint16_t>(s, u + 10), combo = Get<uint16_t>(s, u + 16);
-        if (sub >= nsub || mat >= nm || combo >= nl) continue;
-        const int blend = Get<uint16_t>(d, om + 4 * mat + 2);
-        const int16_t tl = Get<int16_t>(d, ol + 2 * combo);
-        if (blend >= 3 || tl < 0 || uint32_t(tl) >= nt) continue;   // glow / additive: not in the picture
-        if (texOk[tl] < 0) {
-            texOk[tl] = 0;
-            const size_t te = ot + 16 * size_t(tl);
-            const uint32_t len = Get<uint32_t>(d, te + 8), off = Get<uint32_t>(d, te + 12);
-            if (Get<uint32_t>(d, te) == 0 && len > 1 && uint64_t(off) + len <= d.size()) {
-                std::vector<uint8_t> t;
-                if (ReadFile(std::string(reinterpret_cast<const char*>(&d[off]), strnlen(reinterpret_cast<const char*>(&d[off]), len)), t)) {
-                    m.fingerprint = Fnv(t.data(), t.size(), m.fingerprint);
-                    texOk[tl] = !decode || DecodeBlp(t, m.textures[tl]) ? 1 : 0;
-                }
+    M.fingerprint = Fnv(s.data(), s.size(), Fnv(m.data(), m.size(), Fnv(&kCacheVersion, 4)));
+    for (int k = 0; k < 6; ++k) M.box[k] = RdF(m, 0xA0 + 4 * k);
+    auto arr = [&](const std::vector<uint8_t>& d, uint32_t at, uint32_t stride, uint32_t& n) -> uint32_t {
+        n = Rd32(d, at);
+        const uint32_t ofs = Rd32(d, at + 4);
+        if (!n || uint64_t(ofs) + uint64_t(n) * stride > d.size()) { n = 0; return 0; }
+        return ofs;
+    };
+    uint32_t nVert = 0, nTex = 0, nMat = 0, nLookup = 0, nSub = 0, nBatch = 0, nCombos = 0, nCoord = 0;
+    arr(m, 0x3C, 48, nVert);
+    const uint32_t texs = arr(m, 0x50, 16, nTex), mats = arr(m, 0x70, 4, nMat), lookup = arr(m, 0x80, 2, nLookup);
+    const uint32_t subs = arr(s, 0x1C, 48, nSub), batches = arr(s, 0x24, 24, nBatch);
+    const uint32_t combos = (Rd32(m, 0x10) & 0x8) && m.size() >= 0x138 ? arr(m, 0x130, 2, nCombos) : 0;
+    const uint32_t coords = arr(m, 0x88, 2, nCoord);
+    if (!nVert || !nSub || !nBatch) return false;
+
+    // Textures by lookup slot, read once (every read one goes in the fingerprint), decoded at most 256 px across.
+    std::unordered_map<uint32_t, const Image*> byTex;
+    auto texture = [&](uint32_t combo) -> const Image* {
+        if (!nLookup || combo >= nLookup) return nullptr;
+        const uint32_t t = Rd16(m, lookup + combo * 2);
+        auto it = byTex.find(t);
+        if (it != byTex.end()) return it->second;
+        const Image* got = nullptr;
+        if (t < nTex) {
+            const size_t e = texs + t * 16;
+            const uint32_t type = Rd32(m, e), len = Rd32(m, e + 8), at = Rd32(m, e + 12);
+            std::vector<uint8_t> blp;
+            if (type == 0 && len >= 2 && uint64_t(at) + len <= m.size()
+                && ReadFile(std::string(reinterpret_cast<const char*>(&m[at]), strnlen(reinterpret_cast<const char*>(&m[at]), len)), blp)) {
+                M.fingerprint = Fnv(blp.data(), blp.size(), M.fingerprint);
+                M.textures.emplace_back();
+                if (!decode || DecodeBlp(blp, M.textures.back())) got = &M.textures.back();
             }
         }
-        if (texOk[tl] != 1) continue;   // replaceable or unreadable texture
-        const size_t sm = osub + 48 * size_t(sub);
-        const uint32_t start = Get<uint16_t>(s, sm + 8) + (uint32_t(Get<uint16_t>(s, sm + 2)) << 16), count = Get<uint16_t>(s, sm + 10);
-        Batch b;
-        b.tex = &m.textures[tl];
-        b.blend = blend;
-        for (uint32_t k = start; k < start + count && k < nt3; ++k) {
-            const uint16_t li = Get<uint16_t>(s, ot3 + 2 * size_t(k));
-            if (li >= ni) { b.idx.clear(); break; }
-            const uint16_t vi = Get<uint16_t>(s, oi + 2 * size_t(li));
-            if (vi >= nv) { b.idx.clear(); break; }
-            b.idx.push_back(vi);
+        byTex[t] = got;
+        return got;
+    };
+
+    // Two-texture batches as the client builds their shader (0x00836980), Impostor.cpp's reading of the combiners.
+    for (uint32_t bi = 0; bi < nBatch && !s_stop; ++bi) {
+        const size_t b = batches + bi * 24;
+        const uint32_t section = Rd16(s, b + 4), material = Rd16(s, b + 10), combo = Rd16(s, b + 16);
+        if (section >= nSub) continue;
+        const uint32_t blend = material < nMat ? Rd16(m, mats + material * 4 + 2) : 0;
+        const uint32_t flags = material < nMat ? Rd16(m, mats + material * 4) : 0;
+        // ponytail: blend 3 / 4 (additive glow) has no glow picture here (Impostor.cpp's Picture::glow); add one if
+        // glowing trees (Crystalsong, Bloodmyst) read too dark far off.
+        if (blend >= 3) continue;
+        Layer l;
+        const size_t sub = subs + section * 48;
+        l.start = Rd16(s, sub + 8) + (uint32_t(Rd16(s, sub + 2)) << 16);
+        l.count = Rd16(s, sub + 10);
+        l.blend = blend;
+        l.unlit = flags & 1;
+        l.tex = texture(combo);
+        BatchColour(m, s, b, l.colour);
+        const uint16_t shaderId = Rd16(s, b + 2);
+        if (Rd16(s, b + 14) >= 2 && nCombos && !(shaderId & 0x8000) && shaderId + 1u < nCombos && (l.tex2 = texture(combo + 1))) {
+            uint16_t op0 = blend == 0 ? 0 : Rd16(m, combos + shaderId * 2), op = Rd16(m, combos + (shaderId + 1) * 2);
+            if ((op0 == 3 && op != 1) || (op0 == 4 && op != 1 && op != 4)) op0 = op = 1;
+            l.op2 = op == 3 || op == 7 ? kAdd : op == 4 || op == 6 ? kMul2 : kMul;
+            l.alpha2 = op == 1 || op == 2 || op == 4 || op == 5 ? (op0 == 0 ? kAlphaT2 : kAlphaT1T2) : op == 3 ? kAlphaT1PlusT2 : kAlphaT1;
+            l.alphaX2 = op == 4;
+            const uint32_t tc = Rd16(s, b + 18) + 1u;
+            l.uv2 = coords && tc < nCoord && Rd16(m, coords + tc * 2) == 1 ? 1 : 0;
         }
-        b.idx.resize(b.idx.size() / 3 * 3);
-        if (!b.idx.empty()) m.batches.push_back(std::move(b));
+        M.layers.push_back(l);
     }
-    return !m.batches.empty();
+    return !M.layers.empty();
 }
 
-// ---------------------------------------------------------------- views
-
-void Decode(uint32_t i, uint32_t j, float d[3]) {   // grid point -> view direction (FarTreesVS Decode)
-    const float px = float(i) / (kFrames - 1) * 2 - 1, py = float(j) / (kFrames - 1) * 2 - 1;
-    const float hx = (px + py) * 0.5f, hy = (px - py) * 0.5f;
-    d[0] = hx; d[1] = hy; d[2] = 1 - std::fabs(hx) - std::fabs(hy);
-    const float l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    for (int k = 0; k < 3; ++k) d[k] /= l;
-}
-
-void Basis(const float d[3], float r[3], float u[3]) {   // right = cross(z, d), up = cross(d, right)
-    r[0] = -d[1] + 1e-5f; r[1] = d[0]; r[2] = 0;
-    const float l = std::sqrt(r[0] * r[0] + r[1] * r[1]);
-    r[0] /= l; r[1] /= l;
-    u[0] = d[1] * r[2] - d[2] * r[1]; u[1] = d[2] * r[0] - d[0] * r[2]; u[2] = d[0] * r[1] - d[1] * r[0];
-}
-
-// One view at n x n samples into col (rgb + coverage) and nd (normal + depth), n x n x 4 each.
-void Raster(const Mesh& m, const float c[3], float R, const float d[3], int n, std::vector<float>& col, std::vector<float>& nd) {
-    float r[3], u[3];
-    Basis(d, r, u);
-    const size_t nv = m.pos.size() / 3;
-    std::vector<float> sx(nv), sy(nv), sz(nv);
-    for (size_t i = 0; i < nv; ++i) {
-        const float q[3] = { (m.pos[i * 3] - c[0]) / R, (m.pos[i * 3 + 1] - c[1]) / R, (m.pos[i * 3 + 2] - c[2]) / R };
-        sx[i] = ((q[0] * r[0] + q[1] * r[1] + q[2] * r[2]) * 0.5f + 0.5f) * n;
-        sy[i] = (0.5f - (q[0] * u[0] + q[1] * u[1] + q[2] * u[2]) * 0.5f) * n;
-        sz[i] = q[0] * d[0] + q[1] * d[1] + q[2] * d[2];
+// Impostor.cpp: frame = max(zHi - zLo, 2 x reach) over every vertex, bottom = zLo.
+bool Frame(const Mesh& M, ModelResult& r) {
+    const std::vector<uint8_t>& m = M.m2;
+    const uint32_t nVert = Rd32(m, 0x3C), ov = Rd32(m, 0x40);
+    if (!nVert || uint64_t(ov) + uint64_t(nVert) * 48 > m.size()) return false;
+    float zLo = 1e30f, zHi = -1e30f, reach = 0.0f;
+    for (uint32_t v = 0; v < nVert; ++v) {
+        const float x = RdF(m, ov + v * 48), y = RdF(m, ov + v * 48 + 4), z = RdF(m, ov + v * 48 + 8);
+        zLo = std::min(zLo, z); zHi = std::max(zHi, z);
+        reach = std::max(reach, std::sqrt(x * x + y * y));
     }
-    std::vector<float> zb(size_t(n) * n, -1e9f);
-    col.assign(size_t(n) * n * 4, 0.0f);
-    nd.assign(size_t(n) * n * 4, 0.0f);
-    for (const Batch& b : m.batches) {
-        if (s_stop) return;
-        const Image& t = *b.tex;
-        for (size_t k = 0; k < b.idx.size(); k += 3) {
-            const uint32_t a = b.idx[k], bb = b.idx[k + 1], cc = b.idx[k + 2];
-            const float x0 = sx[a], y0 = sy[a], x1 = sx[bb], y1 = sy[bb], x2 = sx[cc], y2 = sy[cc];
-            const float area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
-            if (std::fabs(area) < 1e-9f) continue;
-            const int ix0 = std::max(int(std::min({ x0, x1, x2 })), 0), ix1 = std::min(int(std::max({ x0, x1, x2 })) + 1, n);
-            const int iy0 = std::max(int(std::min({ y0, y1, y2 })), 0), iy1 = std::min(int(std::max({ y0, y1, y2 })) + 1, n);
-            for (int y = iy0; y < iy1; ++y)
-                for (int x = ix0; x < ix1; ++x) {
-                    const float px = x + 0.5f, py = y + 0.5f;
-                    const float w1 = ((px - x0) * (y2 - y0) - (x2 - x0) * (py - y0)) / area;
-                    const float w2 = ((x1 - x0) * (py - y0) - (px - x0) * (y1 - y0)) / area;
-                    const float w0 = 1 - w1 - w2;
+    r.frame = std::max(zHi - zLo, 2.0f * reach);
+    r.bottom = zLo;
+    r.height = zHi - zLo;
+    r.reach = reach;
+    return r.frame > 0.1f;
+}
+
+constexpr int C = 8;   // per texel: r g b coverage nx ny nz unlit
+
+void Sample(const Image* t, float u, float v, uint8_t out[4]) {
+    u -= std::floor(u); v -= std::floor(v);
+    const uint8_t* q = &t->rgba[(size_t(std::min(uint32_t(v * t->h), t->h - 1)) * t->w + std::min(uint32_t(u * t->w), t->w - 1)) * 4];
+    std::memcpy(out, q, 4);
+}
+
+// One view (angle view x 90 deg) at kPx, Impostor.cpp's raster, box-down, coverage and 8 fill passes: lv = kPx^2 x C.
+bool RenderView(const Mesh& M, const ModelResult& r, uint32_t view, std::vector<float>& lv) {
+    constexpr uint32_t kRaster = kPx * 2;
+    struct Pixel { float depth = -1e30f; float rgb[3] = {}; float n[3] = {}; bool set = false, unlit = false; };
+    const std::vector<uint8_t>& m = M.m2;
+    const std::vector<uint8_t>& s = M.skin;
+    const uint32_t nVert = Rd32(m, 0x3C), ov = Rd32(m, 0x40);
+    const uint32_t nSkinVert = Rd32(s, 4), oSkinVert = Rd32(s, 8), nIdx = Rd32(s, 12), oIdx = Rd32(s, 16);
+    if (uint64_t(oSkinVert) + uint64_t(nSkinVert) * 2 > s.size() || uint64_t(oIdx) + uint64_t(nIdx) * 2 > s.size()) return false;
+    const float frame = r.frame, zLo = r.bottom, zHi = r.bottom + r.height;
+    const float ang = float(view) * 1.5707963f, cx = std::cos(ang), cy = std::sin(ang);
+    std::vector<Pixel> px(size_t(kRaster) * kRaster);
+    bool any = false;
+    for (const Layer& L : M.layers) {
+        if (s_stop) return false;
+        const Image* tex = L.tex;
+        for (uint32_t i = 0; i + 2 < L.count && L.start + i + 2 < nIdx; i += 3) {
+            float sx[3], sy[3], sd[3], uv[3][2], uv2[3][2], nr[3][3];
+            bool ok = true;
+            for (int k = 0; k < 3 && ok; ++k) {
+                const uint32_t si = Rd16(s, oIdx + (L.start + i + k) * 2);
+                if (si >= nSkinVert) { ok = false; break; }
+                const uint32_t vi = Rd16(s, oSkinVert + si * 2);
+                if (vi >= nVert) { ok = false; break; }
+                const size_t v = ov + size_t(vi) * 48;
+                const float x = RdF(m, v), y = RdF(m, v + 4), z = RdF(m, v + 8);
+                const float right = -cy * x + cx * y;
+                sx[k] = (right / frame + 0.5f) * kRaster;
+                sy[k] = (zHi - z) / frame * kRaster + (frame - (zHi - zLo)) / frame * kRaster;   // bottom-aligned
+                sd[k] = cx * x + cy * y;
+                uv[k][0] = RdF(m, v + 32); uv[k][1] = RdF(m, v + 36);
+                uv2[k][0] = RdF(m, v + 32 + 8 * L.uv2); uv2[k][1] = RdF(m, v + 36 + 8 * L.uv2);
+                const float nx = RdF(m, v + 20), ny = RdF(m, v + 24), nz = RdF(m, v + 28);
+                nr[k][0] = -cy * nx + cx * ny; nr[k][1] = nz; nr[k][2] = cx * nx + cy * ny;
+            }
+            if (!ok) continue;
+            const float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+            if (std::fabs(area) < 1e-6f) continue;
+            const int x0 = std::max(0, int(std::floor(std::min({ sx[0], sx[1], sx[2] }))));
+            const int x1 = std::min(int(kRaster) - 1, int(std::ceil(std::max({ sx[0], sx[1], sx[2] }))));
+            const int y0 = std::max(0, int(std::floor(std::min({ sy[0], sy[1], sy[2] }))));
+            const int y1 = std::min(int(kRaster) - 1, int(std::ceil(std::max({ sy[0], sy[1], sy[2] }))));
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x) {
+                    const float qx = x + 0.5f, qy = y + 0.5f;
+                    const float w0 = ((sx[1] - qx) * (sy[2] - qy) - (sx[2] - qx) * (sy[1] - qy)) / area;
+                    const float w1 = ((sx[2] - qx) * (sy[0] - qy) - (sx[0] - qx) * (sy[2] - qy)) / area;
+                    const float w2 = 1.0f - w0 - w1;
                     if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-                    const float z = w0 * sz[a] + w1 * sz[bb] + w2 * sz[cc];
-                    float& zz = zb[size_t(y) * n + x];
-                    if (z <= zz) continue;
-                    const float tu = w0 * m.uv[a * 2] + w1 * m.uv[bb * 2] + w2 * m.uv[cc * 2];
-                    const float tv = w0 * m.uv[a * 2 + 1] + w1 * m.uv[bb * 2 + 1] + w2 * m.uv[cc * 2 + 1];
-                    const int tx = ((int(std::floor(tu * t.w)) % int(t.w)) + int(t.w)) % int(t.w);
-                    const int ty = ((int(std::floor(tv * t.h)) % int(t.h)) + int(t.h)) % int(t.h);
-                    const uint8_t* tp = &t.rgba[(size_t(ty) * t.w + tx) * 4];
-                    if ((b.blend == 1 && tp[3] < 224) || (b.blend == 2 && tp[3] < 128)) continue;   // the game's keys
-                    zz = z;
-                    float nn[3];
-                    for (int q = 0; q < 3; ++q) nn[q] = w0 * m.nrm[a * 3 + q] + w1 * m.nrm[bb * 3 + q] + w2 * m.nrm[cc * 3 + q];
-                    float l = std::sqrt(nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]) + 1e-9f;
-                    if (nn[0] * d[0] + nn[1] * d[1] + nn[2] * d[2] < 0) l = -l;   // two-sided: face the view
-                    float* o = &col[(size_t(y) * n + x) * 4];
-                    o[0] = tp[0] / 255.0f; o[1] = tp[1] / 255.0f; o[2] = tp[2] / 255.0f; o[3] = 1;
-                    float* p = &nd[(size_t(y) * n + x) * 4];
-                    p[0] = nn[0] / l; p[1] = nn[1] / l; p[2] = nn[2] / l; p[3] = z;
+                    const float depth = w0 * sd[0] + w1 * sd[1] + w2 * sd[2];
+                    Pixel& p = px[size_t(y) * kRaster + x];
+                    if (depth <= p.depth) continue;
+                    float rgb[3] = { 0.35f, 0.3f, 0.2f }, a = 1.0f;
+                    if (tex) {
+                        uint8_t t[4];
+                        Sample(tex, w0 * uv[0][0] + w1 * uv[1][0] + w2 * uv[2][0], w0 * uv[0][1] + w1 * uv[1][1] + w2 * uv[2][1], t);
+                        for (int j = 0; j < 3; ++j) rgb[j] = t[j] / 255.0f;
+                        a = L.blend == 0 ? 1.0f : t[3] / 255.0f;
+                    }
+                    if (L.tex2) {
+                        uint8_t q[4];
+                        Sample(L.tex2, w0 * uv2[0][0] + w1 * uv2[1][0] + w2 * uv2[2][0], w0 * uv2[0][1] + w1 * uv2[1][1] + w2 * uv2[2][1], q);
+                        if (L.op2 == kMul || L.op2 == kMul2)
+                            for (int j = 0; j < 3; ++j) rgb[j] = std::min(1.0f, rgb[j] * q[j] / 255.0f * (L.op2 == kMul2 ? 2.0f : 1.0f));
+                        if (L.blend != 0 && L.alpha2 == kAlphaT1PlusT2) a = std::min(1.0f, a + q[3] / 255.0f);
+                        else if (L.blend != 0 && L.alpha2 != kAlphaT1)
+                            a = std::min(1.0f, (L.alpha2 == kAlphaT2 ? 1.0f : a) * q[3] / 255.0f * (L.alphaX2 ? 2.0f : 1.0f));
+                    }
+                    // the game's keys: 224/255 for blend 1 (alpha-ref table 0x00AD8B7C), half for blended blend 2
+                    if (a < (L.blend == 1 ? 224.0f / 255.0f : 0.5f)) continue;
+                    float n[3];
+                    for (int j = 0; j < 3; ++j) n[j] = w0 * nr[0][j] + w1 * nr[1][j] + w2 * nr[2][j];
+                    if (n[2] < 0.0f) for (float& c : n) c = -c;   // two-sided: face the viewer
+                    const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                    for (int j = 0; j < 3; ++j) {
+                        p.n[j] = len > 0 ? n[j] / len : (j == 2 ? 1.0f : 0.0f);
+                        p.rgb[j] = rgb[j] * L.colour[j];
+                    }
+                    p.depth = depth;
+                    p.set = true;
+                    p.unlit = L.unlit;
+                    any = true;
                 }
         }
     }
-}
-
-// Fill the colour of empty texels (alpha 0) from covered neighbours: no dark rims under bilinear and mips.
-void Dilate(std::vector<float>& img, const std::vector<float>& cover, uint32_t w, int iters) {
-    std::vector<uint8_t> has(cover.size());
-    for (size_t i = 0; i < cover.size(); ++i) has[i] = cover[i] > 0;
-    for (int it = 0; it < iters && !s_stop; ++it) {
-        std::vector<uint8_t> next = has;
-        bool any = false;
-        for (uint32_t y = 0; y < w; ++y)
-            for (uint32_t x = 0; x < w; ++x) {
-                const size_t i = size_t(y) * w + x;
-                if (has[i]) continue;
-                float acc[3] = {}; int cnt = 0;
-                const int nb[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
-                for (auto& o : nb) {
-                    const int xx = int(x) + o[0], yy = int(y) + o[1];
-                    if (xx < 0 || yy < 0 || xx >= int(w) || yy >= int(w)) continue;
-                    const size_t j = size_t(yy) * w + xx;
-                    if (!has[j]) continue;
-                    for (int k = 0; k < 3; ++k) acc[k] += img[j * 4 + k];
-                    ++cnt;
-                }
-                if (!cnt) continue;
-                for (int k = 0; k < 3; ++k) img[i * 4 + k] = acc[k] / cnt;
-                next[i] = 1; any = true;
+    lv.assign(size_t(kPx) * kPx * C, 0.0f);
+    for (uint32_t y = 0; y < kPx; ++y)
+        for (uint32_t x = 0; x < kPx; ++x) {
+            float acc[7] = {};
+            int n = 0;
+            for (int k = 0; k < 4; ++k) {
+                const Pixel& p = px[size_t(y * 2 + k / 2) * kRaster + x * 2 + k % 2];
+                if (!p.set) continue;
+                for (int j = 0; j < 3; ++j) { acc[j] += p.rgb[j]; acc[3 + j] += p.n[j]; }
+                acc[6] += p.unlit ? 1.0f : 0.0f;
+                ++n;
             }
-        has.swap(next);
-        if (!any) break;
+            float* o = &lv[(size_t(y) * kPx + x) * C];
+            o[3] = n / 4.0f;
+            if (n) { for (int j = 0; j < 3; ++j) { o[j] = acc[j] / n; o[4 + j] = acc[3 + j] / n; } o[7] = acc[6] / n; }
+        }
+    // The empty texels take their drawn neighbours' colour, so filtering pulls no dark rim into the edge.
+    for (int pass = 0; pass < 8; ++pass) {
+        std::vector<float> next = lv;
+        for (uint32_t y = 0; y < kPx; ++y)
+            for (uint32_t x = 0; x < kPx; ++x) {
+                float* o = &next[(size_t(y) * kPx + x) * C];
+                if (o[3] > 0.0f || o[4] != 0.0f || o[5] != 0.0f || o[6] != 0.0f) continue;
+                float acc[7] = {};
+                int n = 0;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int xx = int(x) + dx, yy = int(y) + dy;
+                        if (xx < 0 || yy < 0 || xx >= int(kPx) || yy >= int(kPx)) continue;
+                        const float* q = &lv[(size_t(yy) * kPx + xx) * C];
+                        if (q[4] == 0.0f && q[5] == 0.0f && q[6] == 0.0f) continue;
+                        for (int j = 0; j < 3; ++j) { acc[j] += q[j]; acc[3 + j] += q[4 + j]; }
+                        acc[6] += q[7];
+                        ++n;
+                    }
+                if (n) { for (int j = 0; j < 3; ++j) { o[j] = acc[j] / n; o[4 + j] = acc[3 + j] / n; } o[7] = acc[6] / n; }
+            }
+        lv.swap(next);
     }
+    return any;
 }
 
-// Mip chain as DXT5. coverKeep: alpha of each level rescaled so the 0.5 test keeps level 0's coverage.
-std::vector<std::vector<uint8_t>> Mips(std::vector<float> img, uint32_t w, bool coverKeep) {
-    std::vector<std::vector<uint8_t>> out;
-    size_t covered0 = 0;
-    for (size_t i = 0; i < size_t(w) * w; ++i) covered0 += img[i * 4 + 3] >= 0.5f;
-    const float base = float(covered0) / float(size_t(w) * w);
-    for (;;) {
-        out.push_back(EncodeDxt5(img, w, w));
-        if (w == 1 || s_stop) break;
-        const uint32_t h = w / 2;
-        std::vector<float> m(size_t(h) * h * 4);
-        for (uint32_t y = 0; y < h; ++y)
-            for (uint32_t x = 0; x < h; ++x)
-                for (int k = 0; k < 4; ++k)
-                    m[(size_t(y) * h + x) * 4 + k] = 0.25f * (img[((size_t(2 * y) * w) + 2 * x) * 4 + k] + img[((size_t(2 * y) * w) + 2 * x + 1) * 4 + k]
-                        + img[((size_t(2 * y + 1) * w) + 2 * x) * 4 + k] + img[((size_t(2 * y + 1) * w) + 2 * x + 1) * 4 + k]);
-        if (coverKeep && base > 0 && base < 1) {
-            std::vector<float> a(size_t(h) * h);
-            for (size_t i = 0; i < a.size(); ++i) a[i] = m[i * 4 + 3];
-            const size_t at = std::min(a.size() - 1, size_t((1 - base) * a.size()));
-            std::nth_element(a.begin(), a.begin() + at, a.end());
-            const float t = a[at];
-            if (t > 1e-3f) for (size_t i = 0; i < a.size(); ++i) m[i * 4 + 3] = std::min(m[i * 4 + 3] * (0.5f / t), 1.0f);
+// A w x h, C-channel image halved (each side at least 1).
+std::vector<float> Half(const std::vector<float>& img, uint32_t w, uint32_t h) {
+    const uint32_t hw = std::max(w / 2, 1u), hh = std::max(h / 2, 1u);
+    std::vector<float> out(size_t(hw) * hh * C, 0.0f);
+    for (uint32_t y = 0; y < hh; ++y)
+        for (uint32_t x = 0; x < hw; ++x) {
+            float* o = &out[(size_t(y) * hw + x) * C];
+            int n = 0;
+            for (uint32_t k = 0; k < 4; ++k) {
+                const uint32_t xx = x * 2 + k % 2, yy = y * 2 + k / 2;
+                if (xx >= w || yy >= h) continue;
+                const float* q = &img[(size_t(yy) * w + xx) * C];
+                for (int j = 0; j < C; ++j) o[j] += q[j];
+                ++n;
+            }
+            for (int j = 0; j < C; ++j) o[j] /= float(n);
         }
-        img.swap(m);
-        w = h;
-    }
     return out;
 }
 
-void BakeAtlas(const Mesh& m, ModelResult& r) {
-    // Centre and radius of the drawn vertices.
-    float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
-    for (const Batch& b : m.batches) for (uint32_t i : b.idx) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], m.pos[i * 3 + k]); hi[k] = std::max(hi[k], m.pos[i * 3 + k]); }
-    for (int k = 0; k < 3; ++k) r.centre[k] = (lo[k] + hi[k]) * 0.5f;
-    float R = 0;
-    for (const Batch& b : m.batches) for (uint32_t i : b.idx) {
-        float s = 0;
-        for (int k = 0; k < 3; ++k) { const float t = m.pos[i * 3 + k] - r.centre[k]; s += t * t; }
-        R = std::max(R, s);
-    }
-    r.radius = std::sqrt(R) * 1.02f + 1e-3f;
-    r.extent = std::max({ m.box[3] - m.box[0], m.box[4] - m.box[1], m.box[5] - m.box[2] });
-    r.framePx = r.extent >= 40.0f ? 128 : 64;
-    const uint32_t px = r.framePx, ss = px <= 64 ? 4 : 2, n = px * ss, W = kFrames * px;
-    std::vector<float> alb(size_t(W) * W * 4, 0.0f), nrm(size_t(W) * W * 4, 0.0f), cover(size_t(W) * W, 0.0f);
-    std::vector<float> col, nd;
-    for (uint32_t i = 0; i < kFrames && !s_stop; ++i)
-        for (uint32_t j = 0; j < kFrames; ++j) {
-            float d[3];
-            Decode(i, j, d);
-            Raster(m, r.centre, r.radius, d, int(n), col, nd);
-            for (uint32_t y = 0; y < px; ++y)
-                for (uint32_t x = 0; x < px; ++x) {
-                    float c = 0, rgb[3] = {}, nn[3] = {}, z = 0;
-                    for (uint32_t sy = 0; sy < ss; ++sy)
-                        for (uint32_t sx = 0; sx < ss; ++sx) {
-                            const size_t s = (size_t(y * ss + sy) * n + x * ss + sx) * 4;
-                            if (col[s + 3] <= 0) continue;
-                            c += 1;
-                            for (int k = 0; k < 3; ++k) { rgb[k] += col[s + k]; nn[k] += nd[s + k]; }
-                            z += nd[s + 3];
-                        }
-                    const size_t o = (size_t(j * px + y) * W + i * px + x);
-                    float* a = &alb[o * 4];
-                    float* q = &nrm[o * 4];
-                    if (c > 0) {
-                        const float l = std::sqrt(nn[0] * nn[0] + nn[1] * nn[1] + nn[2] * nn[2]) + 1e-9f;
-                        for (int k = 0; k < 3; ++k) { a[k] = rgb[k] / c; q[k] = nn[k] / l * 0.5f + 0.5f; }
-                        q[3] = z / c * 0.5f + 0.5f;
-                    } else {
-                        q[3] = 0.5f;
-                    }
-                    a[3] = c / float(ss * ss);
-                    cover[o] = a[3];
+void BakeAtlas(const Mesh& M, ModelResult& r) {
+    // Per view: kPx .. 1 px, each level box-filtered and its alpha scaled so it keeps level 0's coverage
+    // (Impostor.cpp: a far tree does not thin out). Then side by side; levels past the last view-sized one
+    // (2 x 1, 1 x 1) are plain boxes of the row, there for the device's chain only.
+    std::vector<std::vector<float>> atlas(kChain);
+    bool any = false;
+    for (uint32_t view = 0; view < kViews && !s_stop; ++view) {
+        std::vector<float> cur;
+        any |= RenderView(M, r, view, cur);
+        float coverage0 = 0.0f;
+        for (size_t k = 0; k < size_t(kPx) * kPx; ++k) coverage0 += cur[k * C + 3] >= 0.5f;
+        coverage0 /= float(kPx * kPx);
+        uint32_t size = kPx;
+        for (uint32_t l = 0; size >= 1 && l < kChain; ++l) {
+            if (l) {
+                cur = Half(cur, size, size);
+                size /= 2;
+                float lo = 0.5f, hi = 4.0f;
+                for (int it = 0; it < 12; ++it) {
+                    const float s = 0.5f * (lo + hi);
+                    float c = 0.0f;
+                    for (size_t k = 0; k < size_t(size) * size; ++k) c += cur[k * C + 3] * s >= 0.5f;
+                    if (c / float(size * size) < coverage0) lo = s; else hi = s;
                 }
+                for (size_t k = 0; k < size_t(size) * size; ++k) cur[k * C + 3] = std::min(1.0f, cur[k * C + 3] * hi);
+            }
+            const uint32_t W = kViews * size;
+            atlas[l].resize(size_t(W) * size * C);
+            for (uint32_t y = 0; y < size; ++y)
+                std::memcpy(&atlas[l][(size_t(y) * W + view * size) * C], &cur[size_t(y) * size * C], size_t(size) * C * 4);
+            if (size == 1) break;
         }
-    if (s_stop) return;
-    Dilate(alb, cover, W, 16);
-    Dilate(nrm, cover, W, 16);
-    if (s_stop) return;
-    r.albedo = Mips(std::move(alb), W, true);
-    if (s_stop) return;
-    r.normal = Mips(std::move(nrm), W, false);
+    }
+    if (s_stop || !any) return;
+    uint32_t w = kAtlasW, h = kAtlasH;
+    for (uint32_t l = 0; l < kChain; ++l, w = std::max(w / 2, 1u), h = std::max(h / 2, 1u)) {
+        if (atlas[l].empty()) atlas[l] = Half(atlas[l - 1], std::max(kAtlasW >> (l - 1), 1u), std::max(kAtlasH >> (l - 1), 1u));
+        std::vector<float> alb(size_t(w) * h * 4), nrm(size_t(w) * h * 4);
+        for (size_t k = 0; k < size_t(w) * h; ++k) {
+            const float* q = &atlas[l][k * C];
+            const float len = std::sqrt(q[4] * q[4] + q[5] * q[5] + q[6] * q[6]);
+            for (int j = 0; j < 4; ++j) alb[k * 4 + j] = std::clamp(q[j], 0.0f, 1.0f);
+            for (int j = 0; j < 2; ++j) nrm[k * 4 + j] = std::clamp((len > 0 ? q[4 + j] / len : 0.0f) * 0.5f + 0.5f, 0.0f, 1.0f);
+            nrm[k * 4 + 2] = std::clamp(q[7], 0.0f, 1.0f);   // the unlit mask
+            nrm[k * 4 + 3] = 1.0f;
+        }
+        r.albedo.push_back(EncodeDxt5(alb, w, h));
+        r.normal.push_back(EncodeDxt5(nrm, w, h));
+    }
 }
 
 // ---------------------------------------------------------------- cache: Cache/FarTrees/<fnv64 of the path>.ftc
-//   'FTC1', u32 version, u64 fingerprint (M2 + skin + textures + version), f32 centre[3], radius, extent,
-//   u32 framePx, u32 levels; then albedo levels, then normal levels, each u32 size + DXT5 bytes.
+//   'FTC1', u32 version, u64 fingerprint (M2 + skin + textures + version), f32 frame, bottom, height, reach,
+//   f32 box[6], u32 levels (kChain); then albedo levels, then normal levels, each u32 size + DXT5 bytes.
+
+uint32_t LevelBytes(uint32_t l) {
+    return ((std::max(kAtlasW >> l, 1u) + 3) / 4) * ((std::max(kAtlasH >> l, 1u) + 3) / 4) * 16;
+}
 
 std::string CachePath(const std::string& model) {
     char name[64];
@@ -531,24 +657,19 @@ bool ReadCache(const std::string& model, uint64_t fingerprint, ModelResult& r) {
     uint32_t version = 0, levels = 0;
     uint64_t fp = 0;
     if (std::fread(magic, 4, 1, f) == 1 && !std::memcmp(magic, "FTC1", 4) && std::fread(&version, 4, 1, f) == 1 && version == kCacheVersion
-        && std::fread(&fp, 8, 1, f) == 1 && fp == fingerprint && std::fread(r.centre, 4, 3, f) == 3 && std::fread(&r.radius, 4, 1, f) == 1
-        && std::fread(&r.extent, 4, 1, f) == 1 && std::fread(&r.framePx, 4, 1, f) == 1 && std::fread(&levels, 4, 1, f) == 1 && levels <= 16
-        && (r.framePx == 64 || r.framePx == 128)) {
-        // The full chain at exactly EncodeDxt5's sizes: the device latch copies whole levels from these.
-        const uint32_t W = kFrames * r.framePx;
-        uint32_t full = 1;
-        while ((W >> (full - 1)) > 1) ++full;
-        ok = levels == full;
+        && std::fread(&fp, 8, 1, f) == 1 && fp == fingerprint && std::fread(&r.frame, 4, 1, f) == 1 && std::fread(&r.bottom, 4, 1, f) == 1
+        && std::fread(&r.height, 4, 1, f) == 1 && std::fread(&r.reach, 4, 1, f) == 1 && std::fread(r.box, 4, 6, f) == 6
+        && std::fread(&levels, 4, 1, f) == 1 && levels == kChain) {
+        ok = true;
         for (auto* set : { &r.albedo, &r.normal }) {
             if (!ok) break;
             set->resize(levels);
             for (uint32_t li = 0; li < levels; ++li) {
                 auto& l = (*set)[li];
-                const uint32_t bw = (std::max(W >> li, 1u) + 3) / 4;
                 uint32_t size = 0;
-                if (std::fread(&size, 4, 1, f) != 1 || size != bw * bw * 16) { ok = false; break; }
+                if (std::fread(&size, 4, 1, f) != 1 || size != LevelBytes(li)) { ok = false; break; }
                 l.resize(size);
-                if (size && std::fread(l.data(), size, 1, f) != 1) { ok = false; break; }
+                if (std::fread(l.data(), size, 1, f) != 1) { ok = false; break; }
             }
         }
     }
@@ -566,10 +687,11 @@ void WriteCache(const std::string& model, uint64_t fingerprint, const ModelResul
     std::fwrite("FTC1", 4, 1, f);
     std::fwrite(&kCacheVersion, 4, 1, f);
     std::fwrite(&fingerprint, 8, 1, f);
-    std::fwrite(r.centre, 4, 3, f);
-    std::fwrite(&r.radius, 4, 1, f);
-    std::fwrite(&r.extent, 4, 1, f);
-    std::fwrite(&r.framePx, 4, 1, f);
+    std::fwrite(&r.frame, 4, 1, f);
+    std::fwrite(&r.bottom, 4, 1, f);
+    std::fwrite(&r.height, 4, 1, f);
+    std::fwrite(&r.reach, 4, 1, f);
+    std::fwrite(r.box, 4, 6, f);
     std::fwrite(&levels, 4, 1, f);
     for (auto* set : { &r.albedo, &r.normal })
         for (auto& l : *set) {
@@ -587,17 +709,14 @@ void BakeModel(const std::string& model, ModelResult& r) {
     r.model = model;
     Mesh m;
     if (!LoadMesh(model, m, false)) return;   // reads the files the fingerprint covers, decodes nothing
-    std::memcpy(r.box, m.box, sizeof(r.box));
-    // Never drawn: a model whose stock size class stays below 2 (<= 4 yd; the rotated box's largest side is at most
-    // sqrt(3) x its largest side) at any scale up to kMaxScale. ponytail: a bush placed bigger than that gets no impostor.
-    constexpr float kMaxScale = 2.0f;
-    if (std::max({ m.box[3] - m.box[0], m.box[4] - m.box[1], m.box[5] - m.box[2] }) * kMaxScale * 1.7321f <= 4.0f) return;
     if (ReadCache(model, m.fingerprint, r)) { r.ok = r.fromCache = true; return; }
     r.albedo.clear(); r.normal.clear();
+    std::memcpy(r.box, m.box, sizeof(r.box));
+    if (!Frame(m, r)) return;
     m = Mesh();
     if (s_stop || !LoadMesh(model, m, true)) return;
     BakeAtlas(m, r);
-    if (s_stop) return;
+    if (s_stop || r.albedo.size() != kChain) return;
     r.ok = true;
     WriteCache(model, m.fingerprint, r);
 }

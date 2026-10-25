@@ -49,7 +49,8 @@ using FarLandBake::Tile;
 constexpr uint32_t kWin = 32;
 constexpr uint32_t kAtlasA = kWin * FarLandBake::kAlbedoPx;   // 4096, DXT1
 constexpr uint32_t kAtlasN = kWin * FarLandBake::kNormalPx;   // 2048, DXT5
-constexpr uint32_t kCacheVersion = 2;      // 2: MCLQ water, MCLY 0x100, a bad MCLY drops its layers only; WDT/liquid key, payload CRC
+constexpr uint32_t kCacheVersion = 3;      // 2: MCLQ water, MCLY 0x100, a bad MCLY drops its layers only; WDT/liquid key, payload CRC
+                                           // 3: layer-texture key (texCrc), header grew
 constexpr float kFadeMs = 600.0f;
 constexpr int32_t kKeep = 15;              // tiles: queued jobs and finished bakes farther than this from the camera are dropped;
                                            // vfogaudit: 15, not 16, so two kept tiles are never 32 apart and evict each other
@@ -64,7 +65,6 @@ int32_t s_enabled = 1;
 // haze-coloured silhouette by ~2-2.5 x farclip instead of showing its texture out to 6 x. The far land itself is
 // never fogged past kFogMax, so tall land (Hyjal) stays a darker silhouette and ridge line against the sky.
 constexpr float kHazeReach = 2.5f;
-constexpr float kFogMax = 0.85f;
 // farlandv2: with far land drawing, the horizon pass starts this close (planar yd) instead of at farclip - 50, so
 // the far land also fills wherever the near terrain has not drawn: ADT tiles past 1111 yd stream in only once they
 // enter the view, and with a wide screen the view's far plane reaches ~1.6 x farclip at its edges, so turning left
@@ -203,6 +203,7 @@ struct CacheHeader {
     char magic[4];
     uint32_t version, adtSize, adtCrc;
     uint32_t envCrc;    // audit 12: the WDT (big alpha) and the LiquidType categories the bake read
+    uint32_t texCrc;    // the layer textures' means (a ground retexture MPQ re-bakes)
     uint32_t tileCrc;   // audit 11: the payload, so a torn or zeroed file is a miss
 };
 
@@ -211,7 +212,8 @@ std::unique_ptr<Tile> BakeOrLoad(FarLandBake::Context& ctx, uint32_t envCrc, con
     std::snprintf(name, sizeof(name), "World\\Maps\\%s\\%s_%d_%d.adt", map.c_str(), map.c_str(), t % 64, t / 64);
     std::vector<uint8_t> adt;
     if (!ReadClientFile(name, adt) || adt.empty()) return nullptr;
-    CacheHeader want { { 'F', 'L', 'T', '1' }, kCacheVersion, uint32_t(adt.size()), FarLandBake::Crc32(adt.data(), adt.size()), envCrc, 0 };
+    CacheHeader want { { 'F', 'L', 'T', '1' }, kCacheVersion, uint32_t(adt.size()), FarLandBake::Crc32(adt.data(), adt.size()), envCrc,
+                       FarLandBake::TexturesKey(ctx, adt.data(), adt.size()), 0 };
     const size_t keyBytes = offsetof(CacheHeader, tileCrc);
     const std::filesystem::path dir = std::filesystem::path("Cache") / "FarLand" / map;
     char file[32];

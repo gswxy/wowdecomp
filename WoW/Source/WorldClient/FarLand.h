@@ -14,6 +14,9 @@ class CMapAreaLow;
 
 namespace FarLand {
 
+// The most fog the far land takes (FarLandPS gFog.z), so tall land stays a silhouette; FarTrees' beyond pass the same.
+constexpr float kFogMax = 0.85f;
+
 // CVars shadowFarReceivers (BindSunShadow), farLand (1 = on, the default since 2026-10-24 farview; 0 = stock WDL horizon), farLandUploads, farLandHazeHeight (farFogReach removed in vfogaudit).
 void RegisterCVars();
 

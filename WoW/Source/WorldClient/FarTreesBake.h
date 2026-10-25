@@ -3,7 +3,7 @@
 
 // FARTREES: not in 12340. The worker side of FarTrees.cpp: one background thread that reads ADTs and tree models
 // through the client's own file layer (SFile, so server patch MPQs win) and bakes each model's impostor atlas,
-// cached on disk. Nothing here touches the Gx device; the main thread only uploads finished results.
+// cached on disk (a port of wraithhost-lite FarLod.cpp / Impostor.cpp). Nothing here touches the Gx device; the main thread only uploads finished results.
 
 #include <cstdint>
 #include <string>
@@ -11,14 +11,19 @@
 
 namespace FarTreesBake {
 
-constexpr uint32_t kFrames = 8;   // hemi-octahedral grid, kFrames x kFrames views
+// wxl billboards (wraithhost-lite Impostor.hpp): kViews side views every 90 deg about the model's z, kPx a side at
+// level 0, side by side in one kViews*kPx x kPx atlas; levels 0..kLevels-1 keep their coverage (the PS reads no
+// coarser), the rest of the chain down to 1 x 1 is there for the device only.
+constexpr uint32_t kViews = 4, kPx = 64, kLevels = 5;
+constexpr uint32_t kAtlasW = kViews * kPx, kAtlasH = kPx, kChain = 9;   // 256 x 64 .. 1 x 1
 
 struct Place {
-    std::string model;     // M2 path as the ADT names it (.mdx -> .m2)
+    std::string model;     // M2 path: the first one seen with this file name (the game shares CM2Shared by leaf name)
     float x, y, z;         // world
     float yaw;             // 0..1 turns
     float rot[3];          // MDDF rotation as read (degrees), for the stock size class
     float scale;
+    float size;            // header box: largest side (model units), for the tile bounds before the picture is in
     uint32_t uniqueId;
 };
 
@@ -32,10 +37,13 @@ struct ModelResult {
     std::string model;
     bool ok = false;
     bool fromCache = false;
-    float centre[3] = {}, radius = 0, extent = 0;   // model space; extent = largest header-box side
+    // Impostor.cpp: frame = max(zHi - zLo, 2 x widest reach from the z axis) over every vertex, bottom = zLo (model
+    // space); the card is frame x scale a side, its bottom edge at the placement's z + bottom x scale.
+    float frame = 0, bottom = 0, height = 0, reach = 0;
     float box[6] = {};                              // the M2 header's bounding box (model space)
-    uint32_t framePx = 0;                           // one view's side; the atlas is kFrames x framePx square
-    std::vector<std::vector<uint8_t>> albedo, normal;   // DXT5 mip levels, level 0 first, down to 1 x 1
+    // DXT5, kChain levels of the kAtlasW x kAtlasH atlas, level 0 first. albedo: rgb + coverage; normal: the view's
+    // normal x (right), y (up) as 0..1, blue = the unlit mask (M2 render flag 1).
+    std::vector<std::vector<uint8_t>> albedo, normal;
 };
 
 void Start();

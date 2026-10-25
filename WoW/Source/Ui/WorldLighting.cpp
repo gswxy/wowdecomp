@@ -70,6 +70,7 @@ struct LightingCVars {
     CVar* dynamicWmo;
     CVar* dynamicDistance;
     CVar* dynamicMinRadius;
+    CVar* radiusScale;
     CVar* replaceStock;
     CVar* wmoInsideOnly;
     CVar* flicker;
@@ -214,12 +215,15 @@ struct Gathered {
     float m_distance;
     float m_score;
     int32_t m_rank;       // -1: the cap dropped it
+    float m_worldScale;   // FIRELIGHT: the model's world scale (1 for a WMO light)
+    C3Vector m_rawColor;  // FIRELIGHT: decoded colour * strength, before the reach fade and the cap
 };
 
 std::vector<Gathered> s_gathered;
 std::vector<GxLightingLight> s_lights;
 uint32_t s_wmoDeduped = 0;
 bool s_dumpPending = false;
+bool s_listPending = false;   // FIRELIGHT: lightDynamicList
 
 float Decode(float c) {
     return c > 0.0f ? powf(c, 2.2f) : 0.0f;
@@ -272,7 +276,8 @@ Gathered* AddLight(const C3Vector& position, const C3Vector& gamma, float scale,
     // what it gives the camera's surroundings: all of it when the camera is inside its reach, none at the gather's edge
     float d = sqrtf(DistanceSquared(position, camera));
     float falloff = std::clamp(1.0f - std::max(d - radius, 0.0f) / reach, 0.0f, 1.0f);
-    s_gathered.push_back(Gathered { light, flame, false, nullptr, -1, d, Luminance(light.m_color) * falloff, -1 });
+    C3Vector raw(fminf(Decode(gamma.x), 4.0f) * scale, fminf(Decode(gamma.y), 4.0f) * scale, fminf(Decode(gamma.z), 4.0f) * scale);
+    s_gathered.push_back(Gathered { light, flame, false, nullptr, -1, d, Luminance(light.m_color) * falloff, -1, 1.0f, raw });
     return &s_gathered.back();
 }
 
@@ -294,6 +299,7 @@ bool FirstKey(const M2Track<T>& track, T& out) {
 void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
     float scale = Positive(s_cv.dynamicM2);
     float minRadius = std::clamp(s_cv.dynamicMinRadius->m_floatValue, 0.0f, 40.0f);
+    float radiusScale = std::clamp(s_cv.radiusScale->m_floatValue, 0.25f, 2.0f);
 
     if (!scene || scale <= 0.0f) {
         return;
@@ -307,6 +313,11 @@ void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
         }
 
         M2Data* data = model->m_shared->m_data;
+        // FIRELIGHT: the attenuation is in model units; a doodad placed at scale 0.5 lit twice its own reach. The
+        // world matrix's first row length (an attached model's through its parent: m_matrixF4, the view is rigid)
+        const C44Matrix& world = model->m_attachParent ? model->m_matrixF4 : model->m_worldTransform;
+        float worldScale = sqrtf(world.a0 * world.a0 + world.a1 * world.a1 + world.a2 * world.a2);
+        worldScale = std::isfinite(worldScale) && worldScale > 0.01f ? worldScale : 1.0f;
 
         for (uint32_t i = 0; i < data->m_lights.m_count; i++) {
             const M2ModelLight& owner = model->m_lights[i];
@@ -347,13 +358,18 @@ void GatherM2Lights(CM2Scene* scene, const C3Vector& camera, float reach) {
             if (!(end > 0.25f && end < 80.0f)) {
                 end = 8.0f;
                 start = 1.0f;
+            } else {
+                end *= worldScale;
+                start *= worldScale;
             }
 
             // the stock falloff 1/(0.7d + 0.03d²) still gives a tenth at 10 yd: a 1-3 yd end would barely reach a wall
-            end = std::max(end, minRadius);
+            end = std::max(end, minRadius) * radiusScale;
+            start *= radiusScale;
 
             if (Gathered* g = AddLight(position, color, scale, start, end, camera, reach, true)) {
                 g->m_static = fromFile;
+                g->m_worldScale = worldScale;
                 g->m_name = model->m_shared->m_fileNameWithoutPath ? model->m_shared->m_fileNameWithoutPath : model->m_shared->m_fileName;
                 g->m_index = static_cast<int32_t>(i);
             }
@@ -524,6 +540,38 @@ void DumpLights(CM2Scene* scene, const C3Vector& camera) {
                 light.m_visible ? "in grid" : "NOT in grid", scene->m_frameStamp - light.m_stamp);
         }
     }
+}
+
+// FIRELIGHT: every gathered light within 40 yd of the camera, kept or not, to tell one wide light from several stacked
+void ListLights(const C3Vector& camera) {
+    uint32_t n = 0;
+    ConsolePrintf("lightDynamicList: lights within 40 yd of (%.1f %.1f %.1f); lightDynamicM2 %.2f, lightDynamicMinRadius %.1f, lightDynamicRadiusScale %.2f",
+        camera.x, camera.y, camera.z, Positive(s_cv.dynamicM2), s_cv.dynamicMinRadius->m_floatValue, s_cv.radiusScale->m_floatValue);
+
+    for (const Gathered& g : s_gathered) {
+        if (g.m_distance > 40.0f) {
+            continue;
+        }
+
+        const GxLightingLight& l = g.m_light;
+        n++;
+        ConsolePrintf("  %s %s #%d at (%.1f %.1f %.1f) dist %.1f start %.2f end %.2f col*scale (%.2f %.2f %.2f) %s worldScale %.2f %s",
+            g.m_m2 ? "M2 " : "WMO", g.m_name ? g.m_name : "?", g.m_index, l.m_position.x, l.m_position.y, l.m_position.z, g.m_distance,
+            l.m_start, l.m_radius, g.m_rawColor.x, g.m_rawColor.y, g.m_rawColor.z, !g.m_m2 ? "wmo" : (g.m_static ? "fromFile" : "animated"),
+            g.m_worldScale, g.m_rank >= 0 ? "kept" : "DROPPED by cap");
+    }
+
+    ConsolePrintf("lightDynamicList: %u lights", n);
+}
+
+int32_t CCommand_LightDynamicList(const char* command, const char* arguments) {
+    if (!g_gxLighting || s_cv.master->m_intValue <= 0 || s_cv.dynamic->m_intValue <= 0) {
+        ConsoleWrite("lightDynamicList: needs D3D11/Vulkan with shaderLighting 1 and lightDynamic 1", WARNING_COLOR);
+    } else {
+        s_listPending = true;
+    }
+
+    return 1;
 }
 
 int32_t CCommand_LightingDump(const char* command, const char* arguments) {
@@ -725,6 +773,7 @@ void WorldLightingRegisterCVars() {
     s_cv.dynamicDistance = Reg("lightDynamicDistance", "Dynamic lights reach this far from the camera, yards (20-500)", "100");
     s_cv.wmoInsideOnly = Reg("lightDynamicWmoInsideOnly", "1 = an interior WMO room's lights only while the camera is in its box (whole rooms of lamps switch as you walk between them); 0 = every room within reach (default)", "0");
     s_cv.dynamicMinRadius = Reg("lightDynamicMinRadius", "A model light reaches at least this far, yards (the stock falloff has no end)", "6");
+    s_cv.radiusScale = Reg("lightDynamicRadiusScale", "Every model light's reach (start and end) times this (0.25-2)", "1");
     s_cv.replaceStock = Reg("lightReplaceStock", "With lightDynamic on, the stock per-object point lights are off: the dynamic lights replace them (1 = units keep theirs, 2 = units too)", "1");
     s_cv.flicker = Reg("lightFlicker", "Flame lights flicker this much (0-1)", "0");
     s_cv.wrap = Reg("lightWrap", "Dynamic light wraps round the terminator (0-1)", "0.25");
@@ -741,6 +790,7 @@ void WorldLightingRegisterCVars() {
     // last: Features() takes a registered hdr to mean they all are
     s_cv.hdr = Reg("hdr", "HDR world target with a tonemap (D3D11; Vulkan tonemaps the 8-bit scene)", "0");
     ConsoleCommandRegister("lightingDump", CCommand_LightingDump, CATEGORY_GRAPHICS, "Prints the dynamic lights gathered next frame and the stock model lights within 30 yd");
+    ConsoleCommandRegister("lightDynamicList", CCommand_LightDynamicList, CATEGORY_GRAPHICS, "Prints every dynamic light within 40 yd of the camera: model, index, place, start/end, colour, world scale");
 }
 
 void WorldLightingBeginWorld() {
@@ -788,6 +838,11 @@ void WorldLightingSetupView(const C3Vector& camera) {
         if (s_dumpPending) {
             s_dumpPending = false;
             DumpLights(World::s_m2Scene, camera);
+        }
+
+        if (s_listPending) {
+            s_listPending = false;
+            ListLights(camera);
         }
 
         SmoothLights();

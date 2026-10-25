@@ -24,6 +24,11 @@ void MovementAddTransport(CGGameObject_C* transport) {
     s_transports.LinkToTail(transport);
 }
 
+// New: the ship wakes (VolumetricFogWaterRipples.cpp) walk this list, since WMO transports are never on the visible list.
+CGGameObject_C* MovementNextTransport(CGGameObject_C* after) {
+    return after ? s_transports.Next(after) : s_transports.Head();
+}
+
 // VERIFY: 9a06aa21 manual
 // OFFSET: 0x0074B340
 int32_t MovementAddToTransport(CPassenger* passenger, WOWGUID transport, int32_t reason) {

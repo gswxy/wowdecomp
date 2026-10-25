@@ -4,7 +4,7 @@
 // The units in water around the camera target (players, creatures, pets, mounts: the visible object list, coa
 // engine_actors) feed a tracker (coa water_contacts: held footprints along each unit's path, a splash on entering) that
 // disturbs a 30 Hz height field: VFogRippleStep ping-pongs two Gr1616F maps (height, previous height) of 0.125 yd
-// texels around the camera target, 512^2 (256^2 at vfogWaterQuality 1). VFogWater samples it at s12 with c65-c67.
+// texels around the camera target, 1024^2 (512^2 at vfogWaterQuality 1; coa: 512^2 / 256^2). VFogWater samples it at s12 with c65-c67.
 // Moving ships (transport WMOs in water) stamp their waterline section too (wxl-water Stage 7c, CaptureHulls).
 // Nothing runs without water in view (called from the water pass) or when nothing moved for 15 s (coa quiet steps).
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
@@ -20,6 +20,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Services/Texture.h"
 #include "WoW/Source/Object/ObjectClient/GameObject_C.h"
+#include "WoW/Source/Object/ObjectClient/Movement_C.h"
 #include "WoW/Source/Object/ObjectClient/Unit_C.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
@@ -73,8 +74,8 @@ constexpr float kWaterRippleTexelYards = 0.125f;
 constexpr double kWaterRippleStepsPerSecond = 30.0;
 constexpr int kMaxWaterRippleStepsPerFrame = 4;
 constexpr uint32_t kMaxWaterRippleDisturbances = 48;
-constexpr int kWaterRippleTexelsLow = 256;
-constexpr int kWaterRippleTexels = 512;
+constexpr int kWaterRippleTexelsLow = 512;     // coa 256 / 512; doubled (128 yd) so rain rings reach twice as far, same 0.125 yd texel
+constexpr int kWaterRippleTexels = 1024;
 constexpr uint32_t kWaterRippleQuietSteps = 450;
 constexpr float kMaxWindowCentreYards = 100000.0f;
 constexpr float kHeldFootprint = 1.0f;
@@ -651,11 +652,13 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
         s_hullTracks.clear();
         return 0;
     }
-    for (CGObject_C* object = manager->m_visibleObjects.Head(); object; object = manager->m_visibleObjects.Next(object)) {
-        if (!object->m_obj || !(object->m_obj->m_type & TYPE_GAMEOBJECT)) {
+    // Not the visible list: a game object is hidden from it until it has an M2 (CGGameObject_C ctor / PostInit
+    // 0x00712F30), which WMO transports never get. The movement code's transport list holds every one.
+    for (CGGameObject_C* go = MovementNextTransport(nullptr); go; go = MovementNextTransport(go)) {
+        const CGObject_C* object = go;
+        if (!object->m_obj) {
             continue;
         }
-        const CGGameObject_C* go = static_cast<const CGGameObject_C*>(object);
         if (!go->m_gameObject || (go->m_gameObject->m_typeID != 11 && go->m_gameObject->m_typeID != 15) || !go->m_typeData) {
             continue;
         }
@@ -724,7 +727,7 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
 // ---- rain / snow drops (wxl-water GatherRain, Cata's rain dimples) ---------------------------------------------------
 // Cata: while it rains harder than 0.2 (CWeather m_rain, m_intensity), 20 dimples of 0.3 yd every 33 ms within 50 yd of
 // the camera, strength -(0.2..0.4) times the close level's 1.25. That density over this window, one sim step being Cata's
-// 33 ms tick, is 8 drops a step; scaled here by the intensity over the gate and by waterRainRipples. Snow: the same, a
+// 33 ms tick, is 33 drops a step over the 128 yd window; scaled here by the intensity over the gate and by waterRainRipples. Snow: the same, a
 // quarter as many and a quarter as deep, by waterSnowRipples (default 0). The field carries the rings from there.
 constexpr float kRainGate = 0.2f;
 constexpr float kRainDropsPerStep = 20.0f * (kWaterRippleTexels * kWaterRippleTexelYards) * (kWaterRippleTexels * kWaterRippleTexelYards) / (100.0f * 100.0f);

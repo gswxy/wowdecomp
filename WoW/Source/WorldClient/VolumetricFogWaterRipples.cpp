@@ -9,11 +9,14 @@
 // Nothing runs without water in view (called from the water pass) or when nothing moved for 15 s (coa quiet steps).
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/Gx/CGxTex.h"
@@ -23,7 +26,9 @@
 #include "WoW/Source/Object/ObjectClient/Movement_C.h"
 #include "WoW/Source/Object/ObjectClient/Unit_C.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
+#include "WoW/Source/Ui/ChatFrame.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
+#include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapEntity.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjDef.h"
@@ -645,36 +650,75 @@ void EmitHullSlice(const float* m, float lx0, float lx1, float halfBeam, float a
 }
 
 // wxl-water GatherHulls, through the decomp's types.
+// waterWakeDebug 1: once a second, one chat (and console) line per transport saying which gate it stopped at.
+void WakeDebugPrint(const char* format, ...) {
+    char text[320];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(text, sizeof(text), format, args);
+    va_end(args);
+    ConsoleWrite(text, DEFAULT_COLOR);
+    CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+}
+
+struct HullDebug {
+    bool on = false;
+    void Ship(uint64_t guid, int type, const char* gate, float speed, int hit, float level, float bottom, int slices, uint32_t stamps) {
+        if (on) {
+            WakeDebugPrint("wake: ship %08x type %d: %s | speed %.1f yd/s, liquid %d level %.1f keel %.1f, slices %d, stamps %u",
+                static_cast<uint32_t>(guid), type, gate, speed, hit, level, bottom, slices, stamps);
+        }
+    }
+};
+
 uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturbance* out, uint32_t capacity) {
+    static CVar* s_strength = CVar::LookupRegistered("waterShipWakes");
+    static CVar* s_debug = CVar::LookupRegistered("waterWakeDebug");
+    static double s_lastDebug = -1.0;
+    HullDebug dbg;
+    dbg.on = s_debug && s_debug->m_intValue != 0 && (seconds - s_lastDebug >= 1.0 || seconds < s_lastDebug);
+    if (dbg.on) {
+        s_lastDebug = seconds;
+    }
+    const float strength = s_strength ? std::clamp(s_strength->m_floatValue, 0.0f, 1.0f) : 1.0f;
     uint32_t count = 0;
+    uint32_t found = 0;
     ObjectMgr* manager = ClntObjMgrGetCurrent();
-    if (!manager) {
+    if (!manager || !(strength > 0.0f)) {
         s_hullTracks.clear();
+        if (dbg.on) {
+            WakeDebugPrint("wake: %s", manager ? "waterShipWakes is 0" : "no object manager");
+        }
         return 0;
     }
     // Not the visible list: a game object is hidden from it until it has an M2 (CGGameObject_C ctor / PostInit
     // 0x00712F30), which WMO transports never get. The movement code's transport list holds every one.
     for (CGGameObject_C* go = MovementNextTransport(nullptr); go; go = MovementNextTransport(go)) {
         const CGObject_C* object = go;
-        if (!object->m_obj) {
+        if (!object->m_obj || !go->m_gameObject || !go->m_typeData) {
             continue;
         }
-        if (!go->m_gameObject || (go->m_gameObject->m_typeID != 11 && go->m_gameObject->m_typeID != 15) || !go->m_typeData) {
+        ++found;
+        const uint64_t guid = object->m_obj->m_guid.m_guid;
+        const int typeId = go->m_gameObject->m_typeID;
+        if (typeId != 11 && typeId != 15) {
+            dbg.Ship(guid, typeId, "not a transport type", 0, 0, 0, 0, 0, 0);
             continue;
         }
         const auto* entity = reinterpret_cast<const CMapBaseObj*>(static_cast<const CGGameObject_C_Type_WorldObj*>(go->m_typeData)->m_worldObject);
         if (!entity || !(entity->m_type & 0x8)) {
+            dbg.Ship(guid, typeId, entity ? "not a WMO" : "no world object", 0, 0, 0, 0, 0, 0);
             continue;                                  // WMO only (M2 lifts skipped)
         }
         const auto* def = reinterpret_cast<const CMapObjDef*>(entity);
         const CMapObj* root = def->m_owner;
         if (!root || !root->m_isGroupLoaded) {
+            dbg.Ship(guid, typeId, "WMO not loaded", 0, 0, 0, 0, 0, 0);
             continue;
         }
         const float* m = reinterpret_cast<const float*>(&def->m_mat);
         const CAaBox& box = root->m_bbox;
 
-        const uint64_t guid = object->m_obj->m_guid.m_guid;
         auto it = std::find_if(s_hullTracks.begin(), s_hullTracks.end(), [guid](const HullTrack& t) { return t.guid == guid; });
         if (it == s_hullTracks.end()) {
             s_hullTracks.push_back({ guid, m[12], m[13], seconds, seconds, 0.0f });
@@ -687,38 +731,57 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
             it->y = m[13];
             it->at = seconds;
         }
-        if (it->speedShare < kHullDockedShare || count + kHullSlices > capacity) {
+        const float speed = it->speedShare * kHullFullSpeed;
+        if (it->speedShare < kHullDockedShare) {
+            dbg.Ship(guid, typeId, "docked (too slow)", speed, 0, 0, 0, 0, 0);
             continue;
         }
         const float reach = kWaterRippleTexels * kWaterRippleTexelYards * 0.5f + std::max(box.t.x - box.b.x, box.t.y - box.b.y);
         if (std::fabs(m[12] - centre[0]) > reach || std::fabs(m[13] - centre[1]) > reach) {
+            dbg.Ship(guid, typeId, "out of the ripple window", speed, 0, 0, 0, 0, 0);
             continue;
         }
-        // waterline: box bottom under a liquid surface, box top above it
+        if (count + kHullSlices > capacity) {
+            dbg.Ship(guid, typeId, "over the ship cap", speed, 0, 0, 0, 0, 0);
+            continue;
+        }
+        // waterline: box bottom under a liquid surface, box top above it. Terrain liquid only: the WMO query
+        // (CMap::QueryLiquidStatusMapObjsExt) finds the ship itself first, and a ship group without MLIQ reads as
+        // WMO water with no surface (CMapObjGroup::QueryLiquid level FLT_MAX), which failed the top test every time.
         const float cx = 0.5f * (box.b.x + box.t.x);
         const float cy = 0.5f * (box.b.y + box.t.y);
         C3Vector probe(cx * m[0] + cy * m[4] + box.b.z * m[8] + m[12], cx * m[1] + cy * m[5] + box.b.z * m[9] + m[13],
                        cx * m[2] + cy * m[6] + box.b.z * m[10] + m[14]);
         int32_t type = 0;
         float level = 0.0f;
-        if (!World::QueryLiquidStatus(&probe, &type, &level) || level > probe.z + (box.t.z - box.b.z) * m[10]) {
+        const bool hit = CMap::QueryLiquidTerrain(&probe, &type, &level, 0);
+        if (!hit || level > probe.z + (box.t.z - box.b.z) * m[10]) {
+            dbg.Ship(guid, typeId, hit ? "liquid over the ship top" : "keel not under terrain liquid (airborne, or no ADT water here)", speed, hit, level, probe.z, 0, 0);
             continue;
         }
         const float* w2l = reinterpret_cast<const float*>(&def->m_invMat);
         const float zw = probe.x * w2l[2] + probe.y * w2l[6] + level * w2l[10] + w2l[14];
         const HullProfile* p = HullProfileFor(root, zw);
         if (!p) {
+            dbg.Ship(guid, typeId, "no waterline cut (groups loading or no triangles)", speed, hit, level, probe.z, 0, 0);
             continue;                                  // groups still loading (wxl-water's box hexagon fallback skipped)
         }
-        const float amplitude = kFullyImmersedFootprintLevel * kHullStrength * it->speedShare;
+        const float amplitude = kFullyImmersedFootprintLevel * kHullStrength * it->speedShare * strength;
         const float w = (p->x1 - p->x0) / static_cast<float>(kHullSlices);
+        const uint32_t first = count;
+        int slices = 0;
         for (int i = 0; i < kHullSlices; ++i) {
             if (p->hb[i] > 0.0f) {
                 // ponytail: a capsule per slice overshoots a sharply tapering bow by about one half-beam; a polygon
                 // fill in the step shader would match wxl-water exactly if that shows.
                 EmitHullSlice(m, p->x0 + w * i, p->x0 + w * (i + 1), p->hb[i], amplitude, out[count++]);
+                ++slices;
             }
         }
+        dbg.Ship(guid, typeId, "stamped", speed, hit, level, probe.z, slices, count - first);
+    }
+    if (dbg.on) {
+        WakeDebugPrint("wake: %u transports found, %u stamps this frame (ripple window %.0f yd round the camera)", found, count, kWaterRippleTexels * kWaterRippleTexelYards);
     }
     s_hullTracks.erase(std::remove_if(s_hullTracks.begin(), s_hullTracks.end(), [seconds](const HullTrack& t) { return seconds - t.seen > kStaleHullSeconds || t.seen > seconds; }), s_hullTracks.end());
     return count;

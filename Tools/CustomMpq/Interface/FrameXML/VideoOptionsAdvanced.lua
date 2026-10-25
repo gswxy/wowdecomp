@@ -54,6 +54,7 @@ local PAGES = {
 	  { "waterCataRipples", "check", "Cataclysm ripples", "Cataclysm water style: rings and wakes where characters move through or jump into water." },
 	  { "waterRainRipples", "slider", "Rain ripples", "Rings where raindrops land on water, in either water style. 0 turns them off.", 0, 1, 0.05 },
 	  { "waterSnowRipples", "slider", "Snow ripples", "Faint dimples where snow lands on water. 0 turns them off.", 0, 1, 0.05 },
+	  { "waterShipWakes", "slider", "Ship wakes", "Wakes beside and behind moving ships and boats, in either water style. 0 turns them off.", 0, 1, 0.05 },
 	  { "waterCataReflection", "drop", "Cataclysm reflections", "Cataclysm water style: what the water mirrors. Each step costs more frame time.",
 	    { { "0", "Screen only" }, { "1", "Sky" }, { "2", "Sky and terrain" }, { "3", "Sky, terrain and buildings" } } },
 	  { "waterCataReflScale", "slider", "Reflection resolution", "Cataclysm water style: the mirror image's size against the screen. Lower is faster and blurrier.", 0.25, 1, 0.05 },

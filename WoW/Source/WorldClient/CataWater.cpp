@@ -402,6 +402,8 @@ void RegisterCVars() {
     // Read by the shared ripple sim (VolumetricFogWaterRipples.cpp TakeDrops), both water styles.
     CVar::Register("waterRainRipples", "Ripples where rain lands on water, 0..1 (0 = off; both water styles, with their ripples on)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("waterSnowRipples", "Faint dimples where snow lands on water, 0..1 (0 = off)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("waterShipWakes", "Wakes behind moving ships (transport WMOs in water), 0..1 (0 = off; both water styles, with their ripples on)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("waterWakeDebug", "1 = once a second, print to the console why each transport does or does not leave a wake", 0, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
 bool Arm(Liquid::CInstance** instances, uint32_t count) {

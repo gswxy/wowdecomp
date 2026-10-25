@@ -59,9 +59,9 @@ PassFogCombine::~PassFogCombine() {
 // VERIFY: 874a5f41 manual
 // OFFSET: 0x007E86A0
 PassDeath::PassDeath(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, EGxBlend blend, bool unk) : FFX::Pass(inputs, count, output, blend, unk) {
-    this->m_useRect = 0;
-    this->m_shaders[0] = nullptr;
-    this->m_shaders[1] = nullptr;
+    this->m_useRect = PassDeath::SHADER_SELECTION::PRIMARY_VARIANT;
+    this->m_shaders[PassDeath::SHADER_SELECTION::PRIMARY_VARIANT] = nullptr;
+    this->m_shaders[PassDeath::SHADER_SELECTION::RECTANGLE_PERMUTATION] = nullptr;
 
     if (g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 8 || g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 9 || g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 10) {
         g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", FFX::s_useRECT ? "FFXDeath_nvts_rect" : "FFXDeath_nvts_2d", 1);
@@ -69,10 +69,10 @@ PassDeath::PassDeath(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, EGxBle
     }
 
     if (FFX::s_useRECT) {
-        this->m_useRect = 1;
+        this->m_useRect = PassDeath::SHADER_SELECTION::RECTANGLE_PERMUTATION;
     }
 
-    g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", "FFXDeath", 2);
+    g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", "FFXDeath", PassDeath::SHADER_SELECTION::VARIANT_CAPACITY);
 }
 
 // VERIFY: 5970ea32 manual

@@ -29,6 +29,9 @@
 #include <string>
 #include <unordered_map>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/BLPFile/blp.h"
+#include "WoW/Source/WorldClient/TerrainHeightGen.h"
+#include <vector>
 
 // TERRAINPOM (not in 12340): height blend and parallax on the terrain (Tools/VulkanShaders/bls/terrainpom.py)
 float CMapRenderChunk::s_heightBlend = 1.0f;
@@ -37,12 +40,93 @@ float CMapRenderChunk::s_parallaxScale = 0.08f;
 
 namespace {
 
-// the height map beside a tileset texture, "x.blp" -> "x_h.blp" (height in alpha; Data/patch-T.MPQ has one for every
-// stock tileset), or nullptr. ponytail: cached by name for the session and never freed: one small texture per tileset seen
-CTexture* TerrainHeightTexture(const char* name) {
+// a generated height map's texels, its whole box-filtered mip chain (ARGB8888, height in every channel)
+struct TerrainHeightChain {
+    std::vector<uint32_t> texels;
+    std::vector<size_t> offsets;
+};
+
+void TerrainHeightChainCallback(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels) {
+    TerrainHeightChain* chain = static_cast<TerrainHeightChain*>(userArg);
+
+    if (command == GxTex_Latch && level < chain->offsets.size()) {
+        texelStrideInBytes = 4 * width;
+        texels = &chain->texels[chain->offsets[level]];
+    }
+}
+
+// the height map made from the diffuse file `source` as the client reads it (SFile: the highest priority archive
+// holding it wins, so a texture pack's replacement), or nullptr when it cannot be decoded
+CTexture* TerrainHeightGenerate(const char* source, const char* name) {
+    CBLPFile blp;
+
+    if (!blp.Open(source, 1)) {
+        return nullptr;
+    }
+
+    uint8_t* bits = nullptr;
+    uint32_t stride = 0;
+    uint32_t side = blp.Width(0);
+    std::vector<float> heights;
+    uint32_t outSide = 0;
+    TerrainHeightGen::Kind kind = TerrainHeightGen::Kind_Failed;
+
+    // B G R A rows of 4 * side bytes, as TreeLeaves reads them
+    if (side == blp.Height(0) && blp.Lock(PIXEL_ARGB8888, 0, bits, stride) && bits) {
+        kind = TerrainHeightGen::Generate(bits, side, name, heights, outSide);
+    }
+
+    blp.Unlock(0);
+    blp.Close();
+
+    if (kind == TerrainHeightGen::Kind_Failed) {
+        return nullptr;
+    }
+
+    // ponytail: never freed, like the cache that holds its texture
+    TerrainHeightChain* chain = new TerrainHeightChain;
+    std::vector<float> level(heights);
+
+    for (uint32_t size = outSide;; size >>= 1) {
+        chain->offsets.push_back(chain->texels.size());
+
+        for (float h : level) {
+            uint32_t v = static_cast<uint32_t>(std::min(std::max(std::lround(h * 255.0f), 0L), 255L));
+            chain->texels.push_back(v * 0x01010101u);
+        }
+
+        if (size == 1) {
+            break;
+        }
+
+        // box mips, so the last one is the map's mean (the polygon's height in terrainpom.py)
+        std::vector<float> next((size / 2) * (size / 2));
+
+        for (uint32_t y = 0; y < size / 2; y++) {
+            for (uint32_t x = 0; x < size / 2; x++) {
+                const float* row = &level[(2 * y) * size + 2 * x];
+                next[y * (size / 2) + x] = (row[0] + row[1] + row[size] + row[size + 1]) * 0.25f;
+            }
+        }
+
+        level.swap(next);
+    }
+
+    std::string texName = std::string(name) + " (height)";
+    return TextureCreate(outSide, outSide, GxTex_Argb8888, GxTex_Argb8888, CGxTexFlags(GxTex_LinearMipLinear, 1, 1, 0, 0, 0, 1), chain, TerrainHeightChainCallback, texName.c_str(), 0);
+}
+
+// the parallax height map of a tileset layer (height in alpha), made at first use from the diffuse the client
+// loaded (TerrainHeightGen), so it follows whatever archive won; failing that the baked "x_h.blp" beside it
+// (Data/patch-T.MPQ, made from the stock textures), else nullptr. Only D3D11 / Vulkan draw it.
+// ponytail: generated on the main thread, 50-90 ms per new 256 px tileset (14 at 128; -O2 on a busy 5825U), a hitch when new
+// tiles stream in; move Generate to a worker if that shows. Cached by name for the session and never freed
+CTexture* TerrainHeightTexture(const char* name, CTexture* diffuse) {
     static std::unordered_map<std::string, CTexture*> s_cache;
 
-    if (!name || !*name) {
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+
+    if (!name || !*name || (api != GxApi_D3d11 && api != GxApi_Vulkan)) {
         return nullptr;
     }
 
@@ -58,10 +142,18 @@ CTexture* TerrainHeightTexture(const char* name) {
         return it->second;
     }
 
-    CTexture* texture = nullptr;
+    // the file the layer actually drew from (x_s.blp with specular terrain on, same RGB as x.blp); CTexture keeps
+    // its name without the extension (LoadBlpWithAlias puts ".blp" back to read it)
+    std::string source = diffuse && diffuse->m_filename[0] ? std::string(diffuse->m_filename) : key;
+
+    if (source.find('.', source.find_last_of("\\/") + 1) == std::string::npos) {
+        source += ".blp";
+    }
+
+    CTexture* texture = TerrainHeightGenerate(source.c_str(), key.c_str());
     size_t dot = key.rfind('.');
 
-    if (dot != std::string::npos) {
+    if (!texture && dot != std::string::npos) {
         std::string path = key.substr(0, dot) + "_h.blp";
 
         if (SFile::FileExistsInArchives(path.c_str())) {
@@ -458,7 +550,7 @@ void CMapRenderChunk::CreateLayer(CMapArea* area, SMLayer* layer, int32_t checkD
     }
 
     renderLayer->m_texture = areaTexture->m_texture;
-    renderLayer->m_heightTexture = TerrainHeightTexture(areaTexture->m_textureName);
+    renderLayer->m_heightTexture = TerrainHeightTexture(areaTexture->m_textureName, areaTexture->m_texture);
     renderLayer->m_textureId = layer->m_textureId;
     renderLayer->m_layerTexture = nullptr;
     renderLayer->m_owner = this;

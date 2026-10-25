@@ -165,7 +165,7 @@ static uint32_t s_lastSidnColor;
 static uint32_t s_emissiveAmbient;
 
 // STATIC: 0x00CFBEAC
-int32_t CMapObj::s_lightingMode;
+CMapObj::LIGHTING_MODE CMapObj::s_lightingMode;
 
 // STATIC: 0x00D1BEE0
 static uint32_t s_smolVertCacheSize;
@@ -596,7 +596,7 @@ void CMapObj::SelectWorldShaders() {
         shadow = 2;
     }
 
-    uint32_t vertexPermute = (CMapObj::s_lightingMode != 0) + 2 * (CWorldScene::s_fogPermute + 15 * shadow);
+    uint32_t vertexPermute = (CMapObj::s_lightingMode != CMapObj::LIGHTING_MODE::UNLIT) + 2 * (CWorldScene::s_fogPermute + 15 * shadow);
     CShaderEffect::SetShaders(vertexPermute, CShaderEffect::SelectShadowShader());
 }
 
@@ -714,23 +714,23 @@ void CMapObjGroup::SetLighting(CMapObjGroup* group, uint32_t mode) {
         return;
     }
 
-    CMapObj::s_lightingMode = mode;
+    CMapObj::s_lightingMode = static_cast<CMapObj::LIGHTING_MODE>(mode);
     DayNight::DNInfo* info = DayNight::GetInfo();
     C3Vector ambient(0.0f, 0.0f, 0.0f);
     C3Vector diffuse(0.0f, 0.0f, 0.0f);
 
     switch (mode) {
-        case 1:
+        case CMapObj::LIGHTING_MODE::DAY_NIGHT:
             diffuse = C3Vector(info->m_light1.m_diffuse.r * 0.0039215689f, info->m_light1.m_diffuse.g * 0.0039215689f, info->m_light1.m_diffuse.b * 0.0039215689f);
             ambient = C3Vector(info->m_light1.m_ambient.r * 0.0039215689f, info->m_light1.m_ambient.g * 0.0039215689f, 0.0039215689f * info->m_light1.m_ambient.b);
             break;
 
-        case 2:
+        case CMapObj::LIGHTING_MODE::DAY_NIGHT_MID:
             diffuse = C3Vector(info->m_light1.m_mid0.r * 0.0039215689f, info->m_light1.m_mid0.g * 0.0039215689f, info->m_light1.m_mid0.b * 0.0039215689f);
             ambient = C3Vector(info->m_light1.m_mid1.r * 0.0039215689f, info->m_light1.m_mid1.g * 0.0039215689f, 0.0039215689f * info->m_light1.m_mid1.b);
             break;
 
-        case 3: {
+        case CMapObj::LIGHTING_MODE::PARENT_COLOR: {
             CImVector& color = group->m_parent->m_argbColor;
             ambient = C3Vector(color.r * 0.0039215689f, color.g * 0.0039215689f, 0.0039215689f * color.b);
             break;
@@ -924,7 +924,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
     g_theGxDevicePtr->RsPush();
 
     s_fogMode = -1;
-    CMapObj::s_lightingMode = -1;
+    CMapObj::s_lightingMode = CMapObj::LIGHTING_MODE::CACHE_INVALID;
     s_lastSidnColor = 0xFFFFFFFF;
     s_shadowInterior = -1;
 
@@ -1014,9 +1014,9 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
                 SetShaderFogFromDayNight(2);
             } else {
                 if (material.m_flags & 0x20) {
-                    CMapObjGroup::SetLighting(group, 2);
+                    CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::DAY_NIGHT_MID);
                 } else {
-                    CMapObjGroup::SetLighting(group, 3);
+                    CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::PARENT_COLOR);
                 }
 
                 if (s_shadowInterior != 1) {
@@ -1049,7 +1049,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
         }
 
         if (CShaderEffect::s_enableShaders) {
-            CMapObjGroup::SetLighting(group, (material.m_flags & 0x1) ? 0 : ((material.m_flags & 0x20) != 0) + 1);
+            CMapObjGroup::SetLighting(group, (material.m_flags & 0x1) ? CMapObj::LIGHTING_MODE::UNLIT : ((material.m_flags & 0x20) != 0) + 1);
             SetShaderFogFromDayNight(~material.m_flags & 0x2);
             GxRsSet(GxRs_BlendingMode, static_cast<int32_t>(9));
             CShaderEffect::SetAlphaRefDefault();
@@ -1062,7 +1062,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
             draw.m_maxIndex = batch.m_vertexEnd;
             g_theGxDevicePtr->Draw(&draw, 1);
 
-            CMapObjGroup::SetLighting(group, 3);
+            CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::PARENT_COLOR);
             SetShaderFogFromDayNight((material.m_flags & 0x2) == 0 ? fogMode : 0);
             if (s_shadowInterior != 1) {
                 s_shadowInterior = 1;
@@ -1085,7 +1085,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
 
         GxRsSet(GxRs_ColorMaterial, static_cast<int32_t>(0));
         group->SetTransparencyVB();
-        CMapObjGroup::SetLighting(group, (material.m_flags & 0x1) ? 0 : ((material.m_flags & 0x20) != 0) + 1);
+        CMapObjGroup::SetLighting(group, (material.m_flags & 0x1) ? CMapObj::LIGHTING_MODE::UNLIT : ((material.m_flags & 0x20) != 0) + 1);
         SetShaderFogFromDayNight((material.m_flags & 0x2) ? 0 : 6);
         GxRsSet(GxRs_BlendingMode, static_cast<int32_t>(9));
         CShaderEffect::SetAlphaRefDefault();
@@ -1097,7 +1097,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
         draw.m_maxIndex = batch.m_vertexEnd;
         g_theGxDevicePtr->Draw(&draw, 1);
 
-        CMapObjGroup::SetLighting(group, 3);
+        CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::PARENT_COLOR);
         SetShaderFogFromDayNight((material.m_flags & 0x2) ? 0 : (fogMode | 4));
         GxRsSet(GxRs_BlendingMode, static_cast<int32_t>(7));
         CShaderEffect::SetAlphaRefDefault();
@@ -1110,7 +1110,7 @@ void CMapObj::UnifiedRender(CMapObjGroup* group, uint32_t index) {
         g_theGxDevicePtr->Draw(&draw2, 1);
 
         group->SetVertexVB();
-        CMapObjGroup::SetLighting(group, 0);
+        CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::UNLIT);
         SetShaderFogFromDayNight((material.m_flags & 0x2) == 0 ? fogMode : 0);
         GxRsSet(GxRs_BlendingMode, static_cast<int32_t>(10));
         CShaderEffect::SetAlphaRefDefault();
@@ -1354,7 +1354,7 @@ void CMapObj::ExteriorRender(CMapObjGroup* group, uint32_t index) {
     g_theGxDevicePtr->RsPush();
 
     s_fogMode = -1;
-    CMapObj::s_lightingMode = -1;
+    CMapObj::s_lightingMode = CMapObj::LIGHTING_MODE::CACHE_INVALID;
     s_lastSidnColor = 0xFFFFFFFF;
     s_shadowInterior = -1;
 
@@ -1473,7 +1473,7 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
     g_theGxDevicePtr->RsPush();
 
     s_fogMode = -1;
-    CMapObj::s_lightingMode = -1;
+    CMapObj::s_lightingMode = CMapObj::LIGHTING_MODE::CACHE_INVALID;
     s_lastSidnColor = 0xFFFFFFFF;
     s_shadowInterior = -1;
 
@@ -1552,7 +1552,7 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
             SetShaderFogFromDayNight((material.m_flags & 0x2) == 0 ? fogMode : 0);
 
             if (interiorBatch) {
-                CMapObjGroup::SetLighting(group, 0);
+                CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::UNLIT);
             } else {
                 CMapObjGroup::SetLighting(group, ((material.m_flags & 0x20) != 0) + 1);
             }
@@ -1595,7 +1595,7 @@ void CMapObj::InteriorRender(CMapObjGroup* group, uint32_t index) {
         draw.m_maxIndex = batch.m_vertexEnd;
         g_theGxDevicePtr->Draw(&draw, 1);
 
-        CMapObjGroup::SetLighting(group, 0);
+        CMapObjGroup::SetLighting(group, CMapObj::LIGHTING_MODE::UNLIT);
         SetShaderFogFromDayNight((material.m_flags & 0x2) == 0 ? fogMode : 0);
         if (s_shadowInterior != 1) {
             s_shadowInterior = 1;

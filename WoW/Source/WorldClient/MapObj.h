@@ -54,6 +54,14 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum LIGHTING_MODE : int32_t {
+        CACHE_INVALID = -1,
+        UNLIT = 0,
+        DAY_NIGHT = 1,
+        DAY_NIGHT_MID = 2,
+        PARENT_COLOR = 3,
+    };
+
     enum RENDER_MODE : int32_t {
         COLLISION_FACES = 0,
         DETAIL_FACES = 1,
@@ -82,7 +90,7 @@ class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> 
     static void (CMapObj::*s_renderGroupInterior)(CMapObjGroup* group, uint32_t index);
     static CShaderEffect* s_classicShaders[7];
     static CShaderEffect* s_unifiedShaders[7];
-    static int32_t s_lightingMode;
+    static LIGHTING_MODE s_lightingMode;
     static uint32_t s_maxLiquidQueryDepth;
 
     static void ClearCache(int32_t unused_a1);

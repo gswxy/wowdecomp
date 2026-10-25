@@ -121,16 +121,22 @@ float ShallowTileWeight(float inverseTileSize, float columnDepth)
 }
 
 // coa's ripples: s12 = the Gr1616F ripple map (height, previous height) around the camera target, c65-c67 its window.
-float RippleHeight(float2 uv)
+// x: the close field (units, rain); y: the wide ship-wake level the step adds in as b (VFogRippleStep c98).
+float2 RippleHeight(float2 uv)
 {
-    float2 state = tex2Dlod(sRipples, float4(uv, 0, 0)).rg;
-    return lerp(state.g, state.r, RippleWeight());
+    float3 state = tex2Dlod(sRipples, float4(uv, 0, 0)).rgb;
+    return float2(lerp(state.g, state.r, RippleWeight()), state.b);
+}
+
+float RippleWindow(float2 uv)
+{
+    float2 fromCentre = abs(uv - 0.5) * RippleExtent();
+    return saturate((RippleFadeEnd() - max(fromCentre.x, fromCentre.y)) * RippleInverseFadeWidth());
 }
 
 float RippleCoverage(WaterPixel w, float2 uv)
 {
-    float2 fromCentre = abs(uv - 0.5) * RippleExtent();
-    float window = saturate((RippleFadeEnd() - max(fromCentre.x, fromCentre.y)) * RippleInverseFadeWidth());
+    float window = RippleWindow(uv);
     float footprintTexels = max(length(w.footprintX), length(w.footprintY)) / RippleTexelYards();
     return window * saturate(1 - (footprintTexels - kRippleFullDetailTexels) / kRippleDetailFadeTexels);
 }
@@ -140,14 +146,23 @@ RippleSample SampleRipples(WaterPixel w)
     RippleSample ripples = (RippleSample)0;
     float2 uv = (w.position.xy - RippleOrigin()) * RippleInverseExtent();
     ripples.coverage = RippleGain() > 0 ? RippleCoverage(w, uv) : 0;
-    [branch] if (ripples.coverage > 0)
+    // The wide (ship) part is coarse: only the window fade, not the close detail's footprint fade.
+    float wideCoverage = RippleGain() > 0 ? RippleWindow(uv) : 0;
+    [branch] if (wideCoverage > 0)
     {
         float step = RippleTexelUv();
-        ripples.height = RippleHeight(uv);
-        float dx = RippleHeight(uv + float2(step, 0)) - ripples.height;
-        float dy = RippleHeight(uv + float2(0, step)) - ripples.height;
-        float2 gradient = float2(dx, dy) * rsqrt((1 + dx * dx) * (1 + dy * dy));
-        ripples.slope = gradient * kRippleSlopeScale * RippleGain() * ripples.coverage;
+        float2 h0 = RippleHeight(uv);
+        float2 dx = RippleHeight(uv + float2(step, 0)) - h0;
+        float2 dy = RippleHeight(uv + float2(0, step)) - h0;
+        // the wide part is 0 on a two-channel map (b reads 1 everywhere: no slope)
+        dx = float2(dx.x * ripples.coverage, dx.y * wideCoverage);
+        dy = float2(dy.x * ripples.coverage, dy.y * wideCoverage);
+        float gx = dx.x + dx.y;
+        float gy = dy.x + dy.y;
+        ripples.height = h0.x * ripples.coverage + h0.y * wideCoverage;
+        float2 gradient = float2(gx, gy) * rsqrt((1 + gx * gx) * (1 + gy * gy));
+        ripples.slope = gradient * kRippleSlopeScale * RippleGain();
+        ripples.coverage = max(ripples.coverage, wideCoverage);
     }
     return ripples;
 }

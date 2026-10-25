@@ -6,8 +6,10 @@ float4 cRippleStep : register(c0);
 float4 cRippleSegments[48] : register(c1);
 float4 cRippleShapes[48] : register(c49);
 float4 cRippleKeep : register(c97);
+float4 cRippleWide : register(c98);     // new: wide (ship) level at s1: uv of texel (0,0), uv per texel, gain; w = 0 off
 
 sampler2D sRippleState : register(s0);
+sampler2D sRippleWide : register(s1);   // new: wxl-water's level 1 (0.5 yd, 20 Hz) the ships are drawn into
 
 static const int kMaxDisturbances = 48;
 static const float kDamping = 0.97;
@@ -67,20 +69,22 @@ float Footprint(float distance, float inverseRadius)
     return 1 - smoothstep(kFootprintCore, kFootprintRim, distance * inverseRadius);
 }
 
-// New: shape.w > 0 is a ship slice (wxl-water SplatHulls): weight 1 inside the rectangle shape.w texels either side of
-// segment from -> to, 0 outside, the far end open so neighbouring slices share their edge without overlap.
-float SlabWeight(float2 p, float2 from, float2 to, float halfWidth)
+// New: shape.w > 0 is a piece of a ship's waterline polygon (wxl-water SplatHulls): weight 1 inside the trapezoid
+// shape.w texels either side of from, shape.x either side of to, 0 outside; the far end open so neighbouring pieces
+// share their edge without overlap.
+float SlabWeight(float2 p, float2 from, float2 to, float halfFrom, float halfTo)
 {
     float2 along = to - from;
     float lengthSquared = dot(along, along);
     float t = lengthSquared > 0 ? dot(p - from, along) / lengthSquared : -1;
     float2 side = p - from - along * t;
+    float halfWidth = lerp(halfFrom, halfTo, saturate(t));
     return (t >= 0 && t < 1 && dot(side, side) <= halfWidth * halfWidth) ? 1 : 0;
 }
 
 float2 Disturb(float2 state, float2 texelCentre, float4 segment, float4 shape)
 {
-    float weight = shape.w > 0 ? SlabWeight(texelCentre, segment.xy, segment.zw, shape.w)
+    float weight = shape.w > 0 ? SlabWeight(texelCentre, segment.xy, segment.zw, shape.w, shape.x)
                                : Footprint(SegmentDistance(texelCentre, segment.xy, segment.zw), shape.x);
     float held = weight * shape.z;
     float height = lerp(state.x, shape.y, held) + shape.y * (weight - held);
@@ -98,5 +102,9 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         [branch] if (i < DisturbanceCount())
             state = Disturb(state, texel + 0.5, cRippleSegments[i], cRippleShapes[i]);
     }
-    return float4(state, 0, 0);
+    // b: the wide level's height here, read by the water shaders' ripple lookups (lerp(g, r) + b)
+    float wide = 0;
+    [branch] if (cRippleWide.w > 0)
+        wide = tex2Dlod(sRippleWide, float4(cRippleWide.xy + texel * cRippleWide.z, 0, 0)).r * cRippleWide.w;
+    return float4(state, wide, 0);
 }

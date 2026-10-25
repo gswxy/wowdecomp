@@ -89,6 +89,7 @@ constexpr uint32_t kStepRegister = 0;
 constexpr uint32_t kFirstSegmentRegister = 1;
 constexpr uint32_t kFirstShapeRegister = kFirstSegmentRegister + kMaxWaterRippleDisturbances;
 constexpr uint32_t kKeepRegister = 97;      // new: 0 = clear (VFogRippleStep.hlsl)
+constexpr uint32_t kWideRegister = 98;      // new: the wide (ship) level added into the close map, s1 (BindWide)
 
 constexpr double kRippleGapSeconds = 1.0;
 constexpr float kRippleEdgeRampPerExtent = 1.0f / 16.0f;
@@ -208,7 +209,9 @@ struct WaterRippleDisturbance {
     float radius = 0.0f;
     float amplitude = 0.0f;
     bool held = false;
-    bool slab = false;      // a ship slice: a hard-edged rectangle radius wide either side of from -> to (VFogRippleStep)
+    bool slab = false;      // a ship slice: a hard-edged trapezoid, beamFrom / beamTo either side of from -> to
+    float beamFrom = 0.0f;
+    float beamTo = 0.0f;
 };
 
 struct WaterEntryState {
@@ -507,20 +510,28 @@ private:
 // reduced to 12 half-beams along local x, cut once per root. As wxl-water SplatHulls (Cata PerturbDisplMapMesh), the
 // whole waterline area is pressed into the height additively every step (not held): a pressure that swings with one
 // shared 1 Hz sine, so the hull's long sides pump rings out all the time and a moving hull trails them as its wake.
-// Each slice is one hard-edged rectangle (half-beam either side of its length along the keel), so the 12 tile the
-// section without overlap; wxl-water draws the polygon through the slice midpoints. Strength as wxl-water:
-// 0.8 * min(speed / 10 yd/s, 1) times its wide level's splat 0.25 per 50 ms step, none when docked (under 0.5 yd/s).
-// The splat is rescaled for this sim: 30 steps a second instead of 20, and this field's heights run about 3x Cata's
-// (a swimmer here holds 3, in wxl-water it pushes 1).
+// As wxl-water's polygon through the slice midpoints, drawn as 11 hard-edged trapezoids between them (no overlap).
+// Strength as wxl-water: 0.8 * min(speed / 10 yd/s, 1) times its wide level's splat 0.25 per 50 ms step, none when
+// docked (under 0.5 yd/s); times 3, this field's heights running about 3x Cata's (a swimmer here holds 3, in
+// wxl-water it pushes 1).
 constexpr int kHullSlices = 12;
-constexpr uint32_t kMaxHullDisturbances = 2 * kHullSlices;   // two ships; the rest of the 48 stay for units
+constexpr uint32_t kMaxHullDisturbances = 4 * (kHullSlices - 1);   // four ships, 11 trapezoids each, on the wide level
 constexpr double kHullSpeedSeconds = 0.1;
 constexpr double kStaleHullSeconds = 2.0;
 constexpr float kHullFullSpeed = 10.0f;
 constexpr float kHullStrength = 0.8f;
 constexpr float kHullDockedShare = 0.05f;
 constexpr float kFootprintHalfWeight = 0.5f;                 // VFogRippleStep Footprint() is 0.5 at about half the radius
-constexpr float kHullSplat = 0.25f * 3.0f * (20.0f / 30.0f);  // wxl-water level 1 splat, rescaled as above
+constexpr float kHullSplat = 0.25f * 3.0f;                    // wxl-water level 1 splat, in this field's heights
+// wxl-water's level 1 (Cata's wide displacement map): 0.5 yd texels, a 50 ms step, 1024^2 = 512 yd. The ships are
+// drawn there and nowhere else: at this sim's 0.707 texel a step, waves run 7 yd/s there against 2.7 yd/s on the
+// 0.125 yd / 30 Hz close map, where a ship at 10+ yd/s outran every ring it made and the damping (0.97 a step) ate
+// them within a second, so only starting off and hard turns (slow hull edges) showed. The close map's step adds the
+// wide height in (VFogRippleStep c98, s1), so the water shaders still read one map.
+constexpr float kWideTexelYards = 0.5f;
+constexpr double kWideStepsPerSecond = 20.0;
+constexpr int kWideTexels = 1024;
+constexpr int kWideTexelsLow = 512;
 constexpr double kHullPulseSeconds = 1.0;                     // wxl-water: sin(2 pi ((now - t0) % 1000 ms) / 1000)
 
 struct HullProfile {
@@ -646,13 +657,17 @@ struct HullTrack {
 
 std::vector<HullTrack> s_hullTracks;
 
-void EmitHullSlice(const float* m, float lx0, float lx1, float halfBeam, float amplitude, WaterRippleDisturbance& d) {
+// One piece of wxl-water's waterline polygon: the trapezoid between two slice midpoints along the keel, half-beam
+// beamFrom at the first and beamTo at the second (VFogRippleStep slab: c49+.w and .x).
+void EmitHullSlice(const float* m, float lx0, float lx1, float beamFrom, float beamTo, float amplitude, WaterRippleDisturbance& d) {
     d = {};
     d.from[0] = lx0 * m[0] + m[12];
     d.from[1] = lx0 * m[1] + m[13];
     d.to[0] = lx1 * m[0] + m[12];
     d.to[1] = lx1 * m[1] + m[13];
-    d.radius = halfBeam;
+    d.radius = std::max(beamFrom, beamTo);
+    d.beamFrom = beamFrom;
+    d.beamTo = beamTo;
     d.amplitude = amplitude;
     d.slab = true;
 }
@@ -693,7 +708,7 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
     if (dbg.on) {
         s_lastDebug = seconds;
     }
-    const float strength = s_strength ? std::clamp(s_strength->m_floatValue, 0.0f, 1.0f) : 1.0f;
+    const float strength = s_strength ? std::clamp(s_strength->m_floatValue, 0.0f, 2.0f) : 1.0f;
     uint32_t count = 0;
     uint32_t found = 0;
     ObjectMgr* manager = ClntObjMgrGetCurrent();
@@ -749,12 +764,12 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
             dbg.Ship(guid, typeId, "docked (too slow)", speed, 0, 0, 0, 0, 0);
             continue;
         }
-        const float reach = kWaterRippleTexels * kWaterRippleTexelYards * 0.5f + std::max(box.t.x - box.b.x, box.t.y - box.b.y);
+        const float reach = kWideTexels * kWideTexelYards * 0.5f + std::max(box.t.x - box.b.x, box.t.y - box.b.y);
         if (std::fabs(m[12] - centre[0]) > reach || std::fabs(m[13] - centre[1]) > reach) {
             dbg.Ship(guid, typeId, "out of the ripple window", speed, 0, 0, 0, 0, 0);
             continue;
         }
-        if (count + kHullSlices > capacity) {
+        if (count + kHullSlices - 1 > capacity) {
             dbg.Ship(guid, typeId, "over the ship cap", speed, 0, 0, 0, 0, 0);
             continue;
         }
@@ -783,16 +798,16 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
         const float w = (p->x1 - p->x0) / static_cast<float>(kHullSlices);
         const uint32_t first = count;
         int slices = 0;
-        for (int i = 0; i < kHullSlices; ++i) {
-            if (p->hb[i] > 0.0f) {
-                EmitHullSlice(m, p->x0 + w * i, p->x0 + w * (i + 1), p->hb[i], amplitude, out[count++]);
+        for (int i = 0; i + 1 < kHullSlices; ++i) {     // wxl-water HullShape: the polygon through the slice midpoints
+            if (p->hb[i] > 0.0f || p->hb[i + 1] > 0.0f) {
+                EmitHullSlice(m, p->x0 + w * (i + 0.5f), p->x0 + w * (i + 1.5f), p->hb[i], p->hb[i + 1], amplitude, out[count++]);
                 ++slices;
             }
         }
         dbg.Ship(guid, typeId, "stamped", speed, hit, level, probe.z, slices, count - first);
     }
     if (dbg.on) {
-        WakeDebugPrint("wake: %u transports found, %u stamps this frame (ripple window %.0f yd round the camera)", found, count, kWaterRippleTexels * kWaterRippleTexelYards);
+        WakeDebugPrint("wake: %u transports found, %u stamps this frame (ripple window %.0f yd round the camera)", found, count, kWideTexels * kWideTexelYards);
     }
     s_hullTracks.erase(std::remove_if(s_hullTracks.begin(), s_hullTracks.end(), [seconds](const HullTrack& t) { return seconds - t.seen > kStaleHullSeconds || t.seen > seconds; }), s_hullTracks.end());
     return count;
@@ -848,8 +863,10 @@ uint32_t TakeDrops(const float centre[2], WaterRippleDisturbance* out, uint32_t 
 }
 
 // ---- simulation (coa water_ripples.cpp) ----------------------------------------------------------------------------
+// One level of the field. The close level (units, rain) is coa's; the wide one (ships) is wxl-water's level 1.
 struct Ripples {
-    CGxShader* step = nullptr;
+    float yards = kWaterRippleTexelYards;
+    double rate = kWaterRippleStepsPerSecond;
     CGxTex* maps[2] = {};
     int texels = 0;
     int current = 0;
@@ -860,7 +877,14 @@ struct Ripples {
     double lastScheduled = 0.0;
     int64_t stepsDone = 0;
     uint32_t quietSteps = 0;
+    bool wideIn = false;                // close level: its maps are Abgr16 and carry the wide height in b
+};
+
+struct RippleState {
+    CGxShader* step = nullptr;
     bool unsupported = false;
+    Ripples close;
+    Ripples wide = { kWideTexelYards, kWideStepsPerSecond };
 
     WaterContactTracker contacts;
     double lastSeconds = -1.0;          // coa m_lastRippleSeconds
@@ -869,56 +893,70 @@ struct Ripples {
     bool mapsFailed = false;            // the last Prepare could not create the maps: keep the client sprites
 };
 
-Ripples s_ripples;
+RippleState s_ripples;
 
-void Restart() {
-    s_ripples.running = false;
-    s_ripples.mapsCleared = false;
-    s_ripples.quietSteps = 0;
-    s_ripples.current = 0;
+void Restart(Ripples& r) {
+    r.running = false;
+    r.mapsCleared = false;
+    r.quietSteps = 0;
+    r.current = 0;
 }
 
-void DestroyMaps() {
-    for (CGxTex*& map : s_ripples.maps) {
+void DestroyMaps(Ripples& r) {
+    for (CGxTex*& map : r.maps) {
         if (map) {
             GxTexDestroy(map);
             map = nullptr;
         }
     }
-    s_ripples.texels = 0;
-    Restart();
+    r.texels = 0;
+    Restart(r);
 }
 
-bool Prepare(int texels) {
+bool PrepareShader() {
     CGxDevice* device = g_theGxDevicePtr;
     if (s_ripples.unsupported) {
         return false;
     }
-    if (!device->Caps().m_rttFormat[GxTex_Gr1616F]) {
+    if (!device->Caps().m_rttFormat[GxTex_Gr1616F] || !Shader(s_ripples.step, "VFogRippleStep")) {
         s_ripples.unsupported = true;      // coa: "no filterable 16-bit floating-point render targets"
         return false;
     }
-    if (!Shader(s_ripples.step, "VFogRippleStep")) {
-        s_ripples.unsupported = true;
+    return true;
+}
+
+bool Prepare(Ripples& r, int texels, bool wideIn) {
+    CGxDevice* device = g_theGxDevicePtr;
+    if (!PrepareShader()) {
         return false;
     }
-    if (s_ripples.maps[0] && s_ripples.maps[1] && s_ripples.texels == texels) {
-        s_ripples.mapsFailed = false;
+    wideIn = wideIn && device->Caps().m_rttAbgr16161616F;
+    const bool close = &r == &s_ripples.close;
+    if (r.maps[0] && r.maps[1] && r.texels == texels && r.wideIn == wideIn) {
+        if (close) {
+            s_ripples.mapsFailed = false;
+        }
         return true;
     }
-    DestroyMaps();
-    s_ripples.mapsFailed = true;
-    for (CGxTex*& map : s_ripples.maps) {
+    DestroyMaps(r);
+    if (close) {
+        s_ripples.mapsFailed = true;
+    }
+    const EGxTexFormat format = wideIn ? GxTex_Abgr16161616F : GxTex_Gr1616F;
+    for (CGxTex*& map : r.maps) {
         // Clamped and bilinear (coa: point for the step, which reads texel centres only; linear for the shading).
         CGxTexFlags flags(GxTex_Linear, false, false, 0, 0, true, 1, 0, 0, 0);
-        device->TexCreate(GxTex_2d, texels, texels, 0, GxTex_Gr1616F, GxTex_Gr1616F, flags, nullptr, GxTexNullUserFunc, "VFogRipples", map);
+        device->TexCreate(GxTex_2d, texels, texels, 0, format, format, flags, nullptr, GxTexNullUserFunc, "VFogRipples", map);
         if (!map) {
-            DestroyMaps();
+            DestroyMaps(r);
             return false;
         }
     }
-    s_ripples.texels = texels;
-    s_ripples.mapsFailed = false;
+    r.texels = texels;
+    r.wideIn = wideIn;
+    if (close) {
+        s_ripples.mapsFailed = false;
+    }
     return true;
 }
 
@@ -927,33 +965,33 @@ struct Schedule {
     double stepSeconds[kMaxWaterRippleStepsPerFrame] = {};
 };
 
-Schedule ScheduleSteps(double seconds) {
+Schedule ScheduleSteps(Ripples& r, double seconds) {
     Schedule schedule;
-    if (!s_ripples.running || seconds < s_ripples.lastScheduled) {
-        Restart();
-        s_ripples.running = true;
-        s_ripples.epoch = seconds;
-        s_ripples.stepsDone = 0;
-        s_ripples.lastScheduled = seconds;
+    if (!r.running || seconds < r.lastScheduled) {
+        Restart(r);
+        r.running = true;
+        r.epoch = seconds;
+        r.stepsDone = 0;
+        r.lastScheduled = seconds;
         return schedule;
     }
-    s_ripples.lastScheduled = seconds;
-    const int64_t due = static_cast<int64_t>(std::floor((seconds - s_ripples.epoch) * kWaterRippleStepsPerSecond)) - s_ripples.stepsDone;
+    r.lastScheduled = seconds;
+    const int64_t due = static_cast<int64_t>(std::floor((seconds - r.epoch) * r.rate)) - r.stepsDone;
     if (due <= 0) {
         return schedule;
     }
     const int64_t dropped = std::max<int64_t>(0, due - kMaxWaterRippleStepsPerFrame);
-    s_ripples.stepsDone += dropped;
+    r.stepsDone += dropped;
     schedule.steps = static_cast<int>(due - dropped);
     for (int i = 0; i < schedule.steps; ++i) {
-        schedule.stepSeconds[i] = s_ripples.epoch + static_cast<double>(s_ripples.stepsDone + 1 + i) / kWaterRippleStepsPerSecond;
+        schedule.stepSeconds[i] = r.epoch + static_cast<double>(r.stepsDone + 1 + i) / r.rate;
     }
-    s_ripples.stepsDone += schedule.steps;
+    r.stepsDone += schedule.steps;
     return schedule;
 }
 
-int WindowOrigin(float centre, int texels) {
-    return static_cast<int>(std::floor(static_cast<double>(centre) / kWaterRippleTexelYards)) - texels / 2;
+int WindowOrigin(float centre, int texels, float yards) {
+    return static_cast<int>(std::floor(static_cast<double>(centre) / yards)) - texels / 2;
 }
 
 bool OutsideWindow(const float from[2], const float to[2], float radius, int texels) {
@@ -975,13 +1013,36 @@ void DrawStep(CGxTex* target, CGxTex* source, float keep) {
     Bind(0, nullptr);
 }
 
+// c98 / s1 for a close step: where texel (0, 0) of the close window lies in the wide map's uv, the uv step per close
+// texel, and the gain (wide texel / close texel: the shading takes its slopes per close texel). w = 0: nothing added.
+void BindWide(const Ripples& close, const Ripples& wide) {
+    float row[4] = {};
+    const bool on = close.wideIn && wide.running && wide.mapsCleared && wide.texels > 0;
+    if (on) {
+        const double ratio = static_cast<double>(close.yards) / wide.yards;
+        row[0] = static_cast<float>(((close.origin[0] + 0.5) * ratio - wide.origin[0]) / wide.texels);
+        row[1] = static_cast<float>(((close.origin[1] + 0.5) * ratio - wide.origin[1]) / wide.texels);
+        row[2] = static_cast<float>(ratio / wide.texels);
+        row[3] = static_cast<float>(1.0 / ratio);
+    }
+    SetPs(kWideRegister, row, 1);
+    Bind(1, on ? wide.maps[wide.current] : nullptr);
+}
+
 // coa WaterRipples::Step: recentre on the camera target (clearing both maps on a jump), upload the disturbances in
-// window texels, one propagation into the other map.
-void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uint32_t count) {
-    Ripples& r = s_ripples;
+// window texels, one propagation into the other map. A close step also adds the wide level's height (BindWide).
+void Step(Ripples& r, const float centre[2], const WaterRippleDisturbance* disturbances, uint32_t count, const Ripples* wide) {
     const bool usable = std::fabs(centre[0]) <= kMaxWindowCentreYards && std::fabs(centre[1]) <= kMaxWindowCentreYards;
-    const int desired[2] = { usable ? WindowOrigin(centre[0], r.texels) : r.origin[0], usable ? WindowOrigin(centre[1], r.texels) : r.origin[1] };
+    const int desired[2] = { usable ? WindowOrigin(centre[0], r.texels, r.yards) : r.origin[0], usable ? WindowOrigin(centre[1], r.texels, r.yards) : r.origin[1] };
     int shift[2] = { desired[0] - r.origin[0], desired[1] - r.origin[1] };
+    r.origin[0] = desired[0];
+    r.origin[1] = desired[1];
+    if (wide) {
+        BindWide(r, *wide);
+    } else {
+        const float off[4] = {};
+        SetPs(kWideRegister, off, 1);
+    }
     if (!r.mapsCleared || std::abs(shift[0]) >= r.texels || std::abs(shift[1]) >= r.texels) {
         const float clearRow[4] = { 0.0f, 0.0f, 1.0f / r.texels, 0.0f };     // no disturbances
         SetPs(kStepRegister, clearRow, 1);
@@ -990,8 +1051,6 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
         r.mapsCleared = true;
         shift[0] = shift[1] = 0;
     }
-    r.origin[0] = desired[0];
-    r.origin[1] = desired[1];
 
     static float s_rows[1 + 2 * kMaxWaterRippleDisturbances][4];
     float (*segments)[4] = &s_rows[kFirstSegmentRegister];
@@ -999,15 +1058,15 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
     uint32_t used = 0;
     for (uint32_t i = 0; i < count && used < kMaxWaterRippleDisturbances; ++i) {
         const WaterRippleDisturbance& d = disturbances[i];
-        const float radius = d.radius / kWaterRippleTexelYards;
+        const float radius = d.radius / r.yards;
         if (!(radius > 0.0f) || !std::isfinite(d.amplitude) || (d.amplitude == 0.0f && !d.held)) {
             continue;
         }
         float from[2];
         float to[2];
         for (int axis = 0; axis < 2; ++axis) {
-            from[axis] = static_cast<float>(d.from[axis] / kWaterRippleTexelYards - r.origin[axis]);
-            to[axis] = static_cast<float>(d.to[axis] / kWaterRippleTexelYards - r.origin[axis]);
+            from[axis] = static_cast<float>(d.from[axis] / r.yards - r.origin[axis]);
+            to[axis] = static_cast<float>(d.to[axis] / r.yards - r.origin[axis]);
         }
         if (OutsideWindow(from, to, radius, r.texels)) {
             continue;
@@ -1016,10 +1075,10 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
         segments[used][1] = from[1];
         segments[used][2] = to[0];
         segments[used][3] = to[1];
-        shapes[used][0] = 1.0f / radius;
+        shapes[used][0] = d.slab ? d.beamTo / r.yards : 1.0f / radius;
         shapes[used][1] = d.amplitude;
         shapes[used][2] = d.held ? kHeldFootprint : kAddedImpulse;
-        shapes[used][3] = d.slab ? radius : 0.0f;
+        shapes[used][3] = d.slab ? std::max(d.beamFrom / r.yards, 1e-3f) : 0.0f;
         ++used;
     }
     s_rows[kStepRegister][0] = static_cast<float>(shift[0]);
@@ -1032,15 +1091,17 @@ void Step(const float centre[2], const WaterRippleDisturbance* disturbances, uin
         SetPs(kFirstShapeRegister, shapes[0], used);
     }
     DrawStep(r.maps[1 - r.current], r.maps[r.current], 1.0f);
+    Bind(1, nullptr);
     r.current = 1 - r.current;
     r.quietSteps = used ? 0 : r.quietSteps + 1;
-    if (r.quietSteps >= kWaterRippleQuietSteps) {
-        Restart();
+    if (r.quietSteps >= kWaterRippleQuietSteps && !(wide && wide->running)) {
+        Restart(r);
     }
 }
 
 void Release() {
-    DestroyMaps();
+    DestroyMaps(s_ripples.close);
+    DestroyMaps(s_ripples.wide);
     s_hullCache.clear();
     s_hullTracks.clear();
     s_ripples.contacts.Reset();
@@ -1049,55 +1110,71 @@ void Release() {
 
 }  // namespace
 
-// coa WaterRenderer::SimulateRipples + FillRippleConstants.
+// coa WaterRenderer::SimulateRipples + FillRippleConstants, plus wxl-water's wide level for the ships.
 void RippleFrame(const FrameInputs& in, float strength, int quality, double seconds, const WorldViewport& vp, RippleShading& out) {
     out = {};
-    Ripples& r = s_ripples;
-    r.lastShaded = seconds;     // the modern water draws this frame (coa g_waterShadedThisFrame)
+    RippleState& s = s_ripples;
+    Ripples& r = s.close;
+    Ripples& wide = s.wide;
+    s.lastShaded = seconds;     // the modern water draws this frame (coa g_waterShadedThisFrame)
     bool shaded = false;
     if (strength <= 0.0f) {
         Release();
     } else {
-        if (r.lastSeconds >= 0.0 && (seconds < r.lastSeconds || seconds - r.lastSeconds > kRippleGapSeconds || in.mapId != r.mapId)) {
-            Restart();
-            r.contacts.Reset();
+        if (s.lastSeconds >= 0.0 && (seconds < s.lastSeconds || seconds - s.lastSeconds > kRippleGapSeconds || in.mapId != s.mapId)) {
+            Restart(r);
+            Restart(wide);
+            s.contacts.Reset();
         }
-        r.lastSeconds = seconds;
-        r.mapId = in.mapId;
+        s.lastSeconds = seconds;
+        s.mapId = in.mapId;
         static WaterContactFrame s_frame;
         CaptureWaterContacts(in.camTarget, s_frame);
-        r.contacts.Update(s_frame, seconds);
+        s.contacts.Update(s_frame, seconds);
         static WaterRippleDisturbance s_hulls[kMaxHullDisturbances];
         const uint32_t hulls = CaptureHulls(in.camTarget, seconds, s_hulls, kMaxHullDisturbances);
         const float centre[2] = { in.camTarget[0], in.camTarget[1] };
         float dropShare = 1.0f;
         const bool raining = DropStrength(dropShare) > 0.0f;
-        if ((r.running || r.contacts.Emitting() || hulls || raining) && Prepare(quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels)) {
-            if (!r.running) {
-                r.contacts.PlaceFootprints(seconds);
-            }
-            const Schedule schedule = ScheduleSteps(seconds);
-            if (schedule.steps) {
-                static SavedPassState s_saved;
-                BeginPasses(s_saved);
-                WaterRippleDisturbance disturbances[kMaxWaterRippleDisturbances];
-                for (int step = 0; step < schedule.steps; ++step) {
-                    uint32_t count = r.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
-                    const uint32_t extra = std::min(hulls, kMaxWaterRippleDisturbances - count);
-                    // wxl-water's one shared pulse clock, read at this step's time
-                    const float pulse = static_cast<float>(std::sin(6.283185307179586 * std::fmod(schedule.stepSeconds[step], kHullPulseSeconds) / kHullPulseSeconds));
-                    for (uint32_t i = 0; i < extra; ++i) {
-                        disturbances[count + i] = s_hulls[i];
-                        disturbances[count + i].amplitude *= pulse;
-                    }
-                    count += extra;
-                    count += TakeDrops(centre, disturbances + count, kMaxWaterRippleDisturbances - count);
-                    Step(centre, disturbances, count);
+        static SavedPassState s_saved;
+        bool passes = false;
+        // wxl-water level 1: the ships, every 50 ms, the shared 1 Hz pulse read at each step's time.
+        if ((wide.running || hulls) && Prepare(wide, quality == 1 ? kWideTexelsLow : kWideTexels, false)) {
+            const Schedule schedule = ScheduleSteps(wide, seconds);
+            for (int step = 0; step < schedule.steps; ++step) {
+                if (!passes) {
+                    BeginPasses(s_saved);
+                    passes = true;
                 }
-                GxRenderTargetSet(GxBuffers_Color, vp.target, 0);
-                EndPasses(s_saved, vp);
+                WaterRippleDisturbance pulsed[kMaxHullDisturbances];
+                const float pulse = static_cast<float>(std::sin(6.283185307179586 * std::fmod(schedule.stepSeconds[step], kHullPulseSeconds) / kHullPulseSeconds));
+                for (uint32_t i = 0; i < hulls; ++i) {
+                    pulsed[i] = s_hulls[i];
+                    pulsed[i].amplitude *= pulse;
+                }
+                Step(wide, centre, pulsed, hulls, nullptr);
+            }
+        }
+        if ((r.running || s.contacts.Emitting() || wide.running || raining) && Prepare(r, quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels, true)) {
+            if (!r.running) {
+                s.contacts.PlaceFootprints(seconds);
+            }
+            const Schedule schedule = ScheduleSteps(r, seconds);
+            WaterRippleDisturbance disturbances[kMaxWaterRippleDisturbances];
+            for (int step = 0; step < schedule.steps; ++step) {
+                if (!passes) {
+                    BeginPasses(s_saved);
+                    passes = true;
+                }
+                uint32_t count = s.contacts.TakeDisturbances(schedule.stepSeconds[step], disturbances, kMaxWaterRippleDisturbances);
+                count += TakeDrops(centre, disturbances + count, kMaxWaterRippleDisturbances - count);
+                Step(r, centre, disturbances, count, &wide);
             }
             shaded = r.running && r.mapsCleared;
+        }
+        if (passes) {
+            GxRenderTargetSet(GxBuffers_Color, vp.target, 0);
+            EndPasses(s_saved, vp);
         }
     }
     // coa WaterRipples::Window / FillRippleConstants
@@ -1132,7 +1209,7 @@ void RippleShutdown() {
     if (s_ripples.step && g_theGxDevicePtr) {
         g_theGxDevicePtr->ShaderDestroy(s_ripples.step);
     }
-    s_ripples = Ripples{};
+    s_ripples = RippleState{};
 }
 
 }  // namespace VolumetricFog

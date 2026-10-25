@@ -65,7 +65,7 @@ SHADERS = {
     'VFogWaterDepth': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaterDepth', {'MASK': 0}),
     'VFogWaterMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaterDepth', {'MASK': 1}),
     # water ripples and wakes (coa vw_ripple_step): one 30 Hz step of the Gr1616F height field
-    'VFogRippleStep': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogRippleStep', {}),
+    'VFogRippleStep': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogRippleStep', {}),
     # GPU waves (coa vw_fft_*, docs "Waves"): evolve + fold, radix-2 stages, surface moments / foam, moment mips, pack
     'VFogWaveEvolve': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaveEvolve', {}),
     'VFogWaveFft': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaveFft', {}),

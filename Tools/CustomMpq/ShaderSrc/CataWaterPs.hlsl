@@ -41,7 +41,8 @@ sampler2D sPostMask : register(s15);
 
 // Cata ProcWaterAbove ripple slope (W1 8.2, wxl-water RippleSlope, one level): height interpolated between the last two
 // steps, finite differences at a lookup bent by the normal map, nothing outside the window.
-float RipH(float2 t) { float4 h = tex2D(sRipple, t); return lerp(h.g, h.r, gRipTex.z); }
+// b: the wide (ship wake) level the step adds in, 0 when the map is two-channel (its b reads 1, a constant, no slope).
+float RipH(float2 t) { float4 h = tex2D(sRipple, t); return lerp(h.g, h.r, gRipTex.z) + h.b; }
 float2 RippleSlope(float3 world, float2 nn)
 {
     float2 uv = (world.xy - gRipWin.xy) * gRipWin.zw - nn * 0.02 - 1e-6;

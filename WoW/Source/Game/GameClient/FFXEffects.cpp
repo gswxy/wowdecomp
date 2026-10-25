@@ -233,17 +233,17 @@ PassNetherBlur::PassNetherBlur(FFX::Tex** inputs, uint32_t count, FFX::Tex* outp
     g_theGxDevicePtr->ShaderCreate(&this->m_vertexShader, GxSh_Vertex, "Shaders\\Vertex", "FFXNetherBlur", 1);
     this->m_seed.SetSeed(0xABCDEF01);
 
-    for (uint32_t table = 0; table < 3; table++) {
+    for (uint32_t table = 0; table < NOISE_TABLE_ROLE::ROLE_COUNT; table++) {
         for (uint32_t i = 0; i < 36; i++) {
             float value = CRandom::ufloat_(this->m_seed);
             this->m_noise[table][i] = fmodf(value + value - 1.0f, 1.0f);
         }
     }
 
-    this->m_noiseTables[0] = this->m_noise[0];
+    this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM] = this->m_noise[0];
     this->m_noiseBlend = 0.0f;
-    this->m_noiseTables[1] = this->m_noise[1];
-    this->m_noiseTables[2] = this->m_noise[2];
+    this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO] = this->m_noise[1];
+    this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE] = this->m_noise[2];
 }
 
 // VERIFY: 32e95e2f auto
@@ -460,20 +460,20 @@ void PassNetherBlur::Execute() {
 
     if (this->m_noiseBlend > 1.0f) {
         this->m_noiseBlend = static_cast<float>(fmod(this->m_noiseBlend, 1.0));
-        float* oldest = this->m_noiseTables[0];
-        this->m_noiseTables[0] = this->m_noiseTables[1];
-        this->m_noiseTables[1] = this->m_noiseTables[2];
-        this->m_noiseTables[2] = oldest;
+        float* oldest = this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM];
+        this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM] = this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO];
+        this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO] = this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE];
+        this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE] = oldest;
 
         for (uint32_t i = 0; i < 36; i++) {
             uint32_t bits = (CRandom::uint32_(this->m_seed) & 0x7FFFFF) | 0x3F800000;
             float random = *reinterpret_cast<float*>(&bits) - 1.0f;
-            this->m_noiseTables[2][i] = static_cast<float>(fmod(random + random - 1.0f, 1.0));
+            this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE][i] = static_cast<float>(fmod(random + random - 1.0f, 1.0));
         }
     }
 
     for (uint32_t i = 0; i < 36; i++) {
-        this->m_blendedNoise[i] = (1.0f - this->m_noiseBlend) * this->m_noiseTables[0][i] + this->m_noiseTables[1][i] * this->m_noiseBlend;
+        this->m_blendedNoise[i] = (1.0f - this->m_noiseBlend) * this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM][i] + this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO][i] * this->m_noiseBlend;
     }
 
     this->m_noiseBlend = elapsed * 1.5f + this->m_noiseBlend;

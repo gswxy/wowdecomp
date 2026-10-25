@@ -1568,7 +1568,9 @@ bool RenderShadowMask(const FrameInputs& in, float softYards, bool stockFogInCol
     SetPs(kShadowMaskBandRegister + 6, extra[6], 1);
     // Indoors (the steep light, hysteresis) the receivers shade themselves as stock: the exterior shell's band shadow
     // would otherwise fall on every unit model inside (value 0 receivers, which the mask cannot tell from the rest).
-    CShadowCache::s_unifiedNext = normals && TerrainSunShadow::UnifiedWanted() && !CShadowQuery::CameraIndoors();
+    // wallshadow3: a roofed exterior-flagged room too (CameraRoofBlend); the mask's cascade term streaked its walls.
+    CShadowCache::s_unifiedNext = normals && TerrainSunShadow::UnifiedWanted() && !CShadowQuery::CameraIndoors() &&
+                                  CameraRoofBlend() <= 0.0f;
     device->RsSet(GxRs_PixelShader, shader);
     device->DeviceSceneDepthBound(false);   // D3D9: s0 is the INTZ depth-stencil the back buffer uses
     DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);

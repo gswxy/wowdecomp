@@ -5,14 +5,13 @@
 float4 cRippleStep : register(c0);
 float4 cRippleSegments[48] : register(c1);
 float4 cRippleShapes[48] : register(c49);
-float4 cRippleKeep : register(c97);
+float4 cRippleKeep : register(c97);      // x: 0 clears; y: damping a step (close 0.97 as coa, wide 0.995)
 float4 cRippleWide : register(c98);     // new: wide (ship) level at s1: uv of texel (0,0), uv per texel, gain; w = 0 off
 
 sampler2D sRippleState : register(s0);
 sampler2D sRippleWide : register(s1);   // new: wxl-water's level 1 (0.5 yd, 20 Hz) the ships are drawn into
 
 static const int kMaxDisturbances = 48;
-static const float kDamping = 0.97;
 static const float kEdgeRampPerUv = 16;
 static const float kNeighbourWeight = 0.5;
 static const float kFootprintCore = 0.20;
@@ -52,7 +51,7 @@ float2 Propagate(float2 uv)
     float down = State(uv - float2(0, texel)).r;
     float right = State(uv + float2(texel, 0)).r;
     float up = State(uv + float2(0, texel)).r;
-    float next = kDamping * EdgeRamp(uv) * (kNeighbourWeight * (left + down + right + up) - centre.g);
+    float next = cRippleKeep.y * EdgeRamp(uv) * (kNeighbourWeight * (left + down + right + up) - centre.g);
     return float2(next, centre.r);
 }
 

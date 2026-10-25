@@ -507,32 +507,33 @@ private:
 // ---- moving ship hulls (wxl-water GatherHulls / BuildHullProfile / HullShape, Stage 7c) -----------------------------
 // Moving TRANSPORT / MO_TRANSPORT WMOs whose model bottom sits under a liquid surface (airborne zeppelins fail the test)
 // press their own waterline section into the field. The section is the WMO's triangles cut at the local waterline,
-// reduced to 12 half-beams along local x, cut once per root. As wxl-water SplatHulls (Cata PerturbDisplMapMesh), the
-// whole waterline area is pressed into the height additively every step (not held): a pressure that swings with one
-// shared 1 Hz sine, so the hull's long sides pump rings out all the time and a moving hull trails them as its wake.
-// As wxl-water's polygon through the slice midpoints, drawn as 11 hard-edged trapezoids between them (no overlap).
-// Strength as wxl-water: 0.8 * min(speed / 10 yd/s, 1) times its wide level's splat 0.25 per 50 ms step, none when
-// docked (under 0.5 yd/s); times 3, this field's heights running about 3x Cata's (a swimmer here holds 3, in
-// wxl-water it pushes 1).
+// reduced to 12 half-beams along local x, cut once per root, drawn as wxl-water's polygon through the slice midpoints
+// (11 hard-edged trapezoids, no overlap) on the wide level only.
+// wake4 (not wxl-water any more; its 1 Hz pulse made bands that died in ~5 s): a steady push, hardest at the bow and a
+// trough at the stern (kHullPush, bow found from the velocity), added every step. A steady source moving faster than
+// the field's waves makes a Mach cone, half-angle asin(c / v): the wide level runs c = 0.707 texel a step = 10.6 yd/s,
+// so a ship at its 30 yd/s cruise (gameobject_template Data1) trails a V of ~21 deg from the bow, close to Kelvin's
+// 19.5. Its damping is 0.995 a step (0.97 on the close map), so the arms hold well past 10 s. Strength
+// min(speed / 10 yd/s, 1), none when docked (under 0.5 yd/s). Modelled offline before building (wake4_30.png).
 constexpr int kHullSlices = 12;
 constexpr uint32_t kMaxHullDisturbances = 4 * (kHullSlices - 1);   // four ships, 11 trapezoids each, on the wide level
 constexpr double kHullSpeedSeconds = 0.1;
 constexpr double kStaleHullSeconds = 2.0;
 constexpr float kHullFullSpeed = 10.0f;
-constexpr float kHullStrength = 0.8f;
 constexpr float kHullDockedShare = 0.05f;
 constexpr float kFootprintHalfWeight = 0.5f;                 // VFogRippleStep Footprint() is 0.5 at about half the radius
-constexpr float kHullSplat = 0.25f * 3.0f;                    // wxl-water level 1 splat, in this field's heights
-// wxl-water's level 1 (Cata's wide displacement map): 0.5 yd texels, a 50 ms step, 1024^2 = 512 yd. The ships are
-// drawn there and nowhere else: at this sim's 0.707 texel a step, waves run 7 yd/s there against 2.7 yd/s on the
-// 0.125 yd / 30 Hz close map, where a ship at 10+ yd/s outran every ring it made and the damping (0.97 a step) ate
-// them within a second, so only starting off and hard turns (slow hull edges) showed. The close map's step adds the
-// wide height in (VFogRippleStep c98, s1), so the water shaders still read one map.
-constexpr float kWideTexelYards = 0.5f;
+constexpr float kHullSplat = 0.1f;                            // the push per step at full strength
+// Per-slice push, stern (0) to bow (11): the V starts at the bow, the stern's trough closes it.
+constexpr float kHullPush[kHullSlices] = { -0.6f, -0.4f, -0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.3f, 0.7f, 1.0f, 1.0f };
+// The wide level the ships are drawn into (after wxl-water's level 1): 0.75 yd texels, a 50 ms step, 1024^2 = 768 yd.
+// On the 0.125 yd / 30 Hz close map waves run 2.7 yd/s and die in a second (0.97 a step). The close map's step adds
+// the wide height in (VFogRippleStep c98, s1), so the water shaders still read one map.
+constexpr float kCloseDamping = 0.97f;
+constexpr float kWideDamping = 0.995f;
+constexpr float kWideTexelYards = 0.75f;
 constexpr double kWideStepsPerSecond = 20.0;
 constexpr int kWideTexels = 1024;
 constexpr int kWideTexelsLow = 512;
-constexpr double kHullPulseSeconds = 1.0;                     // wxl-water: sin(2 pi ((now - t0) % 1000 ms) / 1000)
 
 struct HullProfile {
     const CMapObj* root = nullptr;
@@ -653,6 +654,9 @@ struct HullTrack {
     double at = 0.0;
     double seen = 0.0;
     float speedShare = 0.0f;
+    float speed = 0.0f;         // yd/s
+    float vx = 0.0f;            // direction of travel (for the bow)
+    float vy = 0.0f;
 };
 
 std::vector<HullTrack> s_hullTracks;
@@ -749,17 +753,20 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
 
         auto it = std::find_if(s_hullTracks.begin(), s_hullTracks.end(), [guid](const HullTrack& t) { return t.guid == guid; });
         if (it == s_hullTracks.end()) {
-            s_hullTracks.push_back({ guid, m[12], m[13], seconds, seconds, 0.0f });
+            s_hullTracks.push_back({ guid, m[12], m[13], seconds, seconds });
             it = s_hullTracks.end() - 1;
         }
         it->seen = seconds;
         if (seconds - it->at >= kHullSpeedSeconds) {
-            it->speedShare = std::min(std::hypot(m[12] - it->x, m[13] - it->y) / static_cast<float>(seconds - it->at) / kHullFullSpeed, 1.0f);
+            it->vx = m[12] - it->x;
+            it->vy = m[13] - it->y;
+            it->speed = std::hypot(it->vx, it->vy) / static_cast<float>(seconds - it->at);
+            it->speedShare = std::min(it->speed / kHullFullSpeed, 1.0f);
             it->x = m[12];
             it->y = m[13];
             it->at = seconds;
         }
-        const float speed = it->speedShare * kHullFullSpeed;
+        const float speed = it->speed;
         if (it->speedShare < kHullDockedShare) {
             dbg.Ship(guid, typeId, "docked (too slow)", speed, 0, 0, 0, 0, 0);
             continue;
@@ -794,13 +801,18 @@ uint32_t CaptureHulls(const float centre[3], double seconds, WaterRippleDisturba
             dbg.Ship(guid, typeId, "no waterline cut (groups loading or no triangles)", speed, hit, level, probe.z, 0, 0);
             continue;                                  // groups still loading (wxl-water's box hexagon fallback skipped)
         }
-        const float amplitude = kHullSplat * kHullStrength * it->speedShare * strength;   // times the pulse, per step
+        const float amplitude = kHullSplat * it->speedShare * strength;
+        const bool bowAtPlusX = it->vx * m[0] + it->vy * m[1] >= 0.0f;     // local +x along the way it is going
         const float w = (p->x1 - p->x0) / static_cast<float>(kHullSlices);
         const uint32_t first = count;
         int slices = 0;
         for (int i = 0; i + 1 < kHullSlices; ++i) {     // wxl-water HullShape: the polygon through the slice midpoints
             if (p->hb[i] > 0.0f || p->hb[i + 1] > 0.0f) {
-                EmitHullSlice(m, p->x0 + w * (i + 0.5f), p->x0 + w * (i + 1.5f), p->hb[i], p->hb[i + 1], amplitude, out[count++]);
+                const float push = 0.5f * (bowAtPlusX ? kHullPush[i] + kHullPush[i + 1] : kHullPush[kHullSlices - 1 - i] + kHullPush[kHullSlices - 2 - i]);
+                if (push == 0.0f) {
+                    continue;
+                }
+                EmitHullSlice(m, p->x0 + w * (i + 0.5f), p->x0 + w * (i + 1.5f), p->hb[i], p->hb[i + 1], amplitude * push, out[count++]);
                 ++slices;
             }
         }
@@ -1003,8 +1015,8 @@ bool OutsideWindow(const float from[2], const float to[2], float radius, int tex
     return false;
 }
 
-void DrawStep(CGxTex* target, CGxTex* source, float keep) {
-    const float keepRow[4] = { keep, 0.0f, 0.0f, 0.0f };
+void DrawStep(CGxTex* target, CGxTex* source, float keep, float damping) {
+    const float keepRow[4] = { keep, damping, 0.0f, 0.0f };
     SetPs(kKeepRegister, keepRow, 1);
     Bind(0, source);
     GxRenderTargetSet(GxBuffers_Color, target, 0);
@@ -1032,6 +1044,7 @@ void BindWide(const Ripples& close, const Ripples& wide) {
 // coa WaterRipples::Step: recentre on the camera target (clearing both maps on a jump), upload the disturbances in
 // window texels, one propagation into the other map. A close step also adds the wide level's height (BindWide).
 void Step(Ripples& r, const float centre[2], const WaterRippleDisturbance* disturbances, uint32_t count, const Ripples* wide) {
+    const float damping = wide ? kCloseDamping : kWideDamping;   // only the close level adds a wide one in
     const bool usable = std::fabs(centre[0]) <= kMaxWindowCentreYards && std::fabs(centre[1]) <= kMaxWindowCentreYards;
     const int desired[2] = { usable ? WindowOrigin(centre[0], r.texels, r.yards) : r.origin[0], usable ? WindowOrigin(centre[1], r.texels, r.yards) : r.origin[1] };
     int shift[2] = { desired[0] - r.origin[0], desired[1] - r.origin[1] };
@@ -1046,8 +1059,8 @@ void Step(Ripples& r, const float centre[2], const WaterRippleDisturbance* distu
     if (!r.mapsCleared || std::abs(shift[0]) >= r.texels || std::abs(shift[1]) >= r.texels) {
         const float clearRow[4] = { 0.0f, 0.0f, 1.0f / r.texels, 0.0f };     // no disturbances
         SetPs(kStepRegister, clearRow, 1);
-        DrawStep(r.maps[0], r.maps[1], 0.0f);
-        DrawStep(r.maps[1], r.maps[0], 0.0f);
+        DrawStep(r.maps[0], r.maps[1], 0.0f, damping);
+        DrawStep(r.maps[1], r.maps[0], 0.0f, damping);
         r.mapsCleared = true;
         shift[0] = shift[1] = 0;
     }
@@ -1090,7 +1103,7 @@ void Step(Ripples& r, const float centre[2], const WaterRippleDisturbance* distu
         SetPs(kFirstSegmentRegister, segments[0], used);
         SetPs(kFirstShapeRegister, shapes[0], used);
     }
-    DrawStep(r.maps[1 - r.current], r.maps[r.current], 1.0f);
+    DrawStep(r.maps[1 - r.current], r.maps[r.current], 1.0f, damping);
     Bind(1, nullptr);
     r.current = 1 - r.current;
     r.quietSteps = used ? 0 : r.quietSteps + 1;
@@ -1138,7 +1151,7 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
         const bool raining = DropStrength(dropShare) > 0.0f;
         static SavedPassState s_saved;
         bool passes = false;
-        // wxl-water level 1: the ships, every 50 ms, the shared 1 Hz pulse read at each step's time.
+        // The wide level: the ships' steady push, every 50 ms.
         if ((wide.running || hulls) && Prepare(wide, quality == 1 ? kWideTexelsLow : kWideTexels, false)) {
             const Schedule schedule = ScheduleSteps(wide, seconds);
             for (int step = 0; step < schedule.steps; ++step) {
@@ -1146,13 +1159,7 @@ void RippleFrame(const FrameInputs& in, float strength, int quality, double seco
                     BeginPasses(s_saved);
                     passes = true;
                 }
-                WaterRippleDisturbance pulsed[kMaxHullDisturbances];
-                const float pulse = static_cast<float>(std::sin(6.283185307179586 * std::fmod(schedule.stepSeconds[step], kHullPulseSeconds) / kHullPulseSeconds));
-                for (uint32_t i = 0; i < hulls; ++i) {
-                    pulsed[i] = s_hulls[i];
-                    pulsed[i].amplitude *= pulse;
-                }
-                Step(wide, centre, pulsed, hulls, nullptr);
+                Step(wide, centre, s_hulls, hulls, nullptr);
             }
         }
         if ((r.running || s.contacts.Emitting() || wide.running || raining) && Prepare(r, quality == 1 ? kWaterRippleTexelsLow : kWaterRippleTexels, true)) {

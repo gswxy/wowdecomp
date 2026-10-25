@@ -63,7 +63,7 @@ local PAGES = {
 	    { { "1", "Low" }, { "2", "Medium" }, { "3", "High" } } },
 	  { "vfogWaterWaves", "slider", "Wave height", "How high the waves are. 0 makes the water flat.", 0, 2, 0.05 },
 	  { "vfogWaterWind", "slider", "Wind speed", "How fast the wind drives the waves.", 0.5, 10, 0.1 },
-	  { "vfogWaterFoam", "slider", "Foam width", "How far the foam reaches out from shores and into shallow water, in either water style. 0 turns foam off.", 0, 2, 0.05 },
+	  { "vfogWaterFoam", "slider", "Foam", "Cataclysm water: how wide the shoreline foam reaches. Modern water: foam strength. 0 turns foam off.", 0, 2, 0.05 },
 	  { "vfogWaterReflections", "slider", "Reflections", "How strong reflections are. 0 reflects only the sky.", 0, 2, 0.05 },
 	  { "vfogWaterSpecular", "slider", "Sun highlight", "How bright the sun and moon shine on the water.", 0, 4, 0.1 },
 	  { "vfogWaterClarity", "slider", "Clarity", "How clear the water is; higher sees deeper.", 0.25, 4, 0.05 },

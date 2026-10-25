@@ -52,10 +52,9 @@ sampler2D sFoamState0 : register(s7);    // (sqrt(var / kVarianceRange), sqrt(wi
 sampler2D sFoamState1 : register(s8);
 sampler2D sFoamState2 : register(s9);
 sampler2D sFoamState3 : register(s10);
-sampler2D sWaveFoamMasks : register(s11);   // the wave foam masks in R, G, B, the shore foam mask in A
+sampler2D sWaveFoamMasks : register(s11);
 sampler2D sRipples : register(s12);
-sampler2D sFoamLand : register(s14);   // R32F world terrain heights under the water (VolumetricFogWater.cpp FoamLand), point
-float4 cFoamLand : register(c72);      // its row: texel = xy - z * world.yx; w = 1 / size (0: none)
+sampler2D sShoreDepthFoamMasks : register(s14);   // the shore foam mask in R, the depth foam mask in G (one texture: s15 is the wakes')
 sampler2D sRippleWide : register(s15);   // the wide ship-wake level (wxl-water s10), Gr1616F height / previous height
 
 static const int kHighFoamSlot = 0;

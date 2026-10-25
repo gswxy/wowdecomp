@@ -68,11 +68,7 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 transmittance = Transmittance(refraction.pathDepth);
     float3 inscatter = InScattering(V, NoV, CrestTilt(waves.moments), waves.foam.y, transmittance);
     float3 water = transmittance * refraction.scene + inscatter;
-    // 2026-10-25 foam2: not the masks' near-white lit as a sheet; the lit foam is mixed into the water's own colour,
-    // pulled toward the sky's (fog-tinted horizon light), a little brighter than the water.
-    float3 foamLit = FoamLight(N, waves.foam.x) * foamAlbedo.rgb;
-    float3 foamBase = lerp(water, SkyColour(0.3), 0.4) * 1.3;
-    float3 foam = lerp(foamBase, foamLit, 0.35) + inscatter;
+    float3 foam = FoamLight(N, waves.foam.x) * foamAlbedo.rgb + inscatter;
     float3 colour = lerp(water, foam, foamAlbedo.a);
 
     float3 R = ReflectedDirection(V, N);
@@ -95,7 +91,6 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 encoded = LinearToGamma(colour);
     [branch] if (StockFogApplies())
         encoded = lerp(StockFogColour(), encoded, StockFogVisibility(w.waterZ));
-    // The screen-space shore fade (refraction path) never fades the foam, which is world-space (FoamColumnDepth).
-    encoded = lerp(refraction.copied, encoded, max(saturate(kShoreFadePerYard * refraction.pathDepth), foamAlbedo.a));
+    encoded = lerp(refraction.copied, encoded, saturate(kShoreFadePerYard * refraction.pathDepth));
     return Dithered(float4(encoded, 1), pixel, float2(17, 229), cDither.y);
 }

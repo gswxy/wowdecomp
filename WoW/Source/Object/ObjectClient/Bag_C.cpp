@@ -1,4 +1,5 @@
 #include "Bag_C.h"
+#include "WoW/Common/ComponentCore/Types.h"
 #include "WoW/Source/DB/DBClient/DBCacheInstances.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/Object/ItemStats.h"
@@ -13,7 +14,7 @@
 #include "WoW/Source/UIUtil/Tooltip.h"
 
 // STATIC: 0x00A37B10
-static const BAGSLOTRANGE s_bagSlotRanges[8] = { { 23, 38 }, { 19, 22 }, { 86, 117 }, { 39, 66 }, { 67, 73 }, { 118, 149 }, { 0, 18 }, { 74, 85 } };
+static const BAGSLOTRANGE s_bagSlotRanges[8] = { { BACKPACK_FIRST, BACKPACK_LAST }, { INVSLOT_BAG0, INVSLOT_BAG3 }, { KEYRING_FIRST, KEYRING_LAST }, { BANKGENERIC_FIRST, BANKGENERIC_LAST }, { BANKBAG_FIRST, BANKBAG_LAST }, { CURRENCYTOKEN_FIRST, CURRENCYTOKEN_LAST }, { INVSLOT_HEAD, INVSLOT_TABARD }, { BUYBACK_FIRST, BUYBACK_LAST } };
 
 // VERIFY: 3944bddf auto
 // OFFSET: 0x00753B00
@@ -72,7 +73,7 @@ int32_t CGBag_C::FindItemSlot(const CGItem_C* item) const {
 // VERIFY: 121306f8 manual
 // OFFSET: 0x00754390
 const CGItem_C* CGBag_C::GetItemPointer(int32_t slot) const {
-    if ((this->m_hasBank && ((slot >= 39 && slot <= 66) || static_cast<uint32_t>(slot - 67) <= 6) && !CGBankInfo::m_banker) || slot >= this->m_numSlots) {
+    if ((this->m_hasBank && ((slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || static_cast<uint32_t>(slot - BANKBAG_FIRST) <= BANKBAG_LAST - BANKBAG_FIRST) && !CGBankInfo::m_banker) || slot >= this->m_numSlots) {
         return nullptr;
     }
 
@@ -84,7 +85,7 @@ const CGItem_C* CGBag_C::GetItemPointer(int32_t slot) const {
 // VERIFY: 6a3b7079 manual
 // OFFSET: 0x00754400
 CGItem_C* CGBag_C::GetItemPointer(int32_t slot) {
-    if ((this->m_hasBank && ((slot >= 39 && slot <= 66) || static_cast<uint32_t>(slot - 67) <= 6) && !CGBankInfo::m_banker) || slot >= this->m_numSlots) {
+    if ((this->m_hasBank && ((slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || static_cast<uint32_t>(slot - BANKBAG_FIRST) <= BANKBAG_LAST - BANKBAG_FIRST) && !CGBankInfo::m_banker) || slot >= this->m_numSlots) {
         return nullptr;
     }
 
@@ -100,11 +101,11 @@ int32_t CGBag_C::GetNumFreeInvSlots() {
 
     for (uint32_t slot = 0; slot < static_cast<uint32_t>(this->m_numSlots); slot++) {
         if (this->m_hasBank) {
-            if (slot <= 18 || (slot >= 39 && slot <= 66) || (slot >= 67 && slot <= 73) || (slot >= 86 && slot <= 117) || (slot >= 74 && slot <= 85) || slot - 118 <= 31) {
+            if (slot <= INVSLOT_TABARD || (slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || (slot >= BANKBAG_FIRST && slot <= BANKBAG_LAST) || (slot >= KEYRING_FIRST && slot <= KEYRING_LAST) || (slot >= BUYBACK_FIRST && slot <= BUYBACK_LAST) || slot - CURRENCYTOKEN_FIRST <= CURRENCYTOKEN_LAST - CURRENCYTOKEN_FIRST) {
                 continue;
             }
 
-            if (slot - 19 <= 3) {
+            if (slot - INVSLOT_BAG0 <= INVSLOT_BAG3 - INVSLOT_BAG0) {
                 WOWGUID guid = slot < static_cast<uint32_t>(this->m_numSlots) ? this->m_slots[slot] : WOWGUID();
                 CGItem_C* item = static_cast<CGItem_C*>(ClntObjMgrObjectPtr(guid, TYPE_ITEM, __FILE__, __LINE__));
 
@@ -142,8 +143,8 @@ uint32_t CGBag_C::GetAvgEquippedDurability() const {
     int32_t durability = 0;
     int32_t maxDurability = 0;
 
-    for (uint32_t slot = 0; slot <= 18; slot++) {
-        if ((this->m_hasBank && ((slot >= 39 && slot <= 66) || slot - 67 <= 6) && !CGBankInfo::m_banker) || static_cast<int32_t>(slot) >= this->m_numSlots) {
+    for (uint32_t slot = 0; slot <= INVSLOT_TABARD; slot++) {
+        if ((this->m_hasBank && ((slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || slot - BANKBAG_FIRST <= BANKBAG_LAST - BANKBAG_FIRST) && !CGBankInfo::m_banker) || static_cast<int32_t>(slot) >= this->m_numSlots) {
             continue;
         }
 
@@ -182,7 +183,7 @@ int32_t CGBag_C::GetNumItems() const {
 // VERIFY: 724d9331 auto
 // OFFSET: 0x00753A50
 static int32_t __stdcall SlotMatchesSearchFlags(uint32_t slot, uint32_t flags) {
-    return (slot <= 18 && (flags & BAG_SEARCH_EQUIPMENT)) || (slot - 23 <= 15 && (flags & BAG_SEARCH_BACKPACK)) || (slot - 19 <= 3 && (flags & BAG_SEARCH_BAG_SLOTS)) || (((slot >= 39 && slot <= 66) || slot - 67 <= 6) && (flags & BAG_SEARCH_BANK)) || (slot - 86 <= 31 && (flags & BAG_SEARCH_KEYRING)) || (slot - 118 <= 31 && (flags & BAG_SEARCH_CURRENCY));
+    return (slot <= INVSLOT_TABARD && (flags & BAG_SEARCH_EQUIPMENT)) || (slot - BACKPACK_FIRST <= BACKPACK_LAST - BACKPACK_FIRST && (flags & BAG_SEARCH_BACKPACK)) || (slot - INVSLOT_BAG0 <= INVSLOT_BAG3 - INVSLOT_BAG0 && (flags & BAG_SEARCH_BAG_SLOTS)) || (((slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || slot - BANKBAG_FIRST <= BANKBAG_LAST - BANKBAG_FIRST) && (flags & BAG_SEARCH_BANK)) || (slot - KEYRING_FIRST <= KEYRING_LAST - KEYRING_FIRST && (flags & BAG_SEARCH_KEYRING)) || (slot - CURRENCYTOKEN_FIRST <= CURRENCYTOKEN_LAST - CURRENCYTOKEN_FIRST && (flags & BAG_SEARCH_CURRENCY));
 }
 
 // VERIFY: ddfa3202 auto
@@ -481,7 +482,7 @@ bool CGBag_C::FindTotemCategory(int32_t type, int32_t& mask, bool recurse, uint3
             WOWGUID guid = slot < static_cast<uint32_t>(this->m_numSlots) ? this->m_slots[slot] : WOWGUID();
             CGItem_C* item = static_cast<CGItem_C*>(ClntObjMgrObjectPtr(guid, TYPE_ITEM, __FILE__, __LINE__));
 
-            if (item && (!this->m_hasBank || slot < 74 || slot > 85)) {
+            if (item && (!this->m_hasBank || slot < BUYBACK_FIRST || slot > BUYBACK_LAST)) {
                 WOWGUID none = { 0 };
                 ItemStats_C* stats = g_itemDBCache.GetRecord(item->m_obj->m_entryID, none, nullptr, nullptr, false);
 
@@ -538,7 +539,7 @@ bool CGBag_C::ContainsItem(WOWGUID guid, bool recurse, uint32_t flags) const {
             WOWGUID slotGuid = slot < static_cast<uint32_t>(this->m_numSlots) ? this->m_slots[slot] : WOWGUID();
             CGItem_C* item = static_cast<CGItem_C*>(ClntObjMgrObjectPtr(slotGuid, TYPE_ITEM, __FILE__, __LINE__));
 
-            if (item && (!hasBank || slot < 74 || slot > 85)) {
+            if (item && (!hasBank || slot < BUYBACK_FIRST || slot > BUYBACK_LAST)) {
                 WOWGUID itemGuid = slot < static_cast<uint32_t>(this->m_numSlots) ? this->m_slots[slot] : WOWGUID();
 
                 if (itemGuid == guid) {

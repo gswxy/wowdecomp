@@ -549,11 +549,11 @@ const char* CGGameObject_C::GetModelFileNameInternal() const {
 // OFFSET: 0x0070EE80
 int32_t CGGameObject_C::GetModelFileName(const char** name) const {
     switch (this->m_gameObject->m_typeID) {
-        case 11:
-        case 14:
-        case 15:
-        case 33:
-        case 35: {
+        case TYPE_TRANSPORT:
+        case TYPE_MAP_OBJECT:
+        case TYPE_MO_TRANSPORT:
+        case TYPE_DESTRUCTIBLE_BUILDING:
+        case TYPE_TRAPDOOR: {
             return 0;
         }
 
@@ -814,7 +814,7 @@ void CGGameObject_C::UpdateInteractIconAttach() {
 // INLINED
 CGGameObject_C_TypeBase::CGGameObject_C_TypeBase(CGGameObject_C* owner) {
     this->m_owner = owner;
-    this->m_useErrorType = 234;
+    this->m_useErrorType = ERR_USE_LOCKED;
     this->m_interactDistance = MAX_LOOT_DISTANCE;
 }
 
@@ -1906,103 +1906,103 @@ CGGameObject_C::CGGameObject_C(uint32_t time, const CClientObjCreate& create) : 
     }
 
     switch (this->m_gameObject->m_typeID) {
-        case 0:
+        case TYPE_DOOR:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Door), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Door(this);
             break;
-        case 1:
+        case TYPE_BUTTON:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Button), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Button(this);
             break;
-        case 3:
+        case TYPE_CHEST:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Chest), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Chest(this);
             break;
-        case 6:
+        case TYPE_TRAP:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Trap), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Trap(this);
             break;
-        case 12:
+        case TYPE_AREADAMAGE:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_AreaDamage), __FILE__, __LINE__, 0)) CGGameObject_C_Type_AreaDamage(this);
             break;
-        case 2:
+        case TYPE_QUESTGIVER:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_QuestGiver), __FILE__, __LINE__, 0)) CGGameObject_C_Type_QuestGiver(this);
             break;
-        case 4:
+        case TYPE_BINDER:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Binder), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Binder(this);
             break;
-        case 5:
+        case TYPE_GENERIC:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Generic), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Generic(this);
             break;
-        case 7:
+        case TYPE_CHAIR:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Chair), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Chair(this);
             break;
-        case 8:
+        case TYPE_SPELL_FOCUS:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_SpellFocus), __FILE__, __LINE__, 0)) CGGameObject_C_Type_SpellFocus(this);
             break;
-        case 9:
+        case TYPE_TEXT:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Text), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Text(this);
             break;
-        case 10:
+        case TYPE_GOOBER:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Goober), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Goober(this);
             break;
-        case 11:
+        case TYPE_TRANSPORT:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Transport), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Transport(this);
             break;
-        case 35:
+        case TYPE_TRAPDOOR:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_TrapDoor), __FILE__, __LINE__, 0)) CGGameObject_C_Type_TrapDoor(this);
             break;
-        case 13:
+        case TYPE_CAMERA:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Camera), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Camera(this);
             break;
-        case 14:
+        case TYPE_MAP_OBJECT:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_MapObj), __FILE__, __LINE__, 0)) CGGameObject_C_Type_MapObj(this);
             break;
-        case 15:
+        case TYPE_MO_TRANSPORT:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_MapObjTransport), __FILE__, __LINE__, 0)) CGGameObject_C_Type_MapObjTransport(this);
             break;
-        case 16:
+        case TYPE_DUEL_ARBITER:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_DuelArbiter), __FILE__, __LINE__, 0)) CGGameObject_C_Type_DuelArbiter(this);
             break;
-        case 25:
+        case TYPE_FISHINGHOLE:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_FishingHole), __FILE__, __LINE__, 0)) CGGameObject_C_Type_FishingHole(this);
             break;
-        case 17:
+        case TYPE_FISHINGNODE:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_FishingNode), __FILE__, __LINE__, 0)) CGGameObject_C_Type_FishingNode(this);
             break;
-        case 18:
+        case TYPE_RITUAL:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Ritual), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Ritual(this);
             break;
-        case 19:
+        case TYPE_MAILBOX:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_Mailbox), __FILE__, __LINE__, 0)) CGGameObject_C_Type_Mailbox(this);
             break;
-        case 22:
+        case TYPE_SPELLCASTER:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_SpellCaster), __FILE__, __LINE__, 0)) CGGameObject_C_Type_SpellCaster(this);
             break;
-        case 23:
+        case TYPE_MEETINGSTONE:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_MeetingStone), __FILE__, __LINE__, 0)) CGGameObject_C_Type_MeetingStone(this);
             break;
-        case 24:
+        case TYPE_FLAGSTAND:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_FlagStand), __FILE__, __LINE__, 0)) CGGameObject_C_Type_FlagStand(this);
             break;
-        case 26:
+        case TYPE_FLAGDROP:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_FlagDrop), __FILE__, __LINE__, 0)) CGGameObject_C_Type_FlagDrop(this);
             break;
-        case 27:
+        case TYPE_MINIGAME:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_MiniGame), __FILE__, __LINE__, 0)) CGGameObject_C_Type_MiniGame(this);
             break;
-        case 29:
+        case TYPE_CAPTUREPOINT:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_CapturePoint), __FILE__, __LINE__, 0)) CGGameObject_C_Type_CapturePoint(this);
             break;
-        case 30:
+        case TYPE_AURAGENERATOR:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_AuraGenerator), __FILE__, __LINE__, 0)) CGGameObject_C_Type_AuraGenerator(this);
             break;
-        case 31:
+        case TYPE_DUNGEON_DIFFICULTY:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_DungeonDifficulty), __FILE__, __LINE__, 0)) CGGameObject_C_Type_DungeonDifficulty(this);
             break;
-        case 32:
+        case TYPE_BARBER_CHAIR:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_BarberChair), __FILE__, __LINE__, 0)) CGGameObject_C_Type_BarberChair(this);
             break;
-        case 33:
+        case TYPE_DESTRUCTIBLE_BUILDING:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_DestructibleBuilding), __FILE__, __LINE__, 0)) CGGameObject_C_Type_DestructibleBuilding(this);
             break;
-        case 34:
+        case TYPE_GUILD_BANK:
             this->m_typeData = new (SMemAlloc(sizeof(CGGameObject_C_Type_GuildBank), __FILE__, __LINE__, 0)) CGGameObject_C_Type_GuildBank(this);
             break;
         default:
@@ -3225,18 +3225,18 @@ CMapEntity* CGGameObject_C::CreateWorldObject(uint64_t guid, int32_t a4, uint32_
 // OFFSET: 0x00711A10
 void CGGameObject_C_Type_WorldObj::CreateWorldObj() {
     switch (this->m_owner->m_gameObject->m_typeID) {
-        case 11:
-        case 15:
-        case 35:
+        case TYPE_TRANSPORT:
+        case TYPE_MO_TRANSPORT:
+        case TYPE_TRAPDOOR:
             this->m_worldObject = this->m_owner->CreateWorldObject(this->m_owner->m_obj->m_guid.m_guid, 0, 0, nullptr);
 
-            if (this->m_worldObject && this->m_owner->m_gameObject->m_typeID == 11) {
+            if (this->m_worldObject && this->m_owner->m_gameObject->m_typeID == TYPE_TRANSPORT) {
                 World::ObjectSetMoveable(this->m_worldObject, 1);
             }
 
             break;
 
-        case 33:
+        case TYPE_DESTRUCTIBLE_BUILDING:
             return;
 
         default:

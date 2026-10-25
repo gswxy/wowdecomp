@@ -1738,7 +1738,7 @@ CM2Scene::~CM2Scene() {
 // VERIFY: 7bb79c57 manual
 // OFFSET: 0x00821930
 M2Element* CM2Scene::AddParticleElement(CParticleEmitter2* emitter, CM2Model* model, float depth, float alpha, int32_t split, uint32_t& index, uint32_t& additiveCount) {
-    if (!emitter->HasLiveParticles() || emitter->m_params.m_hasModel == 1) {
+    if (!emitter->HasLiveParticles() || emitter->m_params.m_hasModel == CParticleEmitter2::PT_MODEL) {
         return nullptr;
     }
 

@@ -4,6 +4,7 @@
 #include "Engine/Source/Base/ConvertUTF.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "GameVersion.h"
 
 // STATIC: 0x00ADBD48
 int32_t s_execState = EM_NOTACTIVE;
@@ -53,7 +54,7 @@ static int32_t ConsoleCommand_Quit(const char* command, const char* arguments) {
 // VERIFY: a074ad54 auto
 // OFFSET: 0x00768420
 static int32_t ConsoleCommand_Ver(const char* command, const char* arguments) {
-    ConsoleWrite("WoW [Release] Build 12340 (Jun 24 2010)", DEFAULT_COLOR);
+    ConsoleWrite("WoW [Release] Build " GAME_BUILD_STRING " (" GAME_BUILD_DATE ")", DEFAULT_COLOR);
 
     return 1;
 }

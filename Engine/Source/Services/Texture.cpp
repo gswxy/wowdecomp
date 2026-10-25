@@ -543,7 +543,7 @@ void ResolveMipLevel(EGxTexCommand command, uint32_t width, uint32_t height, uin
     // STATIC: 0x00B4A1E8
     static uint32_t s_emptyTexel;
 
-    if (command == GxTex_3) {
+    if (command == GxTex_Recreate) {
         return;
     }
 

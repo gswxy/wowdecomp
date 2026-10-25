@@ -5579,10 +5579,10 @@ int32_t CMovement_C::UpdateStatusInternal(uint32_t time, const CMovementStatus& 
         force = 1;
     }
 
-    if (!(this->m_flags & 0x80000000)) {
+    if (!(this->m_flags & MOVEMENTFLAG_STATUS_APPLIED)) {
         this->m_gameTime = status.m_gameTime;
         this->m_statusTimeMs = time;
-        this->m_flags |= 0x80000000;
+        this->m_flags |= MOVEMENTFLAG_STATUS_APPLIED;
     }
 
     CMovementGlobals* globals = MovementGetGlobals();
@@ -6182,11 +6182,11 @@ int32_t CMovement_C::OnPitchStop(uint32_t time, const CMovementStatus& status) {
 // VERIFY: 6eafa297 auto
 // OFFSET: 0x006EEDE0
 int32_t CMovement_C::OnSetWaterWalk(uint32_t time, const CMovementStatus& status) {
-    if (!this->UpdateStatus(time, status, (status.m_moveFlags & 0x10000000) ? MOVEEVENT_WATER_WALK : MOVEEVENT_LAND_WALK, 0.0f)) {
+    if (!this->UpdateStatus(time, status, (status.m_moveFlags & MOVEMENTFLAG_WATERWALKING) ? MOVEEVENT_WATER_WALK : MOVEEVENT_LAND_WALK, 0.0f)) {
         return 0;
     }
 
-    if (!(this->m_flags & 0x10000000) && this->TryStartFalling() && !this->m_globalUnitsLink.IsLinked()) {
+    if (!(this->m_flags & MOVEMENTFLAG_WATERWALKING) && this->TryStartFalling() && !this->m_globalUnitsLink.IsLinked()) {
         CMovementGlobals* globals = MovementGetGlobals();
 
         if (globals) {
@@ -6200,17 +6200,17 @@ int32_t CMovement_C::OnSetWaterWalk(uint32_t time, const CMovementStatus& status
 // VERIFY: 1cb0d9e1 auto
 // OFFSET: 0x006EEEC0
 int32_t CMovement_C::OnSetFeatherFall(uint32_t time, const CMovementStatus& status) {
-    return this->UpdateStatus(time, status, (status.m_moveFlags & 0x20000000) ? MOVEEVENT_FEATHER_FALL : MOVEEVENT_NORMAL_FALL, 0.0f);
+    return this->UpdateStatus(time, status, (status.m_moveFlags & MOVEMENTFLAG_SAFE_FALL) ? MOVEEVENT_FEATHER_FALL : MOVEEVENT_NORMAL_FALL, 0.0f);
 }
 
 // VERIFY: eef93de1 auto
 // OFFSET: 0x006EEF60
 int32_t CMovement_C::OnMoveHover(uint32_t time, const CMovementStatus& status) {
-    if (!this->UpdateStatus(time, status, (status.m_moveFlags & 0x40000000) ? MOVEEVENT_SET_HOVER : MOVEEVENT_UNSET_HOVER, 0.0f)) {
+    if (!this->UpdateStatus(time, status, (status.m_moveFlags & MOVEMENTFLAG_HOVER) ? MOVEEVENT_SET_HOVER : MOVEEVENT_UNSET_HOVER, 0.0f)) {
         return 0;
     }
 
-    uint32_t hover = this->m_flags & 0x40000000;
+    uint32_t hover = this->m_flags & MOVEMENTFLAG_HOVER;
 
     if (hover) {
         this->Jump(0);

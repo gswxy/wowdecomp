@@ -507,7 +507,7 @@ void CGxDeviceD3d11::ITexMarkAsUpdated(CGxTex* texId) {
 void CGxDeviceD3d11::ITexForceRecreation(int32_t all) {
     // 4.3.4 (0x0086C590) walks every texture, created or not. Skipping those without a D3D object (never bound yet,
     // or released by an earlier recreation) left them with whatever partial update rect they had and without the
-    // GxTex_3 regen notice, so after a device recreate they came back with only part of their texels.
+    // GxTex_Recreate regen notice, so after a device recreate they came back with only part of their texels.
     for (CGxTex* texId = this->m_textures.Head(); texId; texId = this->m_textures.Next(texId)) {
         if (!(all || texId->m_flags.m_renderTarget)) {
             continue;
@@ -537,7 +537,7 @@ void CGxDeviceD3d11::ITexForceRecreation(int32_t all) {
         const void* texels;
 
         if (texId->m_userFunc) {
-            texId->m_userFunc(GxTex_3, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+            texId->m_userFunc(GxTex_Recreate, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
         }
     }
 

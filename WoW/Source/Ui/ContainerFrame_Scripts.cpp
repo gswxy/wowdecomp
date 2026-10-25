@@ -80,8 +80,8 @@ static int32_t Script_GetContainerNumFreeSlots(lua_State* L) {
     double index = lua_tonumber(L, 1);
 
     if (index == 0.0 || (index == -1.0 && CGBankInfo::m_banker)) {
-        uint32_t first = index == 0.0 ? 23 : 39;
-        uint32_t last = index == 0.0 ? 38 : 66;
+        uint32_t first = index == 0.0 ? BACKPACK_FIRST : BANKGENERIC_FIRST;
+        uint32_t last = index == 0.0 ? BACKPACK_LAST : BANKGENERIC_LAST;
         int32_t free = 0;
 
         for (uint32_t slot = first; slot <= last; slot++) {
@@ -428,7 +428,7 @@ static int32_t Script_PickupContainerItem(lua_State* L) {
         return 0;
     }
 
-    if (bag->m_hasBank && ((slot >= 39 && slot <= 66) || static_cast<uint32_t>(slot - 67) <= 6) && !CGBankInfo::m_banker) {
+    if (bag->m_hasBank && ((slot >= BANKGENERIC_FIRST && slot <= BANKGENERIC_LAST) || static_cast<uint32_t>(slot - BANKBAG_FIRST) <= BANKBAG_LAST - BANKBAG_FIRST) && !CGBankInfo::m_banker) {
         return 0;
     }
 

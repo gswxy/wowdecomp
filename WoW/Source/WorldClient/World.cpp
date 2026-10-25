@@ -802,11 +802,11 @@ void CWorldScene::RenderParticulate() {
 // VERIFY: 623133e8 auto
 // OFFSET: 0x0077FCD0
 int32_t World::ObjectIsDrawable(CMapBaseObj* object) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         return static_cast<CMapObjDef*>(object)->IsAllDrawable();
     }
 
-    if (!(object->m_type & 0x40)) {
+    if (!(object->m_type & CMapBaseObj::Type_DoodadDef)) {
         return 0;
     }
 
@@ -822,7 +822,7 @@ int32_t World::ObjectIsDrawable(CMapBaseObj* object) {
 // VERIFY: 86d43bac auto
 // OFFSET: 0x0077FD10
 int32_t World::ObjectIsLoaded(CMapBaseObj* object) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         CMapObjDef* mapObjDef = static_cast<CMapObjDef*>(object);
 
         if (!mapObjDef->IsAllLoaded()) {
@@ -832,7 +832,7 @@ int32_t World::ObjectIsLoaded(CMapBaseObj* object) {
         return mapObjDef->m_owner->IsAllLoaded();
     }
 
-    if (!(object->m_type & 0x40)) {
+    if (!(object->m_type & CMapBaseObj::Type_DoodadDef)) {
         return 0;
     }
 
@@ -881,7 +881,7 @@ void World::ObjectSetAlwaysExterior(CMapBaseObj* object, int32_t enable) {
 // VERIFY: 4870d850 manual
 // OFFSET: 0x0077FE40
 int32_t World::ObjectMoveDoodads(CMapBaseObj* source, uint16_t doodadSet, CMapBaseObj* target, uint16_t targetDoodadSet) {
-    if (!(source->m_type & 0x8) || !(source->m_flags & MAPOBJ_FLAG_PREPARED) || !(target->m_type & 0x8) || !(target->m_flags & MAPOBJ_FLAG_PREPARED)) {
+    if (!(source->m_type & CMapBaseObj::Type_MapObjDef) || !(source->m_flags & MAPOBJ_FLAG_PREPARED) || !(target->m_type & CMapBaseObj::Type_MapObjDef) || !(target->m_flags & MAPOBJ_FLAG_PREPARED)) {
         return 0;
     }
 
@@ -891,7 +891,7 @@ int32_t World::ObjectMoveDoodads(CMapBaseObj* source, uint16_t doodadSet, CMapBa
 // VERIFY: dcda60dd auto
 // OFFSET: 0x0077FE80
 void World::ObjectSetDoodadEmittersIgnoresDistance(CMapBaseObj* object, int32_t ignore, uint16_t doodadSet) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         CMapObjDef::SetDoodadEmittersIgnoresDistance(static_cast<CMapObjDef*>(object), ignore, doodadSet);
     }
 }
@@ -899,7 +899,7 @@ void World::ObjectSetDoodadEmittersIgnoresDistance(CMapBaseObj* object, int32_t 
 // VERIFY: 35100e77 auto
 // OFFSET: 0x0077FEA0
 void World::ObjectSetDoodadsEnabled(CMapBaseObj* object, int32_t enable, uint16_t doodadSet) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         CMapObjDef::SetDoodadsEnabled(static_cast<CMapObjDef*>(object), enable, doodadSet);
     }
 }
@@ -907,9 +907,9 @@ void World::ObjectSetDoodadsEnabled(CMapBaseObj* object, int32_t enable, uint16_
 // VERIFY: 2c7a8fa7 auto
 // OFFSET: 0x0077FEC0
 void World::ObjectSetSequence(CMapEntity* entity, uint32_t sequence, int32_t a3, int32_t doodadSet) {
-    if (entity->m_type & 0x8) {
+    if (entity->m_type & CMapBaseObj::Type_MapObjDef) {
         reinterpret_cast<CMapObjDef*>(entity)->SetSequence(sequence, a3, static_cast<uint16_t>(doodadSet));
-    } else if (entity->m_type & 0x40) {
+    } else if (entity->m_type & CMapBaseObj::Type_DoodadDef) {
         if (entity->m_model) {
             entity->m_model->SetBoneSequence(0xFFFFFFFF, sequence, 0xFFFFFFFF, 0, 1.0f, 1, 1);
         }
@@ -919,9 +919,9 @@ void World::ObjectSetSequence(CMapEntity* entity, uint32_t sequence, int32_t a3,
 // VERIFY: e33527b6 auto
 // OFFSET: 0x0077FF60
 void World::ObjectSetEventCallback(CMapBaseObj* object, void (*callback)(CM2Model* model, uint32_t boneId, uint32_t eventId, uint32_t data, const C3Vector* position, uint32_t time, uint64_t param), uint64_t param, uint16_t doodadSet) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         static_cast<CMapObjDef*>(object)->SetEventCallback(callback, param, doodadSet);
-    } else if (object->m_type & 0x40) {
+    } else if (object->m_type & CMapBaseObj::Type_DoodadDef) {
         CM2Model* model = static_cast<CMapDoodadDef*>(object)->m_model;
 
         if (model) {
@@ -933,9 +933,9 @@ void World::ObjectSetEventCallback(CMapBaseObj* object, void (*callback)(CM2Mode
 // VERIFY: 341fb3f3 auto
 // OFFSET: 0x00780130
 void World::ObjectGetExtents(CMapBaseObj* object, CAaBox* extents) {
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         static_cast<CMapObjDef*>(object)->m_owner->GetBounds(extents);
-    } else if (object->m_type & 0x40) {
+    } else if (object->m_type & CMapBaseObj::Type_DoodadDef) {
         *extents = static_cast<CMapDoodadDef*>(object)->m_model->GetBoundingBox();
     }
 }
@@ -943,7 +943,7 @@ void World::ObjectGetExtents(CMapBaseObj* object, CAaBox* extents) {
 // VERIFY: aa9498a7 auto
 // OFFSET: 0x00780190
 int32_t World::ObjectIsWMO(CMapBaseObj* object) {
-    return object->m_type & 0x8;
+    return object->m_type & CMapBaseObj::Type_MapObjDef;
 }
 
 // VERIFY: 740254e1 auto
@@ -1070,7 +1070,7 @@ uint64_t World::QueryObjectParentParam64(CMapBaseObj* object) {
 
     CMapBaseObj* parent = link->m_ref;
 
-    if (!parent || !(parent->m_type & 0x10)) {
+    if (!parent || !(parent->m_type & CMapBaseObj::Type_MapObjDefGroup)) {
         return 0;
     }
 
@@ -1088,7 +1088,7 @@ CMapEntity* CMap::ObjectCreate(CM2Model* model, MAP_OBJECT_FUNC func, void* func
     entity->m_diffuseLightScale = 1.0f;
     entity->m_vec2 = C3Vector(10000000.0f, 10000000.0f, 10000000.0f);
     entity->m_targetDiffuseLightScale = 1.0f;
-    entity->m_type |= 0x200;
+    entity->m_type |= CMapBaseObj::Type_UserCreated;
     entity->m_staticFlags = (entity->m_staticFlags & ~0xEC02) | ((flags & 0x1) << 1) | ((flags & 0x4) << 8) | (~(flags << 10) & 0x800) | (((flags >> 3) & 0x1) << 13) | ((flags & 0x10) << 11);
     entity->m_flags = static_cast<MapObjFlag>(0);
     entity->m_func = nullptr;
@@ -1161,9 +1161,9 @@ void CWorld::ObjectDestroy(CMapBaseObj* object) {
     uint16_t type = object->m_type;
     object->m_refCount--;
 
-    if (type & 0x8) {
+    if (type & CMapBaseObj::Type_MapObjDef) {
         CMap::PurgeMapObjDef(static_cast<CMapObjDef*>(object));
-    } else if (type & 0x40) {
+    } else if (type & CMapBaseObj::Type_DoodadDef) {
         CMapDoodadDef::Purge(static_cast<CMapDoodadDef*>(object));
     }
 }
@@ -4841,7 +4841,7 @@ void World::ObjectSetUpdateCallback(CMapEntity* entity, int32_t (*func)(void*, u
 // OFFSET: 0x00782000
 CMapEntity* CMap::ObjectCreateStatic(CM2Model* model, const C44Matrix& matrix, MAP_OBJECT_FUNC func, void* funcParam, uintptr_t param32) {
     CMapEntity* entity = CMap::AllocEntity(0);
-    entity->m_type |= 0x200;
+    entity->m_type |= CMapBaseObj::Type_UserCreated;
     entity->m_staticFlags = (entity->m_staticFlags & 0xFFFFA390) | 0x400;
     entity->m_flags = MAPOBJ_FLAG_UNPLACED;
     entity->m_func = nullptr;
@@ -4896,7 +4896,7 @@ CMapEntity* CMap::ObjectCreateStatic(CM2Model* model, const C44Matrix& matrix, M
 // OFFSET: 0x00781C90
 CMapEntity* CMap::ObjectCreateStaticEx(CM2Model* model, const C44Matrix& matrix, MAP_OBJECT_FUNC func, void* funcParam, uint64_t param64, uintptr_t param32, const char* file, int32_t line) {
     CMapEntity* entity = CMap::AllocEntity(0);
-    entity->m_type |= 0x300;
+    entity->m_type |= CMapBaseObj::Type_StaticEntityEx;
     entity->m_staticFlags = (entity->m_staticFlags & 0xFFFFA7D0) | 0x400;
     entity->m_func = nullptr;
     entity->unused_00B4 = 0;
@@ -5082,7 +5082,7 @@ void World::ObjectSetRenderEnabled(CMapBaseObj* object, int32_t enable) {
         object->m_flags = static_cast<MapObjFlag>(object->m_flags | MAPOBJ_FLAG_DISABLED);
     }
 
-    if (!(object->m_type & 0x8)) {
+    if (!(object->m_type & CMapBaseObj::Type_MapObjDef)) {
         return;
     }
 
@@ -5356,9 +5356,9 @@ CMapBaseObj* CWorld::ObjectCreate(const char* name, const C3Vector& position, fl
 void World::ObjectSetSequenceFinishedCallback(CMapEntity* entity, void (*callback)(CM2Model* model, uint32_t boneId, uint32_t sequenceId, int32_t interrupted, uint32_t time, uint64_t param), uint64_t param, uint16_t doodad) {
     CMapBaseObj* object = entity;
 
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         static_cast<CMapObjDef*>(object)->SetSequenceFinishedCallback(callback, param, doodad);
-    } else if ((object->m_type & 0x40) && entity->m_model) {
+    } else if ((object->m_type & CMapBaseObj::Type_DoodadDef) && entity->m_model) {
         entity->m_model->SetSequenceCallback(reinterpret_cast<void*>(callback), param);
     }
 }
@@ -5370,9 +5370,9 @@ void World::ObjectUpdate(CMapBaseObj* object, const C3Vector* position, float fa
         CMap::SnapBaseObjToSubChunk(object, position, facing);
     }
 
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         CMapObjDef::UpdatePos(static_cast<CMapObjDef*>(object), position, facing, a4, a5);
-    } else if (object->m_type & 0x40) {
+    } else if (object->m_type & CMapBaseObj::Type_DoodadDef) {
         CMap::UpdateDoodadDef(static_cast<CMapDoodadDef*>(object), position, facing);
     }
 }
@@ -5382,9 +5382,9 @@ void World::ObjectUpdate(CMapBaseObj* object, const C3Vector* position, float fa
 void World::ObjectUpdate(CMapEntity* entity, const C44Matrix& matrix) {
     CMapBaseObj* object = entity;
 
-    if (object->m_type & 0x8) {
+    if (object->m_type & CMapBaseObj::Type_MapObjDef) {
         CMapObjDef::UpdateMatrix(reinterpret_cast<CMapObjDef*>(object), matrix);
-    } else if (object->m_type & 0x40) {
+    } else if (object->m_type & CMapBaseObj::Type_DoodadDef) {
         CMap::UpdateDoodadDefTransform(reinterpret_cast<CMapDoodadDef*>(object), matrix);
     }
 }
@@ -5400,11 +5400,11 @@ void World::SetFrameCntCallback(void (*callback)()) {
 bool World::ObjectTestConvexVolume(CMapEntity* entity, const C3Vector& point) {
     uint16_t type = entity->m_type;
 
-    if (type & 0x8) {
+    if (type & CMapBaseObj::Type_MapObjDef) {
         return static_cast<CMapObjDef*>(static_cast<CMapBaseObj*>(entity))->m_owner->TestConvexVolume(point);
     }
 
-    if (!(type & 0x40)) {
+    if (!(type & CMapBaseObj::Type_DoodadDef)) {
         return true;
     }
 

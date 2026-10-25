@@ -21,7 +21,7 @@
 #include <cstddef>
 
 // STATIC: 0x00C23540
-WOWGUID CGContainerInfo::m_containers[11];
+WOWGUID CGContainerInfo::m_containers[TOTAL_BAG_SLOTS];
 
 // VERIFY: 2f485abd auto
 // OFFSET: 0x005D9C20
@@ -61,7 +61,7 @@ void CGContainerInfo::OpenContainer(WOWGUID guid) {
         return;
     }
 
-    for (uint32_t i = 0; i < 11; i++) {
+    for (uint32_t i = 0; i < TOTAL_BAG_SLOTS; i++) {
         if (CGContainerInfo::m_containers[i] == guid) {
             FrameScript_SignalEvent(SCRIPT_EVENT_BAG_OPEN, "%d", i + 1);
         }
@@ -71,7 +71,7 @@ void CGContainerInfo::OpenContainer(WOWGUID guid) {
 // VERIFY: bf060c1c manual
 // OFFSET: 0x005D9D90
 void CGContainerInfo::LeaveWorld() {
-    for (uint32_t i = 0; i < 11; i++) {
+    for (uint32_t i = 0; i < TOTAL_BAG_SLOTS; i++) {
         if (!CGContainerInfo::m_containers[i]) {
             continue;
         }
@@ -119,7 +119,7 @@ void CGContainerInfo::UpdateCooldowns() {
 // VERIFY: 1e625228 manual
 // OFFSET: 0x005D6F20
 WOWGUID GetBagAtIndex(uint32_t index) {
-    if (index <= 10 && (index < 4 || CGBankInfo::m_banker)) {
+    if (index <= TOTAL_BAG_SLOTS - 1 && (index < NUM_BAG_SLOTS || CGBankInfo::m_banker)) {
         return CGContainerInfo::m_containers[index];
     }
 
@@ -141,14 +141,14 @@ bool CGContainerInfo::GetLuaBagAndSlot(lua_State* L, CGBag_C** bag, int32_t* slo
     *slot = static_cast<int32_t>(lua_tonumber(L, 2)) - 1;
 
     if (index >= 0) {
-        if (index < 11) {
+        if (index < TOTAL_BAG_SLOTS) {
             CGContainer_C* container = static_cast<CGContainer_C*>(ClntObjMgrObjectPtr(GetBagAtIndex(index), TYPE_CONTAINER, __FILE__, __LINE__));
 
             if (container) {
                 *bag = container->GetBag();
             }
 
-            if (index >= 4) {
+            if (index >= NUM_BAG_SLOTS) {
                 *bank = 1;
             }
         }
@@ -160,18 +160,18 @@ bool CGContainerInfo::GetLuaBagAndSlot(lua_State* L, CGBag_C** bag, int32_t* slo
                 return false;
 
             case -3:
-                *slot += 86;
+                *slot += KEYRING_FIRST;
 
-                if (*slot > 117) {
+                if (*slot > KEYRING_LAST) {
                     return false;
                 }
 
                 break;
 
             case -2:
-                *slot += 39;
+                *slot += BANKGENERIC_FIRST;
 
-                if (*slot > 66) {
+                if (*slot > BANKGENERIC_LAST) {
                     return false;
                 }
 
@@ -179,9 +179,9 @@ bool CGContainerInfo::GetLuaBagAndSlot(lua_State* L, CGBag_C** bag, int32_t* slo
                 break;
 
             case -1:
-                *slot += 23;
+                *slot += BACKPACK_FIRST;
 
-                if (*slot > 38) {
+                if (*slot > BACKPACK_LAST) {
                     return false;
                 }
 
@@ -208,7 +208,7 @@ void CGContainerInfo::UpdateContents(WOWGUID guid) {
         return;
     }
 
-    for (uint32_t i = 0; i < 11; i++) {
+    for (uint32_t i = 0; i < TOTAL_BAG_SLOTS; i++) {
         if (CGContainerInfo::m_containers[i] == guid) {
             FrameScript_SignalEvent(SCRIPT_EVENT_BAG_UPDATE, "%d", i + 1);
             return;
@@ -355,7 +355,7 @@ int32_t UpdateInvContents(WOWGUID guid, uint32_t fieldOffset, uint32_t fieldSize
     CGGameUI::m_autoStoreItemID = 0;
     CGContainerInfo::UpdateContents(guid);
 
-    if ((oldItem && oldItem->GetClassID() == 10) || (newItem && newItem->GetClassID() == 10) || slot - 118 <= 31) {
+    if ((oldItem && oldItem->GetClassID() == 10) || (newItem && newItem->GetClassID() == 10) || slot - CURRENCYTOKEN_FIRST <= CURRENCYTOKEN_LAST - CURRENCYTOKEN_FIRST) {
         CGCurrencyTypes::EnterWorld();
     }
 
@@ -380,7 +380,7 @@ void CGContainerInfo::UpdateContainers() {
         return;
     }
 
-    for (uint32_t i = 0; i < 11; i++) {
+    for (uint32_t i = 0; i < TOTAL_BAG_SLOTS; i++) {
         uint32_t slot = i < 4 ? i + 19 : i + 63;
         WOWGUID guid = slot < static_cast<uint32_t>(player->m_bag.m_numSlots) ? player->m_bag.m_slots[slot] : WOWGUID();
 

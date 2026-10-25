@@ -974,7 +974,7 @@ void CompositePass(FogFrame& f, CGxTex* fogResult) {
         for (int32_t step = 1; step <= 7; step++) {
             const float weight = step == 7 ? 1.0f : (2 * step + 1) / 16.0f + 0.5f / 255.0f;
             SetStencil(GxStencilCmp_Equal, step << 5, kFadeBits, 0, GxStencilOp_Keep);
-            GxRsSet(Unk84, weight);     // BLENDFACTOR (GxBlend_ConstantAlpha)
+            GxRsSet(GxRs_BlendFactor, weight);     // BLENDFACTOR (GxBlend_ConstantAlpha)
             DrawQuad(static_cast<uint32_t>(f.vpW), static_cast<uint32_t>(f.vpH), f.vpMinX, f.vpMaxX, f.vpMinY, f.vpMaxY);
         }
         GxRsSet(GxRs_StencilTest, 0);

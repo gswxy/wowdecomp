@@ -21815,7 +21815,7 @@ CM2Model* CGUnit_C::CreateItemModel(uint32_t displayId, uint32_t inventoryType, 
 
     ItemDisplayInfoRec rec;
 
-    if (!g_itemDisplayInfoDB.GetRecordByIndex(displayId, &rec)) {
+    if (!g_itemDisplayInfoDB.GetRecord(displayId, &rec)) {
         return nullptr;
     }
 

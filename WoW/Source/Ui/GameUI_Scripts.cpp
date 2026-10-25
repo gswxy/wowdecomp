@@ -175,6 +175,7 @@
 #include "WoW/Source/DB/Rec/PaperDollItemFrameRec.h"
 #include "WoW/Source/Object/WGUID.h"
 #include "WoW/Source/Ui/Radio.h"
+#include "GameVersion.h"
 
 // STATIC: 0x00BD0CC4
 static CWOWClientStatus* s_loadAddOnStatus;
@@ -3241,9 +3242,9 @@ static int32_t Script_Logout(lua_State* L) {
 // VERIFY: e8e90aa3 manual
 // OFFSET: 0x0050F890
 static int32_t Script_GetBuildInfo(lua_State* L) {
-    lua_pushstring(L, "3.3.5");
-    lua_pushstring(L, "12340");
-    lua_pushstring(L, "Jun 24 2010");
+    lua_pushstring(L, GAME_VERSION);
+    lua_pushstring(L, GAME_BUILD_STRING);
+    lua_pushstring(L, GAME_BUILD_DATE);
     lua_pushnumber(L, GetCodeInterfaceVersion());
     return 4;
 }

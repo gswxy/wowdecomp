@@ -3244,7 +3244,7 @@ void CGxDeviceD3d11::IRsSendToHw(EGxRenderState which) {
             break;
         }
 
-        case Unk84:
+        case GxRs_BlendFactor:
             for (uint32_t i = 0; i < 4; i++) {
                 this->m_blendFactor[i] = value.m_data.f[0];
             }

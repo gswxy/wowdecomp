@@ -1098,7 +1098,7 @@ void CShadowQuery::GatherShadowCasters(CShadowCacheQueryData& data, int32_t firs
 
         int32_t isUnit = 1;
 
-        if (!(entity->m_type & 0x20) || (entity->m_staticFlags & 0x2000)) {
+        if (!(entity->m_type & CMapBaseObj::Type_Entity) || (entity->m_staticFlags & 0x2000)) {
             isUnit = 0;
         }
 

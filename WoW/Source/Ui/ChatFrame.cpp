@@ -2976,7 +2976,7 @@ void CGChat::InitializeGame() {
 void CGChat::OnLogXPGain(int32_t amount) {
     char text[3000];
     SStrPrintf(text, sizeof(text), FrameScript_GetText("COMBATLOG_XPLOSS_FIRSTPERSON_UNNAMED", -1, GENDER_NOT_APPLICABLE), -amount);
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // VERIFY: d2c71361 manual
@@ -2999,7 +2999,7 @@ void CGChat::InformTargetIcon(WOWGUID setter, WOWGUID target, int32_t index) {
     if (name) {
         char buffer[3000];
         SStrPrintf(buffer, sizeof(buffer), FrameScript_GetText("TARGET_ICON_SET", -1, GENDER_NOT_APPLICABLE), name->m_name, name->m_name, index + 1, unitName);
-        CGChat::AddChatMessage(buffer, 52, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+        CGChat::AddChatMessage(buffer, CHAT_MSG_TARGETICONS, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 }
 
@@ -3023,7 +3023,7 @@ static void UnitCombatLogShowXPGained(CGUnit_C* unit, int32_t amount, float grou
         SStrPrintf(text, sizeof(text), FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), amount, abs(amount - base));
     }
 
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // STATIC: 0x00AC7FB4
@@ -3077,7 +3077,7 @@ void CGChat::LogXPGain(CGUnit_C* unit, int32_t amount, int32_t type, int32_t bon
                 SStrPrintf(text, sizeof(text), FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), unit->GetUnitName(nullptr, 1), amount, bonusText, exhaustion->m_name, abs(bonus - base));
             }
 
-            CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+            CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             return;
         }
 
@@ -3096,7 +3096,7 @@ void CGChat::LogXPGain(CGUnit_C* unit, int32_t amount, int32_t type, int32_t bon
     ExhaustionRec* exhaustion = g_exhaustionDB.GetRecord(6);
     char text[3000];
     SStrPrintf(text, sizeof(text), FrameScript_GetText("COMBATLOG_XPGAIN_QUEST", -1, GENDER_NOT_APPLICABLE), amount, bonusText, exhaustion->m_name, rafBonus);
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // VERIFY: 294836e5 manual

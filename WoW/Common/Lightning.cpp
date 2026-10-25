@@ -11,6 +11,7 @@
 #include "Engine/Source/Tempest/CMath.h"
 #include "Engine/Source/Tempest/CRandom.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00DCEC98
 static C3Vector s_beamAxisX;
@@ -941,8 +942,8 @@ void CLightningManager::Render(const C3Vector& cameraPos) {
     g_theGxDevicePtr->RsSet(GxRs_MatDiffuse, static_cast<int32_t>(0xFF000000));
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_Fog, 0);
-    g_theGxDevicePtr->RsSet(GxRs_ColorOp0, 0);
-    g_theGxDevicePtr->RsSet(GxRs_AlphaOp0, 0);
+    g_theGxDevicePtr->RsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    g_theGxDevicePtr->RsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     g_theGxDevicePtr->RsSet(GxRs_ColorWrite, 15);
 
     for (int32_t layer = 0; layer < 4; layer++) {

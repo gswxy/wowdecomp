@@ -384,7 +384,7 @@ void CEffect::EffectEvent(CM2Model* model, uint32_t boneId, uint32_t eventId, ui
     }
 
     if (eventId == 0x444E5324) {
-        if ((object->m_obj->m_type & 0x8) && object->IsActiveMover()) {
+        if ((object->m_obj->m_type & TYPE_UNIT) && object->IsActiveMover()) {
             SE2SoundKitProperties properties;
             properties.ResetToDefaults();
 
@@ -405,7 +405,7 @@ void CEffect::EffectEvent(CM2Model* model, uint32_t boneId, uint32_t eventId, ui
         if (!(effect->m_flags & 0x200000)) {
             SI2::AttachToObject(&effect->m_soundKitObject, object->m_obj->m_guid);
         }
-    } else if (eventId == 0x54494824 && (object->m_obj->m_type & 0x8)) {
+    } else if (eventId == 0x54494824 && (object->m_obj->m_type & TYPE_UNIT)) {
         object->PlayWoundAnimKit(0);
     }
 }

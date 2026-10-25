@@ -5,6 +5,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00D45098
 CDataAllocator Liquid::s_waterFFPAllocator(sizeof(Liquid::CMaterialWaterFFP), 8);
@@ -338,8 +339,8 @@ void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid
     g_theGxDevicePtr->RsSet(GxRs_Texture1, texture1);
     g_theGxDevicePtr->RsSet(GxRs_TextureCoord1, 0);
     g_theGxDevicePtr->RsSet(GxRs_TextureShader1, 1);
-    g_theGxDevicePtr->RsSet(GxRs_ColorOp1, 2);
-    g_theGxDevicePtr->RsSet(GxRs_AlphaOp1, 3);
+    g_theGxDevicePtr->RsSet(GxRs_ColorOp1, GxTexOp_Add);
+    g_theGxDevicePtr->RsSet(GxRs_AlphaOp1, GxTexOp_PassThru);
 
     C44Matrix texMatrix1 = C44Matrix::RotationAroundZ(angle1);
     texMatrix1.Scale(scale1);

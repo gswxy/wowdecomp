@@ -317,7 +317,7 @@ void CGCharacterModelBase::SetUpModel(CreatureStats_C* stats) {
 // VERIFY: 24702114 auto
 // OFFSET: 0x005974A0
 void CGCharacterModelBase::ConfigureCamera() {
-    this->SetCameraByID(1);
+    this->SetCameraByID(CAMERA_PAPERDOLL);
     CCamera* camera;
 
     if (this->m_camera) {

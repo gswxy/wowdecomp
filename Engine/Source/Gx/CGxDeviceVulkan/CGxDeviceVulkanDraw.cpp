@@ -440,7 +440,7 @@ void CGxDeviceVulkan::ITexTransforms(pipelines::Draw& d) {
 // enable: the depth function (ALWAYS when the test is off), the depth write, the colour write mask,
 // the culling (clamped to the table's three entries), the fill mode, D3D's DEPTHBIAS (the negated
 // GxRs_PolygonOffset, a depth-range value, scaled to the depth buffer's step) and D3D's BLENDFACTOR
-// (the Unk84 value replicated to every channel).
+// (the GxRs_BlendFactor value replicated to every channel).
 void CGxDeviceVulkan::IRenderStates(pipelines::Draw& d) {
     const uint32_t master = this->m_appMasterEnables;
 
@@ -487,7 +487,7 @@ void CGxDeviceVulkan::IRenderStates(pipelines::Draw& d) {
         d.depthBias = -this->m_appRenderStates[GxRs_PolygonOffset].m_value.m_data.f[0] * step;
     }
 
-    const float factor = this->m_appRenderStates[Unk84].m_value.m_data.f[0];
+    const float factor = this->m_appRenderStates[GxRs_BlendFactor].m_value.m_data.f[0];
     const float quantised = static_cast<float>(static_cast<uint32_t>(factor * 255.0f) & 0xFF) / 255.0f;
     d.blendConstant[0] = quantised;
     d.blendConstant[1] = quantised;

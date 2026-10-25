@@ -44,6 +44,7 @@
 #include "WoW/Source/Net/NetClient/NetClient.h"
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "WoW/Source/Ui/PetInfo.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 struct MissileUnitRank {
     CGUnit_C* m_unit;
@@ -576,8 +577,8 @@ void CGUnit_C::RenderMissileTrajectoryTargetingTexture() {
         GxXformTranslate(GxXform_World, -CGWorldFrame::GetActiveCamera()->m_position);
         GxRsSet(GxRs_Culling, 0);
         GxRsSet(GxRs_Fog, 0);
-        GxRsSet(GxRs_ColorOp0, 0);
-        GxRsSet(GxRs_AlphaOp0, 0);
+        GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+        GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
         GxRsSet(GxRs_ColorWrite, 15);
         GxRsSet(GxRs_Lighting, 0);
         GxRsSet(GxRs_DepthWrite, 0);
@@ -676,10 +677,10 @@ void CGUnit_C::RenderMissileTrajectoryTargetingTexture() {
     GxRsSet(GxRs_DepthWrite, 0);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, impactTex);
     g_theGxDevicePtr->RsSet(GxRs_Texture1, ProjectTex2dGetAddFadeTex());
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
-    GxRsSet(GxRs_ColorOp1, 0);
-    GxRsSet(GxRs_AlphaOp1, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_ColorOp1, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp1, GxTexOp_Mod);
     const C3Vector& impact = CGUnit_C::s_trajectoryPoints[s_trajectoryPointCount - 1];
     float radius = vehicle->m_msslTrgtImpactTexRadius;
     CAaBox box;

@@ -2385,6 +2385,16 @@ int32_t OnUpdatePlayerGlyphSlotsEnabled(WOWGUID guid, uint32_t offset, uint32_t 
     return 1;
 }
 
+// INLINED
+ITEMSWAP::ITEMSWAP() {
+    this->m_srcContainer = WOWGUID();
+    this->m_dstContainer = WOWGUID();
+    this->m_srcSlot = 0xFFFFFFFF;
+    this->m_dstSlot = 0xFFFFFFFF;
+    this->m_itemId = 0;
+    this->m_item = nullptr;
+}
+
 // VERIFY: baa57619 auto
 // OFFSET: 0x006DF850
 uint32_t FindEmptySwapIndex() {
@@ -2791,7 +2801,7 @@ CGPlayer_C::CGPlayer_C(uint32_t time, const CClientObjCreate& create)
     bool activePlayer = this->m_obj->m_guid == ClntObjMgrGetActivePlayer();
     this->m_bag.m_guid = this->m_obj->m_guid;
     this->m_bag.m_hasBank = 1;
-    this->m_bag.m_numSlots = activePlayer ? 150 : 0;
+    this->m_bag.m_numSlots = activePlayer ? PLAYER_INVENTORY_SLOTS : 0;
     this->m_bag.m_slots = reinterpret_cast<WOWGUID*>(player->m_playerFieldInvSlotHead);
     this->m_combatTarget.m_guid = 0;
 
@@ -9868,8 +9878,9 @@ static void AutoEquipItemCallback(int32_t id, const WOWGUID& guid, void* param, 
     WOWGUID none = WOWGUID();
     ItemStats_C* stats = g_itemDBCache.GetRecord(id, none, nullptr, nullptr, false);
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
+    uint32_t count = s_itemSwaps.m_count;
 
-    for (uint32_t i = 0; i < s_itemSwaps.m_count; i++) {
+    for (uint32_t i = 0; i < count; i++) {
         ITEMSWAP& swap = s_itemSwaps.m_data[i];
 
         if (swap.m_itemId != id) {
@@ -9952,8 +9963,9 @@ static void SwapItemsStatsCallback(int32_t id, const WOWGUID& guid, void* param,
     WOWGUID none = WOWGUID();
     ItemStats_C* stats = g_itemDBCache.GetRecord(id, none, nullptr, nullptr, false);
     CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
+    uint32_t count = s_itemSwaps.m_count;
 
-    for (uint32_t i = 0; i < s_itemSwaps.m_count; i++) {
+    for (uint32_t i = 0; i < count; i++) {
         ITEMSWAP& swap = s_itemSwaps.m_data[i];
 
         if (swap.m_itemId != id) {
@@ -9964,12 +9976,13 @@ static void SwapItemsStatsCallback(int32_t id, const WOWGUID& guid, void* param,
             player->SwapItems(WOWGUID(), swap.m_srcContainer, swap.m_srcSlot, swap.m_dstContainer, swap.m_dstSlot, 0);
         }
 
-        swap.m_srcContainer = WOWGUID();
-        swap.m_dstContainer = WOWGUID();
-        swap.m_srcSlot = 0xFFFFFFFF;
-        swap.m_dstSlot = 0xFFFFFFFF;
-        swap.m_itemId = 0;
-        swap.m_item = 0;
+        ITEMSWAP& entry = s_itemSwaps.m_data[i];
+        entry.m_srcContainer = WOWGUID();
+        entry.m_dstContainer = WOWGUID();
+        entry.m_srcSlot = 0xFFFFFFFF;
+        entry.m_dstSlot = 0xFFFFFFFF;
+        entry.m_itemId = 0;
+        entry.m_item = nullptr;
     }
 }
 
@@ -11486,7 +11499,6 @@ void CGPlayer_C::SaveTabard(int32_t emblemStyle, int32_t emblemColor, int32_t bo
 bool CGPlayer_C::LoadGuildTextures(int32_t displayId) {
     ItemDisplayInfoRec rec;
 
-    // FORK FIX (1825679767 d33e900b): displayId is an ID; the exe (0x6DB53C -> 0x4CFD90) looks it up by ID, not row index
     if (!this->m_characterComponent || !g_itemDisplayInfoDB.GetRecord(displayId, &rec) || (this->m_characterComponent->m_flags & 0x40)) {
         return false;
     }

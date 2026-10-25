@@ -24,6 +24,7 @@
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Tempest/C33Matrix.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 static const int32_t FADETEX_WIDTH = 64;
 static const int32_t FADETEX_HEIGHT = 8;
@@ -316,8 +317,8 @@ void CWorldScene::RenderStreamingRequestDecal(CM2Model* model, const CAaBox* box
     GxRsSet(GxRs_DepthWrite, 0);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(s_shadowBlobTexture, 1, nullptr));
     GxRsSet(GxRs_FogColor, static_cast<int32_t>(0xFFFFFFFF));
-    GxRsSet(GxRs_ColorOp0, 5);
-    GxRsSet(GxRs_AlphaOp0, 3);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Fade);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_PassThru);
     float alpha = 0.0f;
 
     if (0.0f == scale) {
@@ -625,12 +626,12 @@ static void ProjectTexRender2d(const CAaBox& box, const CImVector& color, uint32
 
     if (states[GxRs_BlendingMode].m_value.m_data.i[0] == GxBlend_Mod) {
         g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(s_shadowModTexture, 1, nullptr));
-        GxRsSet(GxRs_ColorOp1, 2);
-        GxRsSet(GxRs_AlphaOp1, 2);
+        GxRsSet(GxRs_ColorOp1, GxTexOp_Add);
+        GxRsSet(GxRs_AlphaOp1, GxTexOp_Add);
     } else if (!states[GxRs_Texture1].m_value.m_data.i[0]) {
         g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(s_shadowAddTexture, 1, nullptr));
-        GxRsSet(GxRs_ColorOp1, 0);
-        GxRsSet(GxRs_AlphaOp1, 0);
+        GxRsSet(GxRs_ColorOp1, GxTexOp_Mod);
+        GxRsSet(GxRs_AlphaOp1, GxTexOp_Mod);
     }
 
     if (polygonOffset != 0.0f) {

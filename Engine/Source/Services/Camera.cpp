@@ -53,7 +53,7 @@ CAngle::CAngle(float angle) : TManaged<float>(0.0f) {
 template <class T>
 void TManaged<T>::Set_(const T& value) {
     if (value != this->m_data) {
-        this->m_flags |= 0x8;
+        this->m_flags |= CBaseManaged::UPDATED;
         this->m_data = value;
     }
 }
@@ -178,7 +178,7 @@ void TManaged<T>::Update(float time) {
         this->Set_(value);
     }
 
-    this->m_flags &= ~0x4;
+    this->m_flags &= ~CBaseManaged::REQUIRESUPDATE;
 }
 
 // VERIFY: f9cfcece auto
@@ -196,7 +196,7 @@ void TManaged<T>::Validate(float time) {
         }
     }
 
-    this->m_flags &= ~0x4;
+    this->m_flags &= ~CBaseManaged::REQUIRESUPDATE;
 }
 
 // VERIFY: a8b9e377 manual
@@ -326,8 +326,8 @@ static void GetManagedValue(CDataMgr* mgr, uint32_t index, float* value, uint8_t
 
     CBaseManaged* data = mgr->m_managed[index];
 
-    if (data->m_flags & 0x4) {
-        if (data->m_flags & 0x2) {
+    if (data->m_flags & CBaseManaged::REQUIRESUPDATE) {
+        if (data->m_flags & CBaseManaged::READONLY) {
             data->Validate(0.0f);
         } else {
             data->Update(0.0f);
@@ -356,8 +356,8 @@ static void GetManagedValue(CDataMgr* mgr, uint32_t index, C3Vector* value, uint
 
     CBaseManaged* data = mgr->m_managed[index];
 
-    if (data->m_flags & 0x4) {
-        if (data->m_flags & 0x2) {
+    if (data->m_flags & CBaseManaged::REQUIRESUPDATE) {
+        if (data->m_flags & CBaseManaged::READONLY) {
             data->Validate(0.0f);
         } else {
             data->Update(0.0f);
@@ -381,7 +381,7 @@ void CameraSetCoord(CCamera* camera, uint32_t index, const C3Vector& value, uint
 
     C3Vector newValue((keepMask & 0x1) ? current.x : value.x, (keepMask & 0x2) ? current.y : value.y, (keepMask & 0x4) ? current.z : value.z);
 
-    if (!camera || index >= camera->m_managed.Count() || !camera->m_managed[index] || camera->m_managed[index]->m_dataTypeId != 3 || (camera->m_managed[index]->m_flags & 0x2)) {
+    if (!camera || index >= camera->m_managed.Count() || !camera->m_managed[index] || camera->m_managed[index]->m_dataTypeId != 3 || (camera->m_managed[index]->m_flags & CBaseManaged::READONLY)) {
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
         return;
     }
@@ -396,7 +396,7 @@ void CameraSetCoord(CCamera* camera, uint32_t index, const C3Vector& value, uint
 // VERIFY: ef5a2ea9 manual
 // OFFSET: 0x004C1360
 void CameraSetFloat(CCamera* camera, uint32_t index, float value) {
-    if (!camera || index >= camera->m_managed.Count() || !camera->m_managed[index] || camera->m_managed[index]->m_dataTypeId != 6 || (camera->m_managed[index]->m_flags & 0x2)) {
+    if (!camera || index >= camera->m_managed.Count() || !camera->m_managed[index] || camera->m_managed[index]->m_dataTypeId != 6 || (camera->m_managed[index]->m_flags & CBaseManaged::READONLY)) {
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
         return;
     }
@@ -428,7 +428,7 @@ void CDataMgr::AddManaged(TManaged<C3Vector>* data, uint32_t index, uint8_t flag
     data->m_dataTypeId = 3;
     this->m_managed[index] = data;
 
-    if (flags & 0x1) {
+    if (flags & CBaseManaged::ALWAYSUPDATE) {
         this->InsertByPriority(data);
     }
 }
@@ -440,7 +440,7 @@ void CDataMgr::AddManaged(TManaged<float>* data, uint32_t index, uint8_t flags) 
     data->m_dataTypeId = 6;
     this->m_managed[index] = data;
 
-    if (flags & 0x1) {
+    if (flags & CBaseManaged::ALWAYSUPDATE) {
         this->InsertByPriority(data);
     }
 }

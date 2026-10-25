@@ -596,7 +596,7 @@ int32_t CSimpleTop::OnFocusChanged(const void* data, void* param) {
     if (callback) {
         CFocusEvent evt;
         evt.m_data = *focusData;
-        evt.m_id = 0x40040065;
+        evt.m_id = EVENT_WINDOW_FOCUS;
         callback(evt);
     }
 
@@ -969,7 +969,7 @@ int32_t CSimpleTop::OnDisplaySizeChanged(const void* data, void* param) {
     if (callback) {
         CSizeEvent evt;
         evt.m_data = *sizeData;
-        evt.m_id = 0x40040064;
+        evt.m_id = EVENT_WINDOW_SIZE;
         callback(evt);
     }
 

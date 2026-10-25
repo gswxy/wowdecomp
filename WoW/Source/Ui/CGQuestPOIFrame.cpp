@@ -25,6 +25,7 @@
 #include "WoW/Source/Ui/GameUI.h"
 #include "WoW/Source/Ui/QuestLog.h"
 #include "WoW/Source/Ui/WorldMap.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00ACF17C
 const char* CGQuestPOIFrame::s_objectTypeName = "QuestPOIFrame";
@@ -690,8 +691,8 @@ void CGQuestPOIFrame::Render() {
     }
 
     g_theGxDevicePtr->RsPush();
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_DepthWrite, 0);
     GxRsSet(GxRs_Lighting, 0);

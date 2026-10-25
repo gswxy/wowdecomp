@@ -15,6 +15,8 @@
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "ThirdParty/nvapi/nvapi.h"
+#include "Engine/Source/ShaderEffect/Types.h"
+#include "GameVersion.h"
 
 typedef IDirect3D9* (WINAPI* Direct3DCreate9Proc)(UINT sdkVersion);
 
@@ -52,10 +54,10 @@ const D3DBLEND CGxDeviceD3d9Ex::s_dstBlend[12] = { D3DBLEND_ZERO, D3DBLEND_ZERO,
 const D3DTEXTUREADDRESS CGxDeviceD3d9Ex::s_wrapModes[2] = { D3DTADDRESS_CLAMP, D3DTADDRESS_WRAP };
 
 // STATIC: 0x00A2FBD0
-static const D3DTEXTUREOP s_texOp[6] = { D3DTOP_MODULATE, D3DTOP_MODULATE2X, D3DTOP_ADD, D3DTOP_SELECTARG2, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDDIFFUSEALPHA };
+static const D3DTEXTUREOP s_texOp[GxTexOps_Last] = { D3DTOP_MODULATE, D3DTOP_MODULATE2X, D3DTOP_ADD, D3DTOP_SELECTARG2, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDDIFFUSEALPHA };
 
 // STATIC: 0x00A2FBE8
-static const uint32_t s_texArgs[6][2] = { { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_CURRENT, D3DTA_TEXTURE }, { D3DTA_TEXTURE, D3DTA_CURRENT } };
+static const uint32_t s_texArgs[GxTexOps_Last][2] = { { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_CURRENT, D3DTA_TEXTURE }, { D3DTA_TEXTURE, D3DTA_CURRENT } };
 
 // STATIC: 0x00A2FC18
 const D3DCMPFUNC CGxDeviceD3d9Ex::s_cmpFunc[GxCmps_Last] = { D3DCMP_LESSEQUAL, D3DCMP_EQUAL, D3DCMP_GREATEREQUAL, D3DCMP_LESS };
@@ -1905,7 +1907,7 @@ void CGxDeviceD3d9Ex::IRsSendToHw(EGxRenderState which) {
             this->m_d3dDevice->SetRenderState(D3DRS_POINTSPRITEENABLE, value.m_data.i[0] != 0);
             break;
 
-        case Unk84: {
+        case GxRs_BlendFactor: {
             uint32_t factor = static_cast<uint32_t>(value.m_data.f[0] * 255.0f);
             this->m_d3dDevice->SetRenderState(D3DRS_BLENDFACTOR, (((((factor << 8) | factor) << 8) | factor) << 8) | factor);
             break;
@@ -2386,7 +2388,7 @@ int32_t CGxDeviceD3d9Ex::ICreateWindow(CGxFormat& format) {
         height += CGxDevice::s_clientAdjust.y;
     }
 
-    this->m_hwnd = CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassD3d9Ex", "World of Warcraft", style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, this);
+    this->m_hwnd = CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassD3d9Ex", CLIENT_NAME, style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, this);
 
     if (this->m_hwnd && format.m_maximize != 2) {
         ShowWindow(this->m_hwnd, SW_SHOWNORMAL);
@@ -2690,7 +2692,7 @@ void CGxDeviceD3d9Ex::IReleaseD3dResources(int32_t freeTextures) {
 int32_t CGxDeviceD3d9Ex::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
     switch (wm) {
         case GxWM_Size:
-            if (param2 == 1 || param2 == 2) {
+            if (param2 == Gx_SizeMinimized || param2 == Gx_SizeMaxHide) {
                 this->m_windowVisible = 0;
                 break;
             }
@@ -3291,9 +3293,9 @@ LRESULT CALLBACK CGxDeviceD3d9Ex::WindowProcD3d(HWND hwnd, UINT message, WPARAM 
             uint32_t resizeType = 0;
 
             if (wparam == SIZE_MINIMIZED) {
-                resizeType = 1;
+                resizeType = Gx_SizeMinimized;
             } else if (wparam == SIZE_MAXHIDE) {
-                resizeType = 2;
+                resizeType = Gx_SizeMaxHide;
             }
 
             device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), resizeType);
@@ -3308,7 +3310,7 @@ LRESULT CALLBACK CGxDeviceD3d9Ex::WindowProcD3d(HWND hwnd, UINT message, WPARAM 
                     rect.minX = 0.0f;
                     rect.maxY = 0.0f;
                     rect.maxX = 0.0f;
-                    device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                    device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
                 }
             } else if (LOWORD(wparam) == WA_ACTIVE && !device->IDevIsWindowed()) {
                 CRect rect;
@@ -4373,7 +4375,7 @@ void CGxDeviceD3d9Ex::ITexForceRecreation(int32_t all) {
 
             uint32_t texelStrideInBytes;
             const void* texels;
-            texId->m_userFunc(GxTex_3, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+            texId->m_userFunc(GxTex_Recreate, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
         }
     }
 

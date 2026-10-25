@@ -242,7 +242,7 @@ class CGxDeviceD3d : public CGxDevice {
     /* 3B64 */ LPDIRECT3DVERTEXBUFFER9 m_d3dVertexStreamBuf [8];
     /* 3B84 */ uint32_t m_d3dVertexStreamOfs [8];
     /* 3BA4 */ uint32_t m_d3dVertexStreamStride [8];
-    /* 3BC4 */ uint32_t m_deviceStates [182];
+    /* 3BC4 */ uint32_t m_deviceStates [DeviceStates_Last];
     /* 3E9C */ bool m_texEnabled [8];
     // VFOG (not 12340): INTZ depth bound as the device depth-stencil in place of the auto one, so the volumetric
     // fog can sample it (DeviceCopySceneDepth). m_sceneDepthTex wraps it, lives for the device's lifetime and is

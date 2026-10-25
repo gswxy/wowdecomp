@@ -57,7 +57,7 @@ CBLPFile::CBLPFile() {
     this->m_header.m_hasMips &= ~0x10;
     this->m_header.m_magic = BLP_MAGIC_BLP2;
     this->m_header.m_formatVersion = 1;
-    this->m_header.m_preferredFormat = 2;
+    this->m_header.m_preferredFormat = PIXEL_ARGB8888;
     this->m_inMemoryImage = nullptr;
     this->m_mipMapAlgorithm = MMA_BOX;
 }

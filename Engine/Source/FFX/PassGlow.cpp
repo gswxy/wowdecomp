@@ -302,14 +302,14 @@ PassGlowWave::PassGlowWave(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, 
 
     s_waveTexRefCount++;
 
-    this->m_shaderIndex = 0;
+    this->m_shaderIndex = PassGlowWave::SHADER_VARIANT::NORMALIZED_UV88_CAPABLE;
 
     if (FFX::s_useRECT) {
-        this->m_shaderIndex = 1;
+        this->m_shaderIndex = PassGlowWave::SHADER_VARIANT::RECTANGLE_UV88_CAPABLE;
     }
 
     if (!g_theGxDevicePtr->Caps().m_texFmt[GxTex_Uv88]) {
-        this->m_shaderIndex += 2;
+        this->m_shaderIndex = static_cast<PassGlowWave::SHADER_VARIANT>(this->m_shaderIndex + PassGlowWave::SHADER_VARIANT::NORMALIZED_UV88_FALLBACK);
     }
 
     g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", "FFXGlowWave", sizeof(this->m_shaders) / sizeof(this->m_shaders[0]));

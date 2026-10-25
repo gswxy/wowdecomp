@@ -6,8 +6,8 @@ texcoord, and the chunk's blend texture through sampler L (xyz the alpha of laye
 
 - the terrain VS also writes gxT (varying location 15 / TEXCOORD14): the view-space position, w = 1;
 - the PS takes the blend texture once (`gxTpA`, which then stands in for the body's own read), finds the dominant
-  layer, marches its height map (s10 + k, `_h.blp`) along the view ray for 4-12 steps chosen from the view angle and
-  the mip level, refines with one secant step, and shifts every layer's texcoord by the result; then, with height
+  layer, marches its height map (s10 + k, `_h.blp`) along the view ray for 8-16 steps chosen from the view angle and
+  the mip level, with the polygon at the map's mean height (so relief rises and sinks around it), refines with one secant step, and shifts every layer's texcoord by the result; then, with height
   blending on, re-weights the layers by height (sand settles between cobbles) into gxTpA.xyz.
 
 Pixel constants (MapRenderChunk.cpp TerrainPomConstants, set for every chunk draw; 0 = stock): c13 = 1 per layer that
@@ -80,12 +80,14 @@ _PROLOGUE = '''
             vec4 gxWh = gxW * gxHas;
             int gxDom = 0;
             float gxMax = gxWh.x;
-            if (gxWh.y > gxMax) { gxDom = 1; gxMax = gxWh.y; }
-            if (gxWh.z > gxMax) { gxDom = 2; gxMax = gxWh.z; }
-            if (gxWh.w > gxMax) { gxDom = 3; gxMax = gxWh.w; }
+            float gxSec = 0.0;
+            if (gxWh.y > gxMax) { gxSec = gxMax; gxDom = 1; gxMax = gxWh.y; } else { gxSec = max(gxSec, gxWh.y); }
+            if (gxWh.z > gxMax) { gxSec = gxMax; gxDom = 2; gxMax = gxWh.z; } else { gxSec = max(gxSec, gxWh.z); }
+            if (gxWh.w > gxMax) { gxSec = gxMax; gxDom = 3; gxMax = gxWh.w; } else { gxSec = max(gxSec, gxWh.w); }
             // the mip level of the height map: the parallax fades out over the two levels before gxPrm.w
             float gxLod = 0.5 * log2(max(max(dot(gxDx, gxDx), dot(gxDy, gxDy)) * gxPrm.z * gxPrm.z, 1e-8));
-            float gxFade = (1.0 - smoothstep(gxPrm.w - 2.0, gxPrm.w, gxLod)) * clamp(gxMax * 2.0, 0.0, 1.0);
+            // and towards the line where another layer takes over as dominant, so the shift does not jump there
+            float gxFade = (1.0 - smoothstep(gxPrm.w - 2.0, gxPrm.w, gxLod)) * clamp((gxMax - gxSec) * 4.0, 0.0, 1.0);
             // planar: texcoord = A * world xy, height along world up; A from the screen derivatives with A * up = 0
             vec3 gxUp = normalize(TPV(2).xyz);
             vec3 gxR = normalize(GXT.xyz);
@@ -96,17 +98,20 @@ _PROLOGUE = '''
             if (gxPrm.y > 0.0 && gxFade > 0.01 && gxK > 0.02 && abs(gxDet) > 1e-14) {
                 // texcoord shift per yard of depth along the view ray
                 vec2 gxDir = (gxDx * dot(gxC0, gxR) + gxDy * dot(gxC1, gxR)) / (gxDet * max(gxK, 0.25));
-                int gxN = clamp(int(mix(4.0, 12.0, (1.0 - gxK) * gxFade) + 0.5), 4, 12);
+                int gxN = clamp(int(mix(8.0, 16.0, (1.0 - gxK) * gxFade) + 0.5), 8, 16);
                 float gxLayer = 1.0 / float(gxN);
                 vec2 gxStep = gxDir * (gxPrm.y * gxFade * gxLayer);
                 vec2 gxBase = DOMUV;
+                // the polygon is the map's mean height (its last mip), not its top: the ray enters the top plane
+                // that much before it, so the ground lifts and sinks around the polygon instead of only sinking
+                vec2 gxCur = -gxStep * (float(gxN) * (1.0 - TPH(gxDom, gxBase, gxDx * 4096.0, gxDy * 4096.0)));
                 float gxD = 0.0;
-                float gxH = 1.0 - TPH(gxDom, gxBase, gxDx, gxDy);
+                float gxH = 1.0 - TPH(gxDom, gxBase + gxCur, gxDx, gxDy);
                 float gxPrevD = 0.0;
                 float gxPrevH = gxH;
-                vec2 gxCur = vec2(0.0, 0.0);
+                gxOff = gxCur;
                 int gxTaken = 0;
-                for (int gxI = 0; gxI < 12; gxI++) {
+                for (int gxI = 0; gxI < 16; gxI++) {
                     if (gxI >= gxN || gxD >= gxH) {
                         break;
                     }

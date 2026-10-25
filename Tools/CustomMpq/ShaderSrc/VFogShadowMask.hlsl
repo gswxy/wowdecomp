@@ -21,6 +21,9 @@
 // ratio = min(cascade target, land target) / lit, both terms lifted at the terminator the M2/WMO way (terrain too
 // now), one fog rule. Receivers that still shaded themselves (interior groups and models, q1-2: their pixel shaders
 // declare the shadow sampler) tag the G-buffer alpha 0.25 / 0.75 (normals.py) and keep the ratio above.
+// shadowPlaneBias (c71.w, shadowbias 2026-10-25): every tap of a compare takes the receiver's own depth plane,
+// q.z + dot(dz/duv, offset) (Isidoro GDC 2006; NVIDIA PCSS gradient bias), from the rebuilt surface's shadow-space
+// slope, capped at 2 texels of depth: a tap one texel off a grazing wall otherwise reads the wall itself as a caster.
 // VFogShadowMaskPoint is this source built with no hardware-compare slots, for D3D11 with R32F maps (hwPCF 0), whose
 // compare slots would need the comparison sampler only depth maps get (build_shaders.py compare_slots).
 #include "vf_common.hlsli"
@@ -32,7 +35,7 @@ float4 cMaskAmbient : register(c11);
 float4 cMaskDiffuse : register(c12);
 float4 cMaskFog : register(c13);
 float4 cMaskRows[6] : register(c65);
-float4 cMaskMaps : register(c71);
+float4 cMaskMaps : register(c71);   // (band 0 on, unit on, shadowUnified, shadowPlaneBias)
 // shadowMaskFine (TerrainSunShadow::Fine): the nested ADT level of the lit heights (4.2 yd texels, +-1067 yd),
 // (u0, v0, k, 1 / blend uv) as c63; it fades into s7's over its outer 1 / w of uv. w = 0: off.
 float4 cTerrainFine : register(c72);
@@ -91,11 +94,33 @@ float MapTap(sampler2D maps, float2 uv, float ref)
 
 // The receivers' 5 taps (centre + c5/c7/c9/c11 of the stock perms, shadowSoftness-scaled), so the mask's idea of a
 // cascade edge is as wide as the one on screen.
-float ReceiverCompare(sampler2D maps, float3 q)
+// The receiver-plane reference of a tap at uv offset o: grad.xy = dz/du, dz/dv, grad.z = the cap (2 texels of depth).
+float PlaneRef(float z, float3 grad, float2 o)
+{
+    return z + clamp(dot(grad.xy, o), -grad.z, grad.z);
+}
+
+float ReceiverCompare(sampler2D maps, float3 q, float3 grad)
 {
     float2 uv = q.xy * 0.5 + 0.5;
-    return 0.2 * (MapTap(maps, uv, q.z) + MapTap(maps, uv + cMaskPcf[0].xy, q.z) + MapTap(maps, uv + cMaskPcf[0].zw, q.z) +
-                  MapTap(maps, uv + cMaskPcf[1].xy, q.z) + MapTap(maps, uv + cMaskPcf[1].zw, q.z));
+    return 0.2 * (MapTap(maps, uv, q.z) + MapTap(maps, uv + cMaskPcf[0].xy, PlaneRef(q.z, grad, cMaskPcf[0].xy)) +
+                  MapTap(maps, uv + cMaskPcf[0].zw, PlaneRef(q.z, grad, cMaskPcf[0].zw)) +
+                  MapTap(maps, uv + cMaskPcf[1].xy, PlaneRef(q.z, grad, cMaskPcf[1].xy)) +
+                  MapTap(maps, uv + cMaskPcf[1].zw, PlaneRef(q.z, grad, cMaskPcf[1].zw)));
+}
+
+// dz/du, dz/dv of the receiver's plane in a map (dqx, dqy: its q across one pixel right / down, from the rebuilt
+// neighbours), and the cap: 2 texels of depth at the map's ortho scale (zyd / uvyd per uv). 0 under shadowPlaneBias 0,
+// or where the pixel's footprint in the map is degenerate (the surface edge-on to the light).
+float3 PlaneGradient(float3 dqx, float3 dqy, float zyd, float uvyd)
+{
+    float2 ux = dqx.xy * 0.5, uy = dqy.xy * 0.5;    // uv = q.xy * 0.5 + 0.5
+    float det = ux.x * uy.y - uy.x * ux.y;
+    float cap = 2 / cShadowControl.w / max(uvyd, 1e-6) * zyd;
+    [branch] if (cMaskMaps.w <= 0 || abs(det) < 1e-14)
+        return 0;
+    float2 g = float2(uy.y * dqx.z - ux.y * dqy.z, ux.x * dqy.z - uy.x * dqx.z) / det;
+    return float3(g, cap);
 }
 
 // PCSS from compares alone (the hwPCF maps are depth textures read through the compare, no raw depth): moving the
@@ -105,7 +130,7 @@ float ReceiverCompare(sampler2D maps, float3 q)
 // caster touches the receiver and soft far from it; shadowMaxThrow (c80.y) drops the casters past L4 and half of those
 // between L3 and L4. zyd / uvyd: the map's q.z and uv per yard (its rows are an ortho light: one length each).
 // distance (out): d, -1 with no caster (shadowDebug 8); share (out): what shadowMaxThrow keeps of the shadow.
-float SoftCompare(sampler2D maps, float3 q, float zyd, float uvyd, out float distance, out float share)
+float SoftCompare(sampler2D maps, float3 q, float3 grad, float zyd, float uvyd, out float distance, out float share)
 {
     float2 uv = q.xy * 0.5 + 0.5;
     float pcf = length(cMaskPcf[0].xy);
@@ -114,7 +139,7 @@ float SoftCompare(sampler2D maps, float3 q, float zyd, float uvyd, out float dis
                        float2(0.7071, -0.7071) * search, float2(-0.7071, -0.7071) * search };
     float b0 = 0;
     [unroll] for (int i = 0; i < 5; i++)
-        b0 += 1 - MapTap(maps, uv + taps[i], q.z);
+        b0 += 1 - MapTap(maps, uv + taps[i], PlaneRef(q.z, grad, taps[i]));
     distance = -1;
     share = 1;
     [branch] if (b0 <= 0)
@@ -122,7 +147,7 @@ float SoftCompare(sampler2D maps, float3 q, float zyd, float uvyd, out float dis
     float b[4] = { 0, 0, 0, 0 };
     [unroll] for (int k = 0; k < 4; k++)
         [unroll] for (int j = 0; j < 5; j++)
-            b[k] += 1 - MapTap(maps, uv + taps[j], q.z - cMaskSoftLevels[k] * zyd);
+            b[k] += 1 - MapTap(maps, uv + taps[j], PlaneRef(q.z, grad, taps[j]) - cMaskSoftLevels[k] * zyd);
     // mean caster distance: each slice between offsets at its middle, the last past L4 at L4
     distance = ((b0 - b[0]) * 0.5 * cMaskSoftLevels.x + (b[0] - b[1]) * 0.5 * (cMaskSoftLevels.x + cMaskSoftLevels.y) +
                 (b[1] - b[2]) * 0.5 * (cMaskSoftLevels.y + cMaskSoftLevels.z) + (b[2] - b[3]) * 0.5 * (cMaskSoftLevels.z + cMaskSoftLevels.w) +
@@ -133,26 +158,31 @@ float SoftCompare(sampler2D maps, float3 q, float zyd, float uvyd, out float dis
     // The receivers' 5 taps scaled out to the radius (the stock pattern at contact), with 4 more between them at half
     // of it once it is wider than the stock taps, so a wide penumbra is a ramp rather than five copies.
     float s = max(distance * cMaskSoft.x * uvyd / max(pcf, 1e-6), 1);
-    float v = 0.2 * (MapTap(maps, uv, q.z) + MapTap(maps, uv + cMaskPcf[0].xy * s, q.z) + MapTap(maps, uv + cMaskPcf[0].zw * s, q.z) +
-                     MapTap(maps, uv + cMaskPcf[1].xy * s, q.z) + MapTap(maps, uv + cMaskPcf[1].zw * s, q.z));
+    float v = 0.2 * (MapTap(maps, uv, q.z) + MapTap(maps, uv + cMaskPcf[0].xy * s, PlaneRef(q.z, grad, cMaskPcf[0].xy * s)) +
+                     MapTap(maps, uv + cMaskPcf[0].zw * s, PlaneRef(q.z, grad, cMaskPcf[0].zw * s)) +
+                     MapTap(maps, uv + cMaskPcf[1].xy * s, PlaneRef(q.z, grad, cMaskPcf[1].xy * s)) +
+                     MapTap(maps, uv + cMaskPcf[1].zw * s, PlaneRef(q.z, grad, cMaskPcf[1].zw * s)));
     [branch] if (s > 1)
     {
         float h = 0.5 * s * 0.7071;
         float4 o0 = float4(cMaskPcf[0].x - cMaskPcf[0].y, cMaskPcf[0].x + cMaskPcf[0].y, cMaskPcf[0].z - cMaskPcf[0].w, cMaskPcf[0].z + cMaskPcf[0].w) * h;
         float4 o1 = float4(cMaskPcf[1].x - cMaskPcf[1].y, cMaskPcf[1].x + cMaskPcf[1].y, cMaskPcf[1].z - cMaskPcf[1].w, cMaskPcf[1].z + cMaskPcf[1].w) * h;
-        float inner = 0.25 * (MapTap(maps, uv + o0.xy, q.z) + MapTap(maps, uv + o0.zw, q.z) + MapTap(maps, uv + o1.xy, q.z) + MapTap(maps, uv + o1.zw, q.z));
+        float inner = 0.25 * (MapTap(maps, uv + o0.xy, PlaneRef(q.z, grad, o0.xy)) + MapTap(maps, uv + o0.zw, PlaneRef(q.z, grad, o0.zw)) +
+                              MapTap(maps, uv + o1.xy, PlaneRef(q.z, grad, o1.xy)) + MapTap(maps, uv + o1.zw, PlaneRef(q.z, grad, o1.zw)));
         v = lerp(v, (5 * v + 4 * inner) / 9, saturate(s - 1));
     }
     return 1 - (1 - v) * share;
 }
 
 // One map's term: the receivers' own compare, or under shadowUnified with c80.z the soft one. rows: its q.x and q.z rows.
-float MapShadow(sampler2D maps, float3 q, bool soft, float4 rowX, float4 rowZ, inout float distance, inout float share)
+float MapShadow(sampler2D maps, float3 q, float3 dqx, float3 dqy, bool soft, float4 rowX, float4 rowZ, inout float distance, inout float share)
 {
+    float zyd = length(rowZ.xyz), uvyd = 0.5 * length(rowX.xyz);
+    float3 grad = PlaneGradient(dqx, dqy, zyd, uvyd);
     [branch] if (!soft)
-        return ReceiverCompare(maps, q);
+        return ReceiverCompare(maps, q, grad);
     float d, k;
-    float v = SoftCompare(maps, q, length(rowZ.xyz), 0.5 * length(rowX.xyz), d, k);
+    float v = SoftCompare(maps, q, grad, zyd, uvyd, d, k);
     [branch] if (d > distance)   // the caster furthest back of the maps read, for shadowDebug 8
     {
         distance = d;
@@ -164,7 +194,7 @@ float MapShadow(sampler2D maps, float3 q, bool soft, float4 rowX, float4 rowZ, i
 // What the receivers' shadow maps say, with their cutovers (Combiners_Opaque:3): the unit map inside 0.99 of its
 // square, min band 0 if |q| < 1, else band 1 if |q| < 1, else band 2 faded out over 0.9-0.99. which = the map read for
 // shadowDebug: 0 unit map, 1-3 bands 0-2, 4 none.
-float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, out float bandOnly, out float distance, out float share)
+float ReceiverShadow(float3 p, float3 dx, float3 dy, bool soft, out float which, out float unitOnly, out float bandOnly, out float distance, out float share)
 {
     float c = 1;
     which = 4;
@@ -175,7 +205,7 @@ float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, o
         float3 q = MaskCoord(3, p);
         [branch] if (max(abs(q.x), abs(q.y)) < 0.99)
         {
-            c = MapShadow(sUnit, q, soft, cMaskRows[3], cMaskRows[5], distance, share);
+            c = MapShadow(sUnit, q, MaskCoord(3, p + dx) - q, MaskCoord(3, p + dy) - q, soft, cMaskRows[3], cMaskRows[5], distance, share);
             which = 0;
         }
     }
@@ -184,7 +214,7 @@ float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, o
     float3 q0 = MaskCoord(0, p);
     [branch] if (cMaskMaps.x > 0 && max(abs(q0.x), abs(q0.y)) < 1)
     {
-        b = MapShadow(sBand0, q0, soft, cMaskRows[0], cMaskRows[2], distance, share);
+        b = MapShadow(sBand0, q0, MaskCoord(0, p + dx) - q0, MaskCoord(0, p + dy) - q0, soft, cMaskRows[0], cMaskRows[2], distance, share);
         band = 1;
     }
     else if (ShadowedSun())
@@ -192,7 +222,7 @@ float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, o
         float3 q = ShadowCoord(0, p);
         [branch] if (max(abs(q.x), abs(q.y)) < 1)
         {
-            b = MapShadow(sShadowNear, q, soft, cShadowBands[0], cShadowBands[2], distance, share);
+            b = MapShadow(sShadowNear, q, ShadowCoord(0, p + dx) - q, ShadowCoord(0, p + dy) - q, soft, cShadowBands[0], cShadowBands[2], distance, share);
             band = 2;
         }
         else
@@ -201,7 +231,7 @@ float ReceiverShadow(float3 p, bool soft, out float which, out float unitOnly, o
             float fade = saturate(11 - 11.1111 * max(abs(q.x), abs(q.y)));
             [branch] if (fade > 0)
             {
-                b = lerp(1, MapShadow(sShadowFar, q, soft, cShadowBands[3], cShadowBands[5], distance, share), fade);
+                b = lerp(1, MapShadow(sShadowFar, q, ShadowCoord(1, p + dx) - q, ShadowCoord(1, p + dy) - q, soft, cShadowBands[3], cShadowBands[5], distance, share), fade);
                 band = 3;
             }
         }
@@ -315,7 +345,7 @@ float4 main(float2 viewportUv : TEXCOORD0) : COLOR0
         return 1;
 
     float which, unitOnly, bandOnly, distance, share;
-    float cascade = lerp(ReceiverShadow(p, unified && cMaskSoft.z > 0, which, unitOnly, bandOnly, distance, share), 1, liftCascade);
+    float cascade = lerp(ReceiverShadow(p, dx, dy, unified && cMaskSoft.z > 0, which, unitOnly, bandOnly, distance, share), 1, liftCascade);
     float3 lit = cMaskAmbient.rgb + cMaskDiffuse.rgb * ndl;
     float fog = saturate((length(p) - cMaskFog.x) * cMaskFog.y) * cMaskFog.z;
     [branch] if (unified)

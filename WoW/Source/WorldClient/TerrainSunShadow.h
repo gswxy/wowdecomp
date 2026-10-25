@@ -17,6 +17,7 @@ namespace TerrainSunShadow {
 void RegisterCVars();
 bool Enabled();
 bool UnifiedWanted();       // shadowUnified (and MaskWanted): the mask takes the exterior receivers' cascade term
+bool PlaneBiasWanted();     // shadowPlaneBias: the mask's taps take the receiver-plane depth bias (c71.w)
 bool MaskWanted();          // shadowMask on (and gfxTerrainShadow): the land's shadow over the world
 float MaskSoftYards();      // shadowSoft: the mask's penumbra in yards under the lit height
 // shadowPenumbra / shadowMaxThrow / shadowThrowFade for the mask's c80 (penumbra per yd, clamp on, any on, 0) and c81

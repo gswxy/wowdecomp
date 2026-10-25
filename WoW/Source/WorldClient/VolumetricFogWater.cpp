@@ -35,6 +35,9 @@
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
+#include "WoW/Source/WorldClient/Map.h"
+#include "WoW/Source/WorldClient/MapArea.h"
+#include "WoW/Source/WorldClient/MapChunk.h"
 
 namespace VolumetricFog {
 namespace {
@@ -50,15 +53,16 @@ constexpr int kFirstSurfaceStage = 3;
 constexpr int kFirstFoamStateStage = 7;
 constexpr int kWaveFoamMaskStage = 11;
 constexpr int kRippleStage = 12;
-constexpr int kShoreDepthFoamMaskStage = 14;   // the shore and depth foam masks packed in R and G (ShoreDepthMasks)
+constexpr int kFoamLandStage = 14;   // the land heights under the water (FoamLand), for the shore and depth foam
 constexpr int kRippleWideStage = 15;           // the ships' wide ripple level (VolumetricFogWaterRipples.cpp)
+constexpr uint32_t kFoamLandRegister = 72;     // c72: FoamLand row (vw_constants cFoamLand)
 constexpr uint32_t kRippleWideRegister = 70;   // c70 / c71: its window (vw_constants cRippleWinW / cRippleTexW)
 constexpr int kLastStage = 15;
 constexpr int kLandShadowStage = 13;      // shadowMask: TerrainSunShadow's lit-height texture (free slot)
 constexpr uint32_t kLandShadowRegister = 68;   // its row (u0, v0, k, 1/soft), w = 0: off
 constexpr int kShoreFoamSlot = 3;
 constexpr int kDepthFoamSlot = 4;
-constexpr int kWaveFoamMaskSlots = 3;
+constexpr int kWaveFoamMaskSlots = 4;   // the wave masks in R, G, B and the shore mask in A
 constexpr int kShadedMaskSlots = 5;
 constexpr int kSkyBands = 5;
 constexpr int kSkyColorCount = 6;
@@ -79,7 +83,7 @@ constexpr int32_t kLiquidTypeWmoWaterInterior = 17;
 constexpr uint32_t kForeverLiquidOfClass[kWaterClassCount] = { 0, 1240, 1288, 1250, 1290 };    // lake, river, ocean, WMO interior
 constexpr uint32_t kMaxMaskSide = 8192;
 constexpr uint32_t kPackedMaskOpaque = 0xFF000000u;
-constexpr int kPackedMaskChannelShift[kWaveFoamMaskSlots] = { 16, 8, 0 };
+constexpr int kPackedMaskChannelShift[kWaveFoamMaskSlots] = { 16, 8, 0, 24 };
 
 struct Float4 {
     float x, y, z, w;
@@ -323,7 +327,7 @@ void PlanMasks(const std::vector<std::vector<const uint8_t*>>& levels) {
         m.size = layout->size;
         for (uint32_t level = 0; level < layout->mipCount; level++) {
             const size_t side = std::max(m.size >> level, 1u);
-            std::vector<uint32_t> texels(side * side, kPackedMaskOpaque);
+            std::vector<uint32_t> texels(side * side, m.present[3] ? 0u : kPackedMaskOpaque);
             for (int slot = 0; slot < kWaveFoamMaskSlots; slot++) {
                 if (!m.present[slot]) {
                     continue;
@@ -338,14 +342,11 @@ void PlanMasks(const std::vector<std::vector<const uint8_t*>>& levels) {
         s_data.masks.push_back(std::move(m));
     };
     for (const WaterPreset& p : s_data.presets) {
-        const int32_t wave[kWaveFoamMaskSlots] = { p.masks[0], p.masks[1], p.masks[2] };
-        if (wave[0] >= 0 || wave[1] >= 0 || wave[2] >= 0) {
+        // 2026-10-25 foam2: the shore mask rides in the wave masks' alpha (one texture), so s14 is free for the land
+        // heights; the depth foam layer reads the shore mask too (at its own scale and scroll).
+        const int32_t wave[kWaveFoamMaskSlots] = { p.masks[0], p.masks[1], p.masks[2], p.masks[kShoreFoamSlot] };
+        if (wave[0] >= 0 || wave[1] >= 0 || wave[2] >= 0 || wave[3] >= 0) {
             plan(wave, true);
-        }
-        // Shore and depth foam share one texture (R, G; the shipped masks are all 1024^2), so s15 is free for the wakes.
-        const int32_t shoreDepth[kWaveFoamMaskSlots] = { p.masks[kShoreFoamSlot], p.masks[kDepthFoamSlot], -1 };
-        if (shoreDepth[0] >= 0 || shoreDepth[1] >= 0) {
-            plan(shoreDepth, true);
         }
     }
 }
@@ -396,23 +397,9 @@ const MaskTexture* WaveMasks(const WaterPreset& p) {
     return nullptr;
 }
 
-const MaskTexture* ShoreDepthMasks(const WaterPreset& p) {
-    const int32_t sources[kWaveFoamMaskSlots] = { p.masks[kShoreFoamSlot], p.masks[kDepthFoamSlot], -1 };
-    for (const MaskTexture& m : s_data.masks) {
-        if (m.packed && std::equal(m.sources, m.sources + kWaveFoamMaskSlots, sources)) {
-            return &m;
-        }
-    }
-    return nullptr;
-}
-
 bool MaskPresent(const WaterPreset& p, int slot) {
-    if (slot < kWaveFoamMaskSlots) {
-        const MaskTexture* wave = WaveMasks(p);
-        return wave && wave->present[slot];
-    }
-    const MaskTexture* shoreDepth = ShoreDepthMasks(p);
-    return shoreDepth && shoreDepth->present[slot - kShoreFoamSlot];
+    const MaskTexture* wave = WaveMasks(p);
+    return wave && wave->present[std::min(slot, kWaveFoamMaskSlots - 1)];   // shore and depth: the shore mask (A)
 }
 
 // ---- classification (coa water_classify.h; engine.cpp ClassifyWaterSettings) --------------------------------------
@@ -510,6 +497,26 @@ CGxTex* s_flat;
 bool s_callbackAdded;
 bool s_shaderMissing;
 
+// ---- foam land (2026-10-25 foam2) ----------------------------------------------------------------------------------
+// The shore and depth foam's water depth, in world space: the loaded ADTs' MCVT terrain under the camera on a half-
+// vertex grid (2.08 yd: outer and inner vertices, edge midpoints between), 512^2 (+-533 yd), R32F. LuxVelum took it
+// from the scene depth behind the water, so the foam changed with the view angle and with whatever stood in the
+// water. No ADT (WMO-only water) or a hole: kFoamLandNone, no shore foam there.
+constexpr int kFoamLandSize = 512;
+constexpr float kFoamLandCell = 533.33333f / 256.0f;        // half an MCVT outer step
+constexpr float kFoamLandOrigin = 17066.666f / kFoamLandCell; // world x/y 0 on the half grid (8192)
+constexpr float kFoamLandNone = -30000.0f;
+constexpr int kFoamLandRecentre = 64;                         // texels (133 yd) of camera travel before a rebuild
+constexpr uint32_t kFoamLandPollMs = 500;                     // and a check for newly loaded chunks this often
+struct FoamLandState {
+    std::vector<float> texels = std::vector<float>(kFoamLandSize * kFoamLandSize, kFoamLandNone);
+    CGxTex* tex = nullptr;
+    int i0 = 0, j0 = 0;         // the window's first half-grid row (down world x) and column (down world y)
+    int chunks = -1;            // loaded chunks over it at the build
+    bool built = false;
+    uint32_t polled = 0;
+} s_foamLand;
+
 void DestroyTextures() {
     DestroyTex(s_targets.sceneColour);
     DestroyTex(s_targets.sceneDepth);
@@ -525,6 +532,7 @@ void DestroyTextures() {
         DestroyTex(m.tex);
     }
     DestroyTex(s_flat);
+    DestroyTex(s_foamLand.tex);
     RippleRelease();
     WaveGpuRelease();
 }
@@ -592,6 +600,96 @@ CGxTex* MaskTex(const MaskTexture* m) {
         mutableMask->tex = CreateTex(m->size, m->size, GxTex_Argb8888, GxTex_LinearMipLinear, true, false, mutableMask, MaskCallback, "VFogWaterFoamMask");
     }
     return m->tex ? m->tex : FlatTex();
+}
+
+const CMapChunk* FoamChunk(int r, int c) {   // as TerrainSunShadow ChunkAt: outer vertex (r, c), r down world x
+    if (r < 0 || c < 0 || r >= 8192 || c >= 8192) {
+        return nullptr;
+    }
+    const int cy = r >> 3, cx = c >> 3;
+    const CMapArea* area = CMap::m_areaTable[64 * (cy >> 4) + (cx >> 4)];
+    const CMapChunk* chunk = area ? area->m_mapChunks[(cx & 15) + 16 * (cy & 15)] : nullptr;
+    return chunk && chunk->m_height && chunk->m_header ? chunk : nullptr;
+}
+
+// MCVT height at outer (r, c) (inner = the inner vertex south-east of it), kFoamLandNone without one.
+float FoamVertex(int r, int c, bool inner) {
+    const CMapChunk* chunk = FoamChunk(r, c);
+    if (!chunk) {
+        return kFoamLandNone;
+    }
+    const int row = r & 7, col = c & 7;
+    if (chunk->m_header->m_holes & CMap::s_holeMask[4 * (row >> 1) + (col >> 1)]) {
+        return kFoamLandNone;
+    }
+    return chunk->m_height[row * 17 + (inner ? 9 : 0) + col] + chunk->m_topLeftCoords.z;
+}
+
+float FoamLandAt(int i, int j) {
+    const int r = i >> 1, c = j >> 1;
+    if ((i & 1) && (j & 1)) {
+        return FoamVertex(r, c, true);
+    }
+    const float a = FoamVertex(r, c, false);
+    if (!(i & 1) && !(j & 1)) {
+        return a;
+    }
+    const float b = (i & 1) ? FoamVertex(r + 1, c, false) : FoamVertex(r, c + 1, false);
+    return a == kFoamLandNone || b == kFoamLandNone ? kFoamLandNone : 0.5f * (a + b);
+}
+
+void FoamLandCallback(EGxTexCommand command, uint32_t width, uint32_t, uint32_t, uint32_t, void*, uint32_t& stride, const void*& texels) {
+    if (command == GxTex_Latch) {
+        texels = s_foamLand.texels.data();
+        stride = width * 4;
+    }
+}
+
+int FoamLandChunks(int i0, int j0) {
+    int n = 0;
+    for (int r = i0 >> 1; r < (i0 + kFoamLandSize) >> 1; r += 8) {
+        for (int c = j0 >> 1; c < (j0 + kFoamLandSize) >> 1; c += 8) {
+            n += FoamChunk(r, c) ? 1 : 0;
+        }
+    }
+    return n;
+}
+
+// The texture for s14 and its row for c72: (texel x at world 0, texel y at world 0, 1 / cell, 1 / size), texel =
+// row.xy - row.z * world.yx (column down world y, row down world x). ponytail: rebuilt whole on the main thread
+// (512^2 vertex reads, a few ms) when the camera travels 133 yd or chunks load; a worker if it ever shows as a hitch.
+CGxTex* FoamLand(const float camPos[3], float row[4]) {
+    const int ci = static_cast<int>(std::floor(kFoamLandOrigin - camPos[0] / kFoamLandCell)) - kFoamLandSize / 2;
+    const int cj = static_cast<int>(std::floor(kFoamLandOrigin - camPos[1] / kFoamLandCell)) - kFoamLandSize / 2;
+    FoamLandState& f = s_foamLand;
+    bool rebuild = !f.built || std::abs(ci - f.i0) > kFoamLandRecentre || std::abs(cj - f.j0) > kFoamLandRecentre;
+    const uint32_t now = static_cast<uint32_t>(FrameTime::s_curTimeMs);
+    if (!rebuild && now - f.polled > kFoamLandPollMs) {
+        f.polled = now;
+        rebuild = FoamLandChunks(f.i0, f.j0) != f.chunks;
+    }
+    if (rebuild) {
+        f.i0 = ci;
+        f.j0 = cj;
+        f.polled = now;
+        f.chunks = FoamLandChunks(ci, cj);
+        for (int y = 0; y < kFoamLandSize; y++) {
+            for (int x = 0; x < kFoamLandSize; x++) {
+                f.texels[y * kFoamLandSize + x] = FoamLandAt(ci + y, cj + x);
+            }
+        }
+        f.built = true;
+    }
+    if (!f.tex) {
+        f.tex = CreateTex(kFoamLandSize, kFoamLandSize, GxTex_R32F, GxTex_Nearest, false, false, nullptr, FoamLandCallback, "VFogWaterFoamLand");
+    } else if (rebuild) {
+        GxTexUpdate(f.tex, 0, 0, kFoamLandSize, kFoamLandSize, 1);
+    }
+    row[0] = kFoamLandOrigin - static_cast<float>(f.j0);
+    row[1] = kFoamLandOrigin - static_cast<float>(f.i0);
+    row[2] = 1.0f / kFoamLandCell;
+    row[3] = f.tex ? 1.0f / kFoamLandSize : 0.0f;
+    return f.tex ? f.tex : FlatTex();
 }
 
 // After WaveCollect: (re)create each simulated tile's textures and upload its new maps.
@@ -798,15 +896,16 @@ void FillClassConstants(ShadingConstants& c, const WaterPreset& preset, WaterCla
     c.scatteringTop = towardZone(preset.scatteringTop, closeWater, preset.scatteringTop[3]);
     c.scatteringBottom = towardZone(preset.scatteringBottom, farWater, preset.scatteringBottom[3]);
 
-    // vfogWaterFoam is the foam's width (2026-10-25): it scales the shore and depth fade distances (x 1.25 at 1, a little
-    // wider than LuxVelum's, which left steep shores bare); the strengths stay the preset's. 0 = no foam at all.
-    const float width = std::max(cfg.foam, 0.0f) * 1.25f;
+    // vfogWaterFoam is the foam's width (2026-10-25): it scales the shore and depth fade distances, now in world yards
+    // of water column (x 0.625: foam2 halved 1935's x 1.25 at the user's request); the strengths stay the preset's.
+    // 0 = no foam at all.
+    const float width = std::max(cfg.foam, 0.0f) * 0.625f;
     const float on = width > 0.0f ? 1.0f : 0.0f;
     c.depthFadeFoam = { std::max(preset.depthFadeFoam[0], 0.0f) * on, preset.depthFadeFoam[1], preset.depthFadeFoam[2] * width, 0.0f };
     c.shoreFoam = { std::max(preset.shoreFoam[0], 0.0f) * on, preset.shoreFoam[1], preset.shoreFoam[2] * width, kShoreDistancePerDepth };
     c.waveFoam = { std::max(preset.waveFoam[0], 0.0f) * on, 0.0f, 0.0f, 0.0f };
-    // w: the shore surge's phase, one cycle every 7 s (vw_surface.hlsli FoamAlbedo).
-    const double surge = s_pass.seconds / 7.0;
+    // w: the shore wash's phase, one wave every 6.5 s (vw_surface.hlsli FoamAlbedo).
+    const double surge = s_pass.seconds / 6.5;
     c.waveFoamScaling = { preset.waveFoamScaling[0], preset.waveFoamScaling[1], preset.waveFoamScaling[2], static_cast<float>(surge - std::floor(surge)) };
     c.surfaceResponse = { preset.roughness[0], preset.roughness[1], preset.roughness[2] * cfg.reflections, cfg.specular };
 
@@ -957,7 +1056,9 @@ void ShadeClass(WaterClass waterClass, CGxTex* waterDepth = nullptr) {
         Bind(kFirstFoamStateStage + k, w ? w->state : FlatTex());
     }
     Bind(kWaveFoamMaskStage, MaskTex(WaveMasks(*preset)));
-    Bind(kShoreDepthFoamMaskStage, MaskTex(ShoreDepthMasks(*preset)));
+    float landRow[4] = {};
+    Bind(kFoamLandStage, FoamLand(s_pass.in->camPos, landRow));
+    SetPs(kFoamLandRegister, landRow, 1);
     Bind(kRippleStage, s_pass.ripples.map ? s_pass.ripples.map : FlatTex());
     // c70 / c71 (wxl-water c38 / c39, but world-absolute like c65): the wide level's window, its gain 0 when off.
     const RippleShading& rs = s_pass.ripples;

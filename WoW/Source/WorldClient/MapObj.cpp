@@ -305,7 +305,7 @@ void CMapObj::ClassifyPortalPlane(SMOPortal* portal, SPortalExt* portalExt) {
 // OFFSET: 0x007A72A0
 void __stdcall CWorldScene::ClipVerts(C3Vector* verts, uint32_t count, C3Vector** outVerts, uint32_t* outCount) {
     static C3Vector s_clipVerts[32];
-    static int32_t s_sides[17];
+    static CWorldScene::CLIP_SIDE s_sides[17];
     static float s_dists[17];
 
     C3Vector* buffers[2] = { &s_clipVerts[0], &s_clipVerts[16] };
@@ -327,11 +327,11 @@ void __stdcall CWorldScene::ClipVerts(C3Vector* verts, uint32_t count, C3Vector*
             s_dists[i] = dist;
 
             if (dist > 0.0001f) {
-                s_sides[i] = 1;
+                s_sides[i] = CWorldScene::CLIP_SIDE::SIDE_POS;
             } else if (dist >= -0.0001f) {
-                s_sides[i] = 0;
+                s_sides[i] = CWorldScene::CLIP_SIDE::SIDE_ON;
             } else {
-                s_sides[i] = 2;
+                s_sides[i] = CWorldScene::CLIP_SIDE::SIDE_NEG;
             }
         }
 
@@ -346,12 +346,12 @@ void __stdcall CWorldScene::ClipVerts(C3Vector* verts, uint32_t count, C3Vector*
         uint32_t outCount2 = 0;
 
         for (uint32_t i = 0; i < inCount; i++) {
-            if (s_sides[i] == 0) {
+            if (s_sides[i] == CWorldScene::CLIP_SIDE::SIDE_ON) {
                 out[outCount2++] = in[i];
                 continue;
             }
 
-            if (s_sides[i] == 1) {
+            if (s_sides[i] == CWorldScene::CLIP_SIDE::SIDE_POS) {
                 out[outCount2++] = in[i];
             }
 

@@ -137,6 +137,12 @@ extern TSExplicitList<SWModelFadeout, offsetof(SWModelFadeout, m_link)> s_fadeou
 
 class CWorldScene {
     public:
+    enum CLIP_SIDE : int32_t {
+        SIDE_ON = 0,
+        SIDE_POS = 1,
+        SIDE_NEG = 2,
+    };
+
     static bool IsBeyondFadeDistance(const C3Vector& position, uint32_t fadeLevel);
     static Liquid::CRenderer* s_liquidRenderer;
     static TSExplicitList<CWFrustum, offsetof(CWFrustum, m_link)> frustumFreeList;

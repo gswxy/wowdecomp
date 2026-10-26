@@ -247,7 +247,7 @@ static int32_t Script_GetPartyAssignment(lua_State* L) {
     const char* assignment = lua_tolstring(L, 1, nullptr);
 
     if (!SStrCmpI(assignment, "MAINTANK", STORM_MAX_STR)) {
-        return CGPartyInfo::GetPartyAssignments(L, 0);
+        return CGPartyInfo::GetPartyAssignments(L, CGPartyInfo::ASSIGNMENT::MAINTANK);
     }
 
     if (SStrCmpI(assignment, "MAINASSIST", STORM_MAX_STR)) {
@@ -255,7 +255,7 @@ static int32_t Script_GetPartyAssignment(lua_State* L) {
         return 0;
     }
 
-    return CGPartyInfo::GetPartyAssignments(L, 1);
+    return CGPartyInfo::GetPartyAssignments(L, CGPartyInfo::ASSIGNMENT::MAINASSIST);
 }
 
 // VERIFY: 11c07222 manual
@@ -432,17 +432,17 @@ static int32_t SetOrClearAssignment(lua_State* L, bool set) {
 
     WOWGUID guid = WOWGUID();
     const char* assignmentName = lua_tolstring(L, 1, nullptr);
-    uint8_t assignment;
+    CGPartyInfo::ASSIGNMENT assignment;
 
     if (!SStrCmpI(assignmentName, "MAINTANK", STORM_MAX_STR)) {
-        assignment = 0;
+        assignment = CGPartyInfo::ASSIGNMENT::MAINTANK;
     } else {
         if (SStrCmpI(assignmentName, "MAINASSIST", STORM_MAX_STR)) {
             luaL_error(L, "Invalid Party assignment");
             return 0;
         }
 
-        assignment = 1;
+        assignment = CGPartyInfo::ASSIGNMENT::MAINASSIST;
     }
 
     if (!CanSendPartyCommand()) {

@@ -1051,9 +1051,9 @@ uint8_t CGRaidInfo::GetPartyAssignments(const WOWGUID& guid) {
 int32_t CGRaidInfo::GetPartyAssignments(lua_State* L, int32_t assignment) {
     uint8_t flag = 0;
 
-    if (assignment == 0) {
+    if (assignment == CGPartyInfo::ASSIGNMENT::MAINTANK) {
         flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK;
-    } else if (assignment == 1) {
+    } else if (assignment == CGPartyInfo::ASSIGNMENT::MAINASSIST) {
         flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST;
     }
 

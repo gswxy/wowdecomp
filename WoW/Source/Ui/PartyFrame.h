@@ -55,6 +55,11 @@ struct PartyReadyCheckInfo {
 
 class CGPartyInfo {
     public:
+    enum ASSIGNMENT : uint8_t {
+        MAINTANK = 0,
+        MAINASSIST = 1,
+    };
+
     enum ASSIGNMENT_FLAGS : int32_t {
         ASSISTANT = 0x1,
         MAIN_TANK = 2,

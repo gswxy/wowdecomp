@@ -2439,9 +2439,9 @@ int32_t CGChat::OnInstanceResetFailed(void* param, NETMESSAGE msgId, uint32_t ti
 
     if (!reason) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED", -1, GENDER_NOT_APPLICABLE), mapName);
-    } else if (reason == 1) {
+    } else if (reason == CGChat::INSTANCE_RESET_FAILURE::OFFLINE) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED_OFFLINE", -1, GENDER_NOT_APPLICABLE), mapName);
-    } else if (reason == 2) {
+    } else if (reason == CGChat::INSTANCE_RESET_FAILURE::ZONING) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED_ZONING", -1, GENDER_NOT_APPLICABLE), mapName);
     }
 

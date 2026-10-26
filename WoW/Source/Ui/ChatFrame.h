@@ -313,6 +313,12 @@ int32_t Packet_SMSG_LOG_XPGAIN(void* param, NETMESSAGE msgId, uint32_t time, CDa
 
 class CGChat {
     public:
+    enum INSTANCE_RESET_FAILURE : int32_t {
+        GENERIC = 0,
+        OFFLINE = 1,
+        ZONING = 2,
+    };
+
     enum COMPLAINT_PRIORITY : uint32_t {
         WHISPER_OR_BATTLENET = 0,
         CHANNEL_NONZERO = 1,

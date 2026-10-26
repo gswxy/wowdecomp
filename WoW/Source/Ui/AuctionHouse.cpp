@@ -1816,7 +1816,9 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
 
     switch (result) {
         case 0: {
-            if (action == 0) {
+            CGAuctionHouse::COMMAND_ACTION commandAction = static_cast<CGAuctionHouse::COMMAND_ACTION>(action);
+
+            if (commandAction == CGAuctionHouse::COMMAND_ACTION::START_AUCTION) {
                 if (CGAuctionHouse::m_havePendingSell) {
                     FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_MULTISELL_UPDATE, "%d%d", CGAuctionHouse::m_multisellTotal - CGAuctionHouse::m_multisellRemaining, CGAuctionHouse::m_multisellTotal);
                     CGAuctionHouse::SellNextItem();
@@ -1825,7 +1827,7 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
                 CGGameUI::DisplayError(ERR_AUCTION_STARTED);
                 CGAuctionHouse::m_canGetOwnerList = 1;
                 CGAuctionHouse::GetOwnerList();
-            } else if (action == 2) {
+            } else if (commandAction == CGAuctionHouse::COMMAND_ACTION::PLACE_BID) {
                 uint32_t minIncrement;
                 msg->Get(minIncrement);
                 CGGameUI::DisplayError(ERR_AUCTION_BID_PLACED);
@@ -1857,7 +1859,7 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
                 emote.Put(static_cast<uint32_t>(3));
                 emote.Finalize();
                 ClientServices::Send2(&emote);
-            } else if (action == 1) {
+            } else if (commandAction == CGAuctionHouse::COMMAND_ACTION::CANCEL_AUCTION) {
                 CGGameUI::DisplayError(ERR_AUCTION_REMOVED);
                 CGMailInfo::ReceivedMail(0.0f);
                 CGAuctionHouse::AuctionItemExpired(auctionID);

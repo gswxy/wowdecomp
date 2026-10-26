@@ -83,6 +83,12 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum COMMAND_ACTION : uint32_t {
+        START_AUCTION = 0,
+        CANCEL_AUCTION = 1,
+        PLACE_BID = 2,
+    };
+
     enum RUN_TIME : uint32_t {
         RUN_TIME_SHORT = 720,
         RUN_TIME_DEFAULT = 1440,

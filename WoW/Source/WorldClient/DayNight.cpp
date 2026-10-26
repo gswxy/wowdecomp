@@ -3003,10 +3003,10 @@ static void PickLightBody() {
 
     const float w[2] = { BodyWeight(elev[0]), BodyWeight(elev[1]) };
 
-    // The setting body stays the light until it is well under the horizon (-7.3 degrees: the moon until 07:00, the
-    // sun until 21:09 on the arc tables), then hands over to the other if that one is up at all (BodyWeight > 0, over
-    // -1 degree). The new body is high by then, so it cannot hand back; with neither up the body stays.
-    if (elev[body] < -7.3f && w[1 - body] > 0.0f) {
+    // The larger weight is the light (0.02 margin), so the handover falls with both weights near 0 (06:20, 20:14 on the
+    // arc tables) and the light crossfades through the sky alone. The discs do not follow it: SkyClouds draws each body
+    // that is up (7a38d7b7's -7.3 degree hold kept the set moon the light to 07:00, then the sun popped in at full).
+    if (w[1 - body] > w[body] + 0.02f) {
         body = 1 - body;
     }
 

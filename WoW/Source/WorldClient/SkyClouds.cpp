@@ -45,7 +45,6 @@ CVar* s_cvCover;
 CVar* s_cvSpeed;
 CVar* s_cvReflect;
 CVar* s_cvDip;
-CVar* s_cvDiscDebug;
 
 // wxl-light's fixed settings (light.ini defaults): opacity 0.9, sunset 0.85, depth_colour 1, disc 1, zone 1.
 constexpr float kOpacity = 0.9f;
@@ -67,7 +66,8 @@ float s_drift;
 uint32_t s_lastMs;
 uint32_t s_discMs;
 bool s_discDrawn;
-struct OverFog { bool pending; float c[13][4]; CGxTex* tex; CGxTex* noise; CGxTex* stock; } s_over;   // DrawOverFog
+// DrawOverFog: the shared constants, then per disc (the sun, the moon: each while it is up) c6 and c7 and its sprite.
+struct OverFog { bool pending; float c[13][4]; int32_t count; float sun[2][4]; float col[2][4]; CGxTex* tex[2]; CGxTex* noise; CGxTex* stock; } s_over;
 
 float Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 float Clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
@@ -261,7 +261,6 @@ void RegisterCVars() {
     s_cvCover = CVar::Register("skyCloudCover", "skyClouds: cloud cover in fair weather where the zone has no cloud sheet (0 = none, 1 = overcast)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvSpeed = CVar::Register("skyCloudSpeed", "skyClouds: how fast the cloud shapes drift (1 = wxl-light)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvDip = CVar::Register("skyDiscDip", "gfxSunArc: how far the sky round the sun/moon sprite is eased down so the sprite reads on the glow (0 = off, 0.2)", 1, "0.2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
-    s_cvDiscDebug = CVar::Register("skyDiscDebug", "gfxSunArc: draw the sun/moon pass as opaque red over its dip (test: 0 = off)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvReflect = CVar::Register("skyCloudsReflect", "skyClouds in the water reflection too (0 = the stock sheet there)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
@@ -315,7 +314,7 @@ void Draw() {
     // The game's cloud sheet (alpha = DNClouds density, cut at the zone's cloud density) says where the cloud is.
     DayNight::DNClouds& clouds = DayNight::g_clouds;
     CGxTex* stock = clouds.m_enabled ? TextureGetGxTex(clouds.m_textures[clouds.m_texIndex & 1], 0, nullptr) : nullptr;
-    // The disc is the stock sprite of the body that lights the world (sunCenter.blp / moon.blp), its stock size and
+    // The disc in this quad (the water reflection only) is the stock sprite of the body that lights the world (sunCenter.blp / moon.blp), its stock size and
     // colour (DNPlanet::Render: a 1 x m_scale quad 12 yd out; we take m_baseScale, texture x m_color, alpha-blended), at our arc's place.
     const DayNight::DNPlanet& planet = moon ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
     CGxTex* bodyTex = arc ? TextureGetGxTex(planet.m_texture, 0, nullptr) : nullptr;
@@ -400,12 +399,28 @@ void Draw() {
     if (!reflecting) {
         s_discDrawn = arc;
         s_discMs = now;
-        s_over.pending = discPass && bodyTex && c[6][3] > 0.0f;
+        // Each body's disc on its own, while any of it is over the horizon (the shader cuts it there), whichever
+        // body the light is: the moon until it has set, the sun from its rise.
+        s_over.count = 0;
+        for (int32_t b = 0; arc && discPass && b < 2; b++) {
+            const DayNight::DNPlanet& pl = b ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
+            const C3Vector& to = b ? DayNight::g_moonToward : DayNight::g_sunToward;
+            CGxTex* tex = TextureGetGxTex(pl.m_texture, 0, nullptr);
+            const float half = std::atan(0.5f * pl.m_baseScale / 12.0f);
+            if (!tex || !(half > 0.0f) || !(to.z > -std::sin(1.5f * half))) {
+                continue;
+            }
+            float* d = s_over.sun[s_over.count];
+            float* k = s_over.col[s_over.count];
+            d[0] = to.x; d[1] = to.y; d[2] = to.z; d[3] = half;
+            k[0] = pl.m_color.r / 255.0f; k[1] = pl.m_color.g / 255.0f; k[2] = pl.m_color.b / 255.0f; k[3] = pl.m_color.a / 255.0f;
+            s_over.tex[s_over.count++] = tex;
+        }
+        s_over.pending = s_over.count > 0;
         if (s_over.pending) {
             std::memcpy(s_over.c, c, sizeof(c));
             s_over.c[0][3] = 1.0f;   // the shader's disc-only mode
             s_over.c[2][3] = 1.0f;
-            s_over.tex = bodyTex;
             s_over.noise = noise;
             s_over.stock = stock;
         }
@@ -441,7 +456,6 @@ void DrawDisc(bool skyPass) {
         c[14][0] = skyFrom; c[14][1] = 1.0f;
     }
     c[14][2] = s_cvDip ? Clamp01(s_cvDip->m_floatValue) : kDiscDip;
-    c[14][3] = s_cvDiscDebug && s_cvDiscDebug->m_intValue ? 1.0f : 0.0f;
     CGxDevice* device = g_theGxDevicePtr;
     VolumetricFog::SavedPassState saved;
     VolumetricFog::BeginPasses(saved);
@@ -451,15 +465,19 @@ void DrawDisc(bool skyPass) {
     GxRsSet(GxRs_ColorWrite, 7);
     GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
     device->RsSet(GxRs_PixelShader, Shader());
-    VolumetricFog::SetPs(0, &c[0][0], 15);
     VolumetricFog::Bind(0, s_over.noise);
     VolumetricFog::Bind(1, sampled ? depth : nullptr);
-    VolumetricFog::Bind(3, s_over.tex);
     VolumetricFog::Bind(4, s_over.stock);
     if (sampled) {
         device->DeviceSceneDepthBound(false);   // D3D9: the depth may be the INTZ depth-stencil the back buffer uses
     }
-    DrawFarQuad(vp);
+    for (int32_t i = 0; i < s_over.count; i++) {
+        std::memcpy(c[6], s_over.sun[i], sizeof(c[6]));
+        std::memcpy(c[7], s_over.col[i], sizeof(c[7]));
+        VolumetricFog::SetPs(0, &c[0][0], 15);
+        VolumetricFog::Bind(3, s_over.tex[i]);
+        DrawFarQuad(vp);
+    }
     if (sampled) {
         device->DeviceSceneDepthBound(true);
     }

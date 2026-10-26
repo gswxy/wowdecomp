@@ -25,8 +25,7 @@ float4 gAtS : register(c11);   // xyz = toward the sun or moon
 float4 gAtZ : register(c12);   // rgb = the sky straight up (linear)
 float4 gDep : register(c13);   // the disc alone: xy = the viewport's origin in the depth's pixels, zw = 1 / its size
 float4 gSky : register(c14);   // the disc alone: x = the sky's depth (vf_common IsSky: above it), y = 1: sDepth is live,
-                               // z = skyDiscDip: the sky at the sprite's rim x (1 - z), back to itself by 3 x its half size,
-                               // w = 1: skyDiscDebug (opaque red)
+                               // z = skyDiscDip: the sky at the sprite's rim x (1 - z), back to itself by 3 x its half size
 
 // ---- Atmosphere.hpp
 float3 SkyAt(float3 d, float kb, float kg)
@@ -143,9 +142,6 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     // Only where vfog fogged sky (its own depth, not the bound depth-stencil's state after the composite).
     [branch] if (only && gSky.y > 0.5 && tex2Dlod(sDepth, float4((gDep.xy + uv * gDr.zw) * gDep.zw, 0.0, 0.0)).r <= gSky.x)
         return float4(0.0, 0.0, 0.0, 0.0);
-    // skyDiscDebug 1: the disc pass as opaque red over its whole dip (does the pass reach the screen at all?)
-    [branch] if (only && gSky.w > 0.5)
-        return float4(1.0, 0.0, 0.0, 1.0);
     float3 ours = ToDisplay(SkyAt(dir, 1.0, 1.0));
     float2 px = uv * gDr.zw;
     ours += (frac(52.9829189 * frac(px.x * 0.06711056 + px.y * 0.00583715)) - 0.5) / 255.0;

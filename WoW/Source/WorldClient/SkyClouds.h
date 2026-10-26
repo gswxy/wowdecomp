@@ -10,6 +10,7 @@ bool Active();          // this RenderSky draws ours (CVars on, shader and noise
 bool Disc();            // ... and our disc stands in for the stock sun and moon (gfxSunArc on)
 bool HidesGlares();     // our disc was drawn in the world view lately: DayNight::RenderGlares stays out
 void Draw();            // in RenderSky's sky slice, after the dome
+void DrawOverFog();     // after vfog's composite: the disc Draw left for it (vfog draws)
 
 }  // namespace SkyClouds
 

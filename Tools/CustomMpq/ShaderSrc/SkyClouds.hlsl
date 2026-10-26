@@ -9,14 +9,14 @@
 sampler2D sNoise : register(s0);
 sampler2D sMoon  : register(s3);
 sampler2D sStock : register(s4);
-float4 gR   : register(c0);    // the view rays: dir = right * ndc.x + up * ndc.y + forward
+float4 gR   : register(c0);    // the view rays: dir = right * ndc.x + up * ndc.y + forward; w = 1: the disc alone
 float4 gU   : register(c1);    // w = 1: sStock is live, the game's pattern says where the cloud is
-float4 gF   : register(c2);    // w = 1: sMoon is bound
+float4 gF   : register(c2);    // w = 1: sMoon (the body's stock sprite, sunCenter.blp / moon.blp) is drawn
 float4 gLit : register(c3);    // rgb = the light's colour on cloud, w = coverage
 float4 gAmb : register(c4);    // rgb = the cloud's own shade, w = opacity
 float4 gDr  : register(c5);    // xy = drift, zw = the target's size in pixels
-float4 gSun : register(c6);    // xyz = toward the sun or moon, w = its disc's radius in radians (0: none drawn)
-float4 gBody : register(c7);   // rgb = the disc's colour (display), w = how soft its edge is
+float4 gSun : register(c6);    // xyz = toward the sun or moon, w = its stock quad's half size in radians (0: none)
+float4 gBody : register(c7);   // the body's stock colour (DNPlanet m_color, display), w = its alpha
 float4 gAtH : register(c8);    // rgb = the sky at eye level (linear), w = how much of the sky is ours
 float4 gAtT : register(c9);    // rgb = the band of sky over eye level (linear)
 float4 gAtG : register(c10);   // rgb = the light's glow (linear); w, gAtS.w, gAtZ.w = the twilight band opposite the light
@@ -131,6 +131,10 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     float3 dir = normalize(gR.xyz * ndc.x + gU.xyz * ndc.y + gF.xyz);
+    // The disc alone (SkyClouds::DrawOverFog, over vfog's composite): nothing outside the sprite's quad.
+    bool only = gR.w > 0.5;
+    [branch] if (only && (dir.z <= 0.0 || dot(dir, gSun.xyz) < cos(1.5 * gSun.w)))
+        return float4(0.0, 0.0, 0.0, 0.0);
     float3 ours = ToDisplay(SkyAt(dir, 1.0, 1.0));
     float2 px = uv * gDr.zw;
     ours += (frac(52.9829189 * frac(px.x * 0.06711056 + px.y * 0.00583715)) - 0.5) / 255.0;
@@ -190,20 +194,21 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
         float cover = 0.0;
         [branch] if (gSun.w > 0.0)
         {
+            // DNPlanet::Render: the sprite x m_color, alpha-blended (the stock dome then adds on it, as ours does).
             float ang = acos(clamp(dot(dir, gSun.xyz), -1.0, 1.0));
-            cover = 1.0 - smoothstep(gSun.w * (1.0 - gBody.w), gSun.w * (1.0 + gBody.w), ang);
-            body = gBody.rgb * cover;
-            [branch] if (gF.w > 0.5 && gAtH.w < 1.0 && ang < 2.0 * gSun.w)
+            [branch] if (gF.w > 0.5 && ang < 1.5 * gSun.w)
             {
                 float3 sr = normalize(cross(float3(0.0, 0.0, 1.0), gSun.xyz));
                 float3 su = cross(gSun.xyz, sr);
-                float2 muv = 0.5 + float2(dot(dir, sr), -dot(dir, su)) / (2.1 * sin(gSun.w));
+                float2 muv = 0.5 + float2(dot(dir, sr), -dot(dir, su)) / (2.0 * tan(gSun.w) * max(dot(dir, gSun.xyz), 1.0e-3));
                 float4 m = tex2Dlod(sMoon, float4(saturate(muv), 0.0, 0.0));
                 float inside = step(abs(muv.x - 0.5), 0.5) * step(abs(muv.y - 0.5), 0.5);
-                body = lerp(m.rgb * (m.a * inside) * gBody.rgb * 1.15, body, gAtH.w);
-                cover = lerp(m.a * inside, cover, gAtH.w);
+                cover = m.a * inside * gBody.w;
+                body = m.rgb * gBody.rgb * cover;
             }
-            body += gBody.rgb * ((1.0 - gAtH.w) * 0.22 * exp(-ang / (3.0 * gSun.w)));
+            [branch] if (only)
+                return float4(cover > 1.0e-4 ? saturate(body / cover) : float3(0.0, 0.0, 0.0), cover * through);
+            body += gBody.rgb * ((1.0 - gAtH.w) * 0.22 * exp(-ang / 0.105));   // the moon's halo (wxl-light's 3 x 0.035)
         }
         stay = through * (1.0 - gAtH.w) * (1.0 - cover);
         float3 add = L * k + (ours * gAtH.w + body) * through;

@@ -64,6 +64,7 @@ float s_drift;
 uint32_t s_lastMs;
 uint32_t s_discMs;
 bool s_discDrawn;
+struct OverFog { bool pending; float c[13][4]; CGxTex* tex; CGxTex* noise; CGxTex* stock; } s_over;   // DrawOverFog
 
 float Clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 float Clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
@@ -305,7 +306,13 @@ void Draw() {
     // The game's cloud sheet (alpha = DNClouds density, cut at the zone's cloud density) says where the cloud is.
     DayNight::DNClouds& clouds = DayNight::g_clouds;
     CGxTex* stock = clouds.m_enabled ? TextureGetGxTex(clouds.m_textures[clouds.m_texIndex & 1], 0, nullptr) : nullptr;
-    CGxTex* moonTex = arc && share < 1.0f ? TextureGetGxTex(DayNight::g_planets.m_moon.m_texture, 0, nullptr) : nullptr;
+    // The disc is the stock sprite of the body that lights the world (sunCenter.blp / moon.blp), its stock size and
+    // colour (DNPlanet::Render: a 1 x m_scale quad 12 yd out, texture x m_color, alpha-blended), at our arc's place.
+    const DayNight::DNPlanet& planet = moon ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
+    CGxTex* bodyTex = arc ? TextureGetGxTex(planet.m_texture, 0, nullptr) : nullptr;
+    // Under vfog the disc goes over the fogged frame (DrawOverFog): under it the fog's sun lobe (and foreverFog's,
+    // above 1 at the sun) lifts the sky round the disc to the disc's own brightness and only a glow is left.
+    const bool overFog = !reflecting && VolumetricFog::Active();
 
     const VolumetricFog::WorldViewport vp = VolumetricFog::LiveWorldViewport();
     if (vp.w < 1.0f || vp.h < 1.0f) {
@@ -322,7 +329,7 @@ void Draw() {
     float c[13][4] = {};
     c[0][0] = v[0] / xs; c[0][1] = v[4] / xs; c[0][2] = v[8] / xs;
     c[1][0] = v[1] / ys; c[1][1] = v[5] / ys; c[1][2] = v[9] / ys; c[1][3] = stock ? 1.0f : 0.0f;
-    c[2][0] = v[2];      c[2][1] = v[6];      c[2][2] = v[10];     c[2][3] = moonTex ? 1.0f : 0.0f;
+    c[2][0] = v[2];      c[2][1] = v[6];      c[2][2] = v[10];     c[2][3] = bodyTex && !overFog ? 1.0f : 0.0f;
     float (*atmo)[4] = c + 8;
     Palette(f, share, atmo);
     atmo[0][3] = paint;
@@ -360,17 +367,10 @@ void Draw() {
     c[4][3] = kOpacity;
     c[5][0] = s_drift; c[5][1] = s_drift * 0.35f; c[5][2] = vp.w; c[5][3] = vp.h;
     c[6][0] = f.light[0]; c[6][1] = f.light[1]; c[6][2] = f.light[2];
-    if (arc) {
-        float direct[3];
-        Rgb(info.m_bands.m_diffuse, direct);
-        const float top = std::max(std::max(direct[0], direct[1]), std::max(direct[2], 1.0e-3f));
-        const float lowDisc = 1.0f - Clamp01((f.light[2] - 0.05f) / 0.25f);
-        static const float kMoon[3] = { 0.80f, 0.86f, 0.95f };
-        static const float kLowSunDisc[3] = { 1.0f, 0.52f, 0.20f };
-        for (int i = 0; i < 3; ++i)
-            c[7][i] = (0.6f + 0.4f * direct[i] / top) * (1.0f + (kLowSunDisc[i] - 1.0f) * low) * share + kMoon[i] * (1.0f - share);
-        c[7][3] = 0.30f * share + 0.45f * (1.0f - share);
-        c[6][3] = (0.026f * share + 0.035f * (1.0f - share)) * (1.0f + 0.6f * lowDisc * share);
+    if (arc && bodyTex) {
+        const CImVector& col = planet.m_color;
+        c[7][0] = col.r / 255.0f; c[7][1] = col.g / 255.0f; c[7][2] = col.b / 255.0f; c[7][3] = col.a / 255.0f;
+        c[6][3] = std::atan(0.5f * planet.m_scale / 12.0f);
     }
 
     VolumetricFog::SavedPassState saved;
@@ -383,7 +383,7 @@ void Draw() {
     device->RsSet(GxRs_PixelShader, shader);
     VolumetricFog::SetPs(0, &c[0][0], 13);
     VolumetricFog::Bind(0, noise);
-    VolumetricFog::Bind(3, moonTex);
+    VolumetricFog::Bind(3, bodyTex);
     VolumetricFog::Bind(4, stock);
     DrawFarQuad(vp);
     VolumetricFog::EndPasses(saved, vp);
@@ -391,7 +391,43 @@ void Draw() {
     if (!reflecting) {
         s_discDrawn = arc;
         s_discMs = now;
+        s_over.pending = overFog && bodyTex && c[6][3] > 0.0f;
+        if (s_over.pending) {
+            std::memcpy(s_over.c, c, sizeof(c));
+            s_over.c[0][3] = 1.0f;   // the shader's disc-only mode
+            s_over.c[2][3] = 1.0f;
+            s_over.tex = bodyTex;
+            s_over.noise = noise;
+            s_over.stock = stock;
+        }
     }
+}
+
+// After vfog's composite: only the disc (the stock sprite through our clouds), alpha-blended over the fogged sky as
+// the stock sun goes over the dome; the stock fog never fogs the sun either. Depth 1, LEQUAL: sky pixels only.
+void DrawOverFog() {
+    if (!s_over.pending || CataWater::Reflecting() || !Shader()) {
+        return;
+    }
+    s_over.pending = false;
+    const VolumetricFog::WorldViewport vp = VolumetricFog::LiveWorldViewport();
+    if (vp.w < 1.0f || vp.h < 1.0f) {
+        return;
+    }
+    s_over.c[5][2] = vp.w; s_over.c[5][3] = vp.h;
+    VolumetricFog::SavedPassState saved;
+    VolumetricFog::BeginPasses(saved);
+    GxRsSet(GxRs_DepthTest, 1);
+    GxRsSet(GxRs_DepthFunc, 0);       // LEQUAL
+    GxRsSet(GxRs_ColorWrite, 7);
+    GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
+    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Shader());
+    VolumetricFog::SetPs(0, &s_over.c[0][0], 13);
+    VolumetricFog::Bind(0, s_over.noise);
+    VolumetricFog::Bind(3, s_over.tex);
+    VolumetricFog::Bind(4, s_over.stock);
+    DrawFarQuad(vp);
+    VolumetricFog::EndPasses(saved, vp);
 }
 
 }  // namespace SkyClouds

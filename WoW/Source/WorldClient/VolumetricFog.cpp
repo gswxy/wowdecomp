@@ -3,6 +3,7 @@
 #include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
+#include "WoW/Source/WorldClient/SkyClouds.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1355,7 +1356,11 @@ bool Composite() {
         return false;
     }
     s_params = BuildFogParams(s_in, s_cfg);
-    return RenderFog(s_params, s_in, s_cfg, s_frame++, FrameTime::s_curTimeMs * 0.001);
+    const bool drawn = RenderFog(s_params, s_in, s_cfg, s_frame++, FrameTime::s_curTimeMs * 0.001);
+    if (drawn && !s_in.inLiquid) {   // under water the surface (no depth write) would not hide it
+        SkyClouds::DrawOverFog();   // the sun/moon sprite over the fogged sky, not lost in the fog's sun glow
+    }
+    return drawn;
 }
 
 void OnLiquidDone() {

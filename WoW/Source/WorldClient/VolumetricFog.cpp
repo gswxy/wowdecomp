@@ -36,6 +36,8 @@
 #include "WoW/Source/WorldClient/VolumetricFogModel.h"
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/Ui/GameUI.h"
 
 namespace VolumetricFog {
 namespace {
@@ -352,9 +354,39 @@ float SmoothedInteriorBlend() {
     return s_blend;
 }
 
+CVar* s_foreverFog = nullptr;   // foreverFog
+
+// foreverFog: BENILLA look.rs update_look. The player's area walked up its AreaTable parents to the top-level zone,
+// that zone's look at this minute of the day, cross-faded over about 2 s (lerp by dt / 2 a frame).
+void UpdateForeverLook(FrameInputs& in) {
+    static ForeverLook s_look = ForeverLookForZone(0, 720.0f);
+    static double s_lastMs = -1.0;
+    in.foreverFog = s_cvars.enable != nullptr && CVarInt(s_foreverFog, 1) != 0;
+    if (!in.foreverFog) {
+        s_lastMs = -1.0;
+        return;
+    }
+    uint32_t zone = static_cast<uint32_t>(std::max(CGGameUI::m_areaID, 0));
+    for (int i = 0; i < 4; ++i) {
+        const AreaTableRec* row = g_areaTableDB.GetRecord(static_cast<int32_t>(zone));
+        if (!row || row->m_parentAreaID == 0 || static_cast<uint32_t>(row->m_parentAreaID) == zone) break;
+        zone = static_cast<uint32_t>(row->m_parentAreaID);
+    }
+    const ForeverLook target = ForeverLookForZone(zone, DayNight::g_dnInfo.m_dayProgression * 1440.0f);
+    const double now = FrameTime::s_curTimeMs;
+    if (s_lastMs < 0.0 || now < s_lastMs || now - s_lastMs > 5000.0) {
+        s_look = target;
+    } else if (now > s_lastMs) {
+        s_look = LerpLook(s_look, target, std::min(static_cast<float>(now - s_lastMs) * 0.0005f, 1.0f));
+    }
+    s_lastMs = now;
+    in.look = s_look;
+}
+
 // coa engine.cpp BuildFrameInputsUnsafe + ReadLightParamsSelection, the DNInfo half (before the push-out).
 void ReadDayNightInputs(FrameInputs& in) {
     const DayNight::DNInfo& info = DayNight::g_dnInfo;
+    UpdateForeverLook(in);
     in.dayFraction = info.m_dayProgression;
     in.fogColor = Argb(info.m_fogInterior.m_color);
     in.fogStart = info.m_fogInterior.m_start;
@@ -874,6 +906,7 @@ void CollectRefraction(int mode) {
 
 void RegisterCVars() {
     // VFOG section 8 defaults: coa CoAVolFog.ini plus the user's wxl-vfog look.
+    s_foreverFog = CVar::Register("foreverFog", "Forever Fog: distant land fades into each zone's own fog colour, warm toward the sun and the zone's hue away from it (BENILLA zone looks; needs vfog): 1 = on (default), 0 = the previous fog", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.enable = CVar::Register("vfog", "Volumetric fog (replaces the stock fog)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.quality = CVar::Register("vfogQuality", "Volumetric fog quality: 1 = quarter res 16 steps, 2 = half res 24 (default), 3 = half res 32", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.temporal = CVar::Register("vfogTemporal", "Volumetric fog temporal blend (0 = off)", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);

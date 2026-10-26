@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 
 namespace VolumetricFog {
 
@@ -199,6 +200,9 @@ void AuthoredLayers(const AuthoredFog& fog, const Config& cfg, const FogParams& 
 }
 
 // fog_model.cpp:201-226
+void ForeverDistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p, float shaftFloor,
+                          FogLayer& out);
+
 float DistanceFogOpticalDepthPerDensity(float farStart, float farLimit, float range) {
     const float spanFraction = (farLimit - farStart) / range;
     return range * (spanFraction + kFarRamp * spanFraction * spanFraction * spanFraction / 3.0f);
@@ -206,6 +210,10 @@ float DistanceFogOpticalDepthPerDensity(float farStart, float farLimit, float ra
 
 void DistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p, float sunScatter,
                    const float* fogColor, FogLayer& out) {
+    if (in.foreverFog) {
+        ForeverDistanceLayer(in, cfg, p, cfg.shafts ? cfg.shaftIntensity : 0.0f, out);
+        return;
+    }
     out = FogLayer{};
     float farStart = std::min(std::max(in.fogStart, 0.0f), p.farLimit * kFarStartFraction);
     float opticalDepthPerDensity = DistanceFogOpticalDepthPerDensity(farStart, p.farLimit, p.maxDistance);
@@ -227,6 +235,114 @@ void DistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p,
     out.upperFalloff = in.hazeFalloff;
     Scale(fogColor, kFarAmbient * cfg.ambient, out.emissive);
     Scale(p.lightColor, kFarSun * sunScatter, out.diffuse);
+    Unshadowed(out);
+}
+
+// ---- foreverFog: BENILLA volumetrics/media.rs solve on the distance layer ----------------------------------------
+constexpr float kForeverFarTau = 1.6f;          // FAR_TAU
+constexpr float kShadedShare = 0.7f;            // SHADED_SHARE
+constexpr float kReferencePhase = 0.5f;         // REFERENCE_PHASE
+constexpr float kForwardG = 0.75f;              // FORWARD_G
+constexpr float kBackwardG = -0.2f;             // BACKWARD_G
+constexpr float kMinSpan = 8.0f;                // MIN_SPAN
+constexpr float kMaxClearShare = 0.35f;         // MAX_CLEAR_SHARE
+constexpr float kMaxAlbedo = 16.0f;             // MAX_ALBEDO
+constexpr float kMaxFogSaturation = 0.3f;       // MAX_FOG_SATURATION
+constexpr float kMaxFogLevel = 0.78f;           // MAX_FOG_LEVEL
+constexpr float kStormClear = 120.0f;           // STORM_CLEAR
+
+// media.rs subtle(): saturation <= 0.3, brightest channel <= 0.78, hue kept (gamma).
+void Subtle(float* c) {
+    for (int i = 0; i < 3; ++i) c[i] = std::max(c[i], 0.0f);
+    const float hi = std::max(c[0], std::max(c[1], c[2]));
+    if (hi <= 1e-5f) return;
+    const float lo = std::min(c[0], std::min(c[1], c[2]));
+    const float keep = std::min(kMaxFogSaturation * hi / std::max(hi - lo, 1e-5f), 1.0f);
+    const float level = std::min(kMaxFogLevel / hi, 1.0f);
+    for (int i = 0; i < 3; ++i) c[i] = (hi - (hi - c[i]) * keep) * level;
+}
+
+// Standard Henyey-Greenstein (froxelfog.wgsl hg), for the backward lobe's side-on value.
+float StandardHG(float g, float mu) {
+    const float d = std::max(1.0f + g * g - 2.0f * g * mu, 1e-4f);
+    return (1.0f - g * g) / (d * std::sqrt(d));
+}
+
+// The distance layer as BENILLA's open-air medium: density FAR_TAU over the zone's unclamped fog span (x fog_reach),
+// e per fog_falloff above the regional ground, clear to the look's range, albedo solved per channel so ambient + key
+// in-scatter at REFERENCE_PHASE lands on the (tinted, subtle) DBC fog colour; then haze_tint on the ambient term and
+// glow on the key (fog_composite / froxelfog dual_phase).
+void ForeverDistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p, float shaftFloor,
+                          FogLayer& out) {
+    const ForeverLook& look = in.look;
+    const float interior = std::clamp(in.interiorBlend, 0.0f, 1.0f);
+    const float storm = std::clamp(in.stormBlend, 0.0f, 1.0f);
+    float fog[3], ambient[3], key[3];
+    UnpackColor(in.fogColor, fog);
+    for (int c = 0; c < 3; ++c) fog[c] *= 1.0f + (look.fogTint[c] - 1.0f) * (1.0f - interior);
+    Subtle(fog);
+    UnpackColor(in.ambientColor, ambient);
+    Encode(fog, p.linear);
+    Encode(ambient, p.linear);
+    // the key's horizon / moon fade (media.rs: diffuse x key_horizon)
+    Scale(p.lightColor, p.lightVisibility, key);
+
+    const float wallEnd = in.fogEnd;
+    const float openEnd = std::max(in.zoneFogDistance > 50.0f && in.zoneFogDistance < 20000.0f ? in.zoneFogDistance : 0.0f,
+                                   wallEnd);
+    const float openStart = wallEnd > 1e-3f ? in.fogStart / wallEnd * openEnd : 0.0f;
+    const float openSpan = std::max(openEnd - std::max(openStart, 0.0f), kMinSpan);
+    const float density = kForeverFarTau / (openSpan * std::max(look.fogReach, 0.05f));
+    const float lookClear = look.fogClear + (std::min(look.fogClear, kStormClear) - look.fogClear) * storm;
+    const float nearClear = std::max(std::min(std::max(openStart, 0.0f), kMaxClearShare * openSpan), lookClear);
+    const float keyScatter = std::max(look.keyScatter, 0.0f) * (1.0f - 0.75f * storm);
+
+    float ambientIn[3], keyIn[3];
+    for (int c = 0; c < 3; ++c) {
+        const float lit = ambient[c] + key[c] * keyScatter * kReferencePhase;
+        const float albedo = lit > 1e-5f ? std::min(fog[c] / lit, kMaxAlbedo) : 0.0f;
+        ambientIn[c] = albedo * ambient[c];
+        keyIn[c] = albedo * key[c] * keyScatter;
+        const float target = ambientIn[c] + keyIn[c] * kReferencePhase;
+        const float floor = target * kShadedShare;
+        if (ambientIn[c] < floor) {
+            const float keyLeft = target - ambientIn[c];
+            keyIn[c] *= (target - floor) / keyLeft;
+            ambientIn[c] = floor;
+        }
+    }
+
+    // Dual lobe mix(hg(-0.2), hg(0.75), forward) in our one-lobe layer: our PhaseHG is HG / ((1 + g) / (1 - g)^2)
+    // (peak 1), so the forward lobe is that scale x PhaseHG(0.75) and the backward lobe is held at its side-on value
+    // (isotropic). With vfogShafts' phase floor (max(phase, floor)) the scale is capped so the floor never lifts the
+    // key past REFERENCE_PHASE, else the floor alone would scatter ~7x the key every way.
+    const float moon = in.lightIsMoon ? SmoothStep(-0.03f, 0.10f, in.toLight[2]) : 0.0f;
+    const float forward = std::clamp(look.forward * (1.0f + (look.moonGlow - 1.0f) * moon), 0.0f, 1.0f) *
+                          (1.0f - 0.5f * storm);
+    const float forwardScale = (1.0f + kForwardG) / ((1.0f - kForwardG) * (1.0f - kForwardG));
+    const float backward = StandardHG(kBackwardG, 0.0f);
+    float scale = forward * forwardScale + (1.0f - forward) * backward;
+    const float isotropic = scale > 1e-5f ? (1.0f - forward) * backward / scale : 1.0f;
+    if (shaftFloor > 0.0f) scale = std::min(scale, kReferencePhase / shaftFloor);
+    // look.rs key_hue: the glow fades to white by 1 - moon_hue while the moon keys
+    const float hueFade = (1.0f - std::clamp(look.moonHue, 0.0f, 1.0f)) * moon;
+
+    out = FogLayer{};
+    out.start = 0.9f * nearClear;     // froxelfog's smoothstep(0.8 clear, clear) ease as a hard start at its mean
+    out.density = cfg.stockFog ? density * cfg.farFog * cfg.density : 0.0f;
+    out.g = kForwardG;
+    out.isotropic = isotropic;
+    out.strength = 0.0f;
+    out.exponent = 1.0f;
+    out.skyFalloff = kFarSkyFalloff;
+    out.endDistance = std::max(std::max(in.fogCap, in.farClip), p.farLimit);
+    out.upperHeight = in.hazeReferenceValid ? in.hazeReferenceZ : p.referenceZ;
+    out.upperFalloff = 1.0f / std::max(look.fogFalloff, 1.0f);
+    for (int c = 0; c < 3; ++c) {
+        const float glow = look.glow[c] + (1.0f - look.glow[c]) * hueFade;
+        out.emissive[c] = ambientIn[c] * look.hazeTint[c];
+        out.diffuse[c] = keyIn[c] * glow * scale;
+    }
     Unshadowed(out);
 }
 
@@ -833,6 +949,111 @@ void IntegrateFogRay(const FogParams& fog, const FogRayLights& lights, const Fog
         }
         samples[step + 1] = { transmittance, { inScatter[0], inScatter[1], inScatter[2] } };
     }
+}
+
+// ---- foreverFog zone looks: BENILLA modern/look.rs rows 1:1 (fog fields only; the rest of each row is grading,
+// exposure and lamp/bank data we do not port). AreaTable ids checked against our 3.3.5 AreaTable.dbc (same ids;
+// Outland and Northrend have no row and take the default look).
+namespace {
+//                               forward keyScat glow                 hazeTint               reach  fogTint               fall   clear  moonGlow moonHue
+constexpr ForeverLook kNeutral = { 0.72f, 0.7f, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, 0.5f, { 1.0f, 1.0f, 1.0f }, 70.0f, 450.0f, 1.0f, 1.0f };
+ForeverLook With(ForeverLook l, const float* glow, const float* haze, const float* tint) {
+    for (int c = 0; c < 3; ++c) {
+        if (glow) l.glow[c] = glow[c];
+        if (haze) l.hazeTint[c] = haze[c];
+        if (tint) l.fogTint[c] = tint[c];
+    }
+    return l;
+}
+ForeverLook Noon() {                    // ZoneLook::NOON
+    const float haze[3] = { 0.8f, 1.0f, 1.05f };
+    return With(kNeutral, nullptr, haze, nullptr);
+}
+ForeverLook Eerie() {                   // ZoneLook::EERIE
+    const float glow[3] = { 0.65f, 1.0f, 0.7f }, haze[3] = { 0.22f, 0.34f, 0.26f }, tint[3] = { 0.8f, 1.0f, 0.8f };
+    return With(kNeutral, glow, haze, tint);
+}
+ForeverLook Tirisfal() {                // ZoneLook::TIRISFAL
+    const float glow[3] = { 0.58f, 1.0f, 0.62f }, haze[3] = { 0.19f, 0.36f, 0.22f }, tint[3] = { 0.7f, 1.05f, 0.7f };
+    return With(kNeutral, glow, haze, tint);
+}
+ForeverLook Cold() {                    // ZoneLook::COLD
+    const float glow[3] = { 0.72f, 0.88f, 1.18f }, haze[3] = { 0.42f, 0.68f, 1.28f }, tint[3] = { 0.58f, 0.82f, 1.32f };
+    ForeverLook l = With(kNeutral, glow, haze, tint);
+    l.forward = 0.6f; l.keyScatter = 0.6f; l.fogReach = 0.38f; l.fogClear = 250.0f;
+    return l;
+}
+ForeverLook ColdNight() {               // ZoneLook::COLD_NIGHT
+    ForeverLook l = Cold();
+    l.fogReach = 1.2f;
+    return l;
+}
+ForeverLook Ironforge() {               // ZoneLook::IRONFORGE
+    const float haze[3] = { 1.0f, 0.92f, 0.82f };
+    ForeverLook l = With(kNeutral, nullptr, haze, nullptr);
+    l.keyScatter = 0.4f; l.fogReach = 1.5f; l.fogClear = 900.0f;
+    return l;
+}
+ForeverLook Darkshore() {               // ZoneLook::DARKSHORE
+    const float glow[3] = { 1.15f, 0.7f, 0.6f }, haze[3] = { 0.85f, 0.76f, 0.78f }, tint[3] = { 2.1f, 1.85f, 1.85f };
+    ForeverLook l = With(kNeutral, glow, haze, tint);
+    l.forward = 0.82f; l.keyScatter = 0.9f; l.fogReach = 0.7f; l.fogFalloff = 100.0f; l.fogClear = 80.0f;
+    l.moonGlow = 0.1f; l.moonHue = 0.0f;
+    return l;
+}
+ForeverLook DarkshoreNoon() {           // ZoneLook::DARKSHORE_NOON
+    const float glow[3] = { 1.0f, 0.96f, 0.95f }, haze[3] = { 0.8f, 0.8f, 0.82f }, tint[3] = { 1.9f, 1.9f, 1.93f };
+    return With(Darkshore(), glow, haze, tint);
+}
+
+bool In(uint32_t zone, std::initializer_list<uint32_t> ids) {
+    return std::find(ids.begin(), ids.end(), zone) != ids.end();
+}
+
+// sun_arc.rs midday_at (MIDDAY_IN 540..660, MIDDAY_OUT 870..990) and night_at (moonrise 1236.5, moonset 366.5,
+// STARS_FADE 60).
+float MiddayAt(float minute) {
+    auto ramp = [minute](float a, float b) {
+        const float t = std::clamp((minute - a) / (b - a), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    return ramp(540.0f, 660.0f) * (1.0f - ramp(870.0f, 990.0f));
+}
+float NightAt(float minute) {
+    auto wrap = [](float x) { return std::fmod(std::fmod(x, 1440.0f) + 1440.0f, 1440.0f); };
+    const float afterRise = wrap(minute - 1236.5f), beforeSet = wrap(366.5f - minute);
+    const float night = 1440.0f - (1236.5f - 366.5f);
+    return afterRise <= night ? std::clamp(std::min(afterRise, beforeSet) / 60.0f, 0.0f, 1.0f) : 0.0f;
+}
+}  // namespace
+
+ForeverLook LerpLook(const ForeverLook& a, const ForeverLook& b, float t) {
+    auto m = [t](float x, float y) { return x + (y - x) * t; };
+    ForeverLook o;
+    o.forward = m(a.forward, b.forward);
+    o.keyScatter = m(a.keyScatter, b.keyScatter);
+    for (int c = 0; c < 3; ++c) {
+        o.glow[c] = m(a.glow[c], b.glow[c]);
+        o.hazeTint[c] = m(a.hazeTint[c], b.hazeTint[c]);
+        o.fogTint[c] = m(a.fogTint[c], b.fogTint[c]);
+    }
+    o.fogReach = m(a.fogReach, b.fogReach);
+    o.fogFalloff = m(a.fogFalloff, b.fogFalloff);
+    o.fogClear = m(a.fogClear, b.fogClear);
+    o.moonGlow = m(a.moonGlow, b.moonGlow);
+    o.moonHue = m(a.moonHue, b.moonHue);
+    return o;
+}
+
+// look.rs look_for_zone_at: the default look ramps into NOON across midday, Darkshore into DARKSHORE_NOON, the snow
+// zones into COLD_NIGHT across the night; the others keep their row at every hour.
+ForeverLook ForeverLookForZone(uint32_t zone, float minute) {
+    if (zone == 85) return Tirisfal();
+    if (In(zone, { 10, 130, 41, 28, 139, 8, 361, 5179, 5208 })) return Eerie();
+    if (zone == 1537) return Ironforge();
+    if (zone == 148) return LerpLook(Darkshore(), DarkshoreNoon(), MiddayAt(minute));
+    if (In(zone, { 1, 618, 2597, 36 })) return LerpLook(Cold(), ColdNight(), NightAt(minute));
+    return LerpLook(kNeutral, Noon(), MiddayAt(minute));
 }
 
 }  // namespace VolumetricFog

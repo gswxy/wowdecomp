@@ -28,6 +28,7 @@ local PAGES = {
 	-- vfogaudit (docs/vfog-audit.md): the fog's user-facing set; every other vfog* CVar keeps its default and is hidden.
 	{ name = "Fog", parent = "Advanced", title = "Fog",
 	  { "vfog", "check", "Volumetric fog", "Replaces the stock fog with lit, volumetric fog." },
+	  { "foreverFog", "check", "Forever Fog", "Distant land fades into each zone's own fog colour: warm toward the sun, the zone's hue away from it, far mountains left as tinted silhouettes. Needs volumetric fog." },
 	  { "vfogQuality", "drop", "Fog quality", "Resolution and step count of the fog. Higher looks smoother and costs more.",
 	    { { "1", "Low" }, { "2", "Medium" }, { "3", "High" } } },
 	  { "vfogDensity", "slider", "Density", "How thick all fog is, near and far.", 0, 3, 0.05 },

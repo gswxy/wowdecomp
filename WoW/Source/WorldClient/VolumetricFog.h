@@ -84,7 +84,26 @@ struct LocalLight {
     float cutoff;           // radius where the contribution falls under 1/256
 };
 
+// foreverFog: the fog half of BENILLA modern/look.rs ZoneLook (the fields volumetrics/media.rs solves with).
+struct ForeverLook {
+    float forward;          // dual-lobe forward share
+    float keyScatter;       // key light's scattering weight
+    float glow[3];          // colour of the key in-scatter (toward the sun)
+    float hazeTint[3];      // colour of the ambient in-scatter (away from it)
+    float fogReach;         // > 1 = clearer
+    float fogTint[3];       // gamma multiplier on the DBC fog colour the medium is solved toward
+    float fogFalloff;       // yd per e of density above the regional ground
+    float fogClear;         // planar yd kept clear
+    float moonGlow;         // forward share kept while the moon keys
+    float moonHue;          // share of the glow hue the moon keeps
+};
+// The zone look at `minute` of the day (VolumetricFogModel.cpp, look.rs look_for_zone_at); zone = AreaTable top-level id.
+ForeverLook ForeverLookForZone(uint32_t zone, float minute);
+ForeverLook LerpLook(const ForeverLook& a, const ForeverLook& b, float t);
+
 struct FrameInputs {
+    bool foreverFog;                // foreverFog: the distance layer is BENILLA's medium (media.rs solve), lit by `look`
+    ForeverLook look;               // the cross-faded zone look (VolumetricFog.cpp UpdateForeverLook)
     float cameraRelativeView[16];   // row-major, view with the camera translation removed
     float glProjection[16];         // main projection (GxuXformCreateProjection_SG), row-major
     float camPos[3];

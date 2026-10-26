@@ -1,4 +1,5 @@
 #include "BarberShop.h"
+#include "WoW/Common/Types.h"
 #include "WoW/Source/Ui/ScriptEvents.h"
 #include "WoW/Source/Ui/Types.h"
 #include "Engine/Source/Base/CDataStore.h"
@@ -222,7 +223,7 @@ int32_t Packet_SMSG_ENABLE_BARBER_SHOP(void* param, NETMESSAGE msgId, uint32_t t
         CGBarberShop::m_prevView = camera->m_viewIndex;
         float distance;
 
-        if (player->m_unit->m_unitFieldBytes0[0] == 7) {
+        if (player->m_unit->m_unitFieldBytes0[0] == RACE_GNOME) {
             distance = CGBarberShop::m_minCameraDistance * 3.0f;
         } else {
             distance = CGBarberShop::m_minCameraDistance + CGBarberShop::m_minCameraDistance;

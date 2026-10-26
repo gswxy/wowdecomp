@@ -287,7 +287,7 @@ int32_t BuildComponentArray(uint32_t count, st_race** lookupOut) {
     }
 
     sexID = 0;
-    raceID = 1;
+    raceID = RACE_HUMAN;
     baseSection = 0;
     variationIndex = 0;
     int32_t colorIndex = 0;

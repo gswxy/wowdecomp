@@ -1,4 +1,5 @@
 #include <cstddef>
+#include "WoW/Common/Types.h"
 #include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cstdint>
 #include <cstdio>
@@ -34,7 +35,20 @@
 #include "WoW/Source/WorldClient/World.h"
 
 // STATIC: 0x00B24180
-static const char* s_raceFileNames[] = { nullptr, "Human", "Orc", "Dwarf", "NightElf", "Scourge", "Tauren", "Gnome", "Troll", "Goblin", "BloodElf", "Draenei" };
+static const char* s_raceFileNames[RACE_DRAENEI + 1] = {
+    nullptr,
+    "Human",    // RACE_HUMAN
+    "Orc",      // RACE_ORC
+    "Dwarf",    // RACE_DWARF
+    "NightElf", // RACE_NIGHT_ELF
+    "Scourge",  // RACE_UNDEAD
+    "Tauren",   // RACE_TAUREN
+    "Gnome",    // RACE_GNOME
+    "Troll",    // RACE_TROLL
+    "Goblin",   // RACE_GOBLIN
+    "BloodElf", // RACE_BLOOD_ELF
+    "Draenei",  // RACE_DRAENEI
+};
 
 // STATIC: 0x009F2010
 const char SI2::s_channelGroupNames[18][32] = {

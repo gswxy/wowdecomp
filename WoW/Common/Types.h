@@ -20,6 +20,31 @@ enum CHARACTER_CLASS : uint32_t {
     NUM_CLASSES = 11, // Number of ID slots, including unused ID 10.
 };
 
+enum CHARACTER_RACE : uint32_t {
+    RACE_HUMAN = 1,
+    RACE_ORC = 2,
+    RACE_DWARF = 3,
+    RACE_NIGHT_ELF = 4,
+    RACE_UNDEAD = 5,
+    RACE_TAUREN = 6,
+    RACE_GNOME = 7,
+    RACE_TROLL = 8,
+    RACE_GOBLIN = 9,
+    RACE_BLOOD_ELF = 10,
+    RACE_DRAENEI = 11,
+    RACE_FEL_ORC = 12,
+    RACE_NAGA = 13,
+    RACE_BROKEN = 14,
+    RACE_SKELETON = 15,
+    RACE_VRYKUL = 16,
+    RACE_TUSKARR = 17,
+    RACE_FOREST_TROLL = 18,
+    RACE_TAUNKA = 19,
+    RACE_NORTHREND_SKELETON = 20,
+    RACE_ICE_TROLL = 21,
+    NUM_RACES = 21,
+};
+
 class CAaBspNode {
     public:
     enum : uint16_t {

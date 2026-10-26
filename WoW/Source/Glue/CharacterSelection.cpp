@@ -59,7 +59,7 @@ int32_t CCharacterSelection::s_characterCount;
 float CCharacterSelection::s_charFacing;
 
 // STATIC: 0x00B6B208
-uint32_t CCharacterSelection::s_raceRestrictions[10];
+uint32_t CCharacterSelection::s_raceRestrictions[NUM_RACE_RESTRICTIONS];
 
 // STATIC: 0x00B6B238
 TSGrowableArray<CharacterSelectionDisplay> CCharacterSelection::s_characterList;
@@ -620,16 +620,16 @@ void CCharacterSelection::UpdateCharacterList() {
     ClearAddOnEnableState(nullptr);
     CCharacterSelection::s_characterList.SetCount(0);
 
-    CCharacterSelection::s_raceRestrictions[0] = 0;
-    CCharacterSelection::s_raceRestrictions[1] = 0;
-    CCharacterSelection::s_raceRestrictions[2] = 0;
-    CCharacterSelection::s_raceRestrictions[3] = 0;
-    CCharacterSelection::s_raceRestrictions[4] = 0;
-    CCharacterSelection::s_raceRestrictions[5] = 0;
-    CCharacterSelection::s_raceRestrictions[6] = 0;
-    CCharacterSelection::s_raceRestrictions[7] = 0;
-    CCharacterSelection::s_raceRestrictions[8] = 0;
-    CCharacterSelection::s_raceRestrictions[9] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_HUMAN] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DWARF] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_GNOME] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_NIGHT_ELF] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DRAENEI] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_ORC] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TROLL] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TAUREN] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_UNDEAD] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_BLOOD_ELF] = 0;
 
     ClientServices::Connection()->EnumerateCharacters(&CCharacterSelection::EnumerateCharactersCallback, nullptr);
 
@@ -646,16 +646,16 @@ void CCharacterSelection::UpdateCharacterList() {
             CCharacterSelection::m_modelFrame->m_model->DetachAllChildrenById(1);
         }
     } else {
-        CCharacterSelection::s_raceRestrictions[0] = ClientServices::Connection()->m_restrictHuman;
-        CCharacterSelection::s_raceRestrictions[1] = ClientServices::Connection()->m_restrictDwarf;
-        CCharacterSelection::s_raceRestrictions[2] = ClientServices::Connection()->m_restrictGnome;
-        CCharacterSelection::s_raceRestrictions[3] = ClientServices::Connection()->m_restrictNightElf;
-        CCharacterSelection::s_raceRestrictions[4] = ClientServices::Connection()->m_restrictDraenei;
-        CCharacterSelection::s_raceRestrictions[5] = ClientServices::Connection()->m_restrictOrc;
-        CCharacterSelection::s_raceRestrictions[6] = ClientServices::Connection()->m_restrictTroll;
-        CCharacterSelection::s_raceRestrictions[7] = ClientServices::Connection()->m_restrictTauren;
-        CCharacterSelection::s_raceRestrictions[8] = ClientServices::Connection()->m_restrictUndead;
-        CCharacterSelection::s_raceRestrictions[9] = ClientServices::Connection()->m_restrictBloodElf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_HUMAN] = ClientServices::Connection()->m_restrictHuman;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DWARF] = ClientServices::Connection()->m_restrictDwarf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_GNOME] = ClientServices::Connection()->m_restrictGnome;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_NIGHT_ELF] = ClientServices::Connection()->m_restrictNightElf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DRAENEI] = ClientServices::Connection()->m_restrictDraenei;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_ORC] = ClientServices::Connection()->m_restrictOrc;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TROLL] = ClientServices::Connection()->m_restrictTroll;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TAUREN] = ClientServices::Connection()->m_restrictTauren;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_UNDEAD] = ClientServices::Connection()->m_restrictUndead;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_BLOOD_ELF] = ClientServices::Connection()->m_restrictBloodElf;
 
         CRealmList::m_preferredCategory = 0;
 

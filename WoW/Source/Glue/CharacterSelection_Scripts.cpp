@@ -264,15 +264,15 @@ static int32_t Script_GetSelectBackgroundModel(lua_State* L) {
 
         uint32_t raceID = display->m_characterInfo.m_raceID;
 
-        if (raceID == 7) {
-            raceID = 3;
-        } else if (raceID == 8) {
-            raceID = 2;
+        if (raceID == RACE_GNOME) {
+            raceID = RACE_DWARF;
+        } else if (raceID == RACE_TROLL) {
+            raceID = RACE_ORC;
         }
 
         raceRec = g_chrRacesDB.GetRecord(raceID);
     } else {
-        raceRec = g_chrRacesDB.GetRecord(2);
+        raceRec = g_chrRacesDB.GetRecord(RACE_ORC);
     }
 
     if (raceRec) {

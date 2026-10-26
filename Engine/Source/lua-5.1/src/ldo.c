@@ -556,9 +556,23 @@ LUA_API int lua_resume (lua_State *L, int nargs) {
     else if (L->ci != L->base_ci)
       return resume_error(L, "cannot resume non-suspended coroutine");
   }
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.2-4: recursive coroutines may overflow the C stack.
+     Upstream shares nCcalls between threads (limit LUAI_MAXCCALLS); we count
+     resume nesting in global_State against a limit just below the depth
+     where 5.1.1 crashed, so nothing that ran before now errors. */
+  if (G(L)->nCresume >= LUA_OUR_MAXRESUME)
+    return resume_error(L, "C stack overflow");
+#endif
   luai_userstateresume(L, nargs);
   lua_assert(L->errfunc == 0 && L->nCcalls == 0);
+#if LUA_OUR_BUGFIXES
+  G(L)->nCresume++;
   status = luaD_rawrunprotected(L, resume, L->top - nargs);
+  G(L)->nCresume--;
+#else
+  status = luaD_rawrunprotected(L, resume, L->top - nargs);
+#endif
   if (status != 0) {  /* error? */
     L->status = cast_byte(status);  /* mark thread as `dead' */
     luaD_seterrorobj(L, status, L->top);

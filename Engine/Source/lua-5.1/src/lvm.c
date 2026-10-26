@@ -69,12 +69,20 @@ static void traceexec (lua_State *L, const Instruction *pc) {
   lu_byte mask = L->hookmask;
   const Instruction *oldpc = L->savedpc;
   L->savedpc = pc;
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.2-3: count hook may be called without being set */
+  if ((mask & LUA_MASKCOUNT) && L->hookcount == 0) {
+    resethookcount(L);
+    luaD_callhook(L, LUA_HOOKCOUNT, -1);
+  }
+#else
   if (mask > LUA_MASKLINE) {  /* instruction-hook set? */
     if (L->hookcount == 0) {
       resethookcount(L);
       luaD_callhook(L, LUA_HOOKCOUNT, -1);
     }
   }
+#endif
   if (mask & LUA_MASKLINE) {
     Proto *p = ci_func(L->ci)->l.p;
     int npc = pcRel(pc, p);
@@ -153,6 +161,9 @@ void luaV_gettable (lua_State *L, const TValue *t, TValue *key, StkId val) {
 // OFFSET: 0x008573C0
 void luaV_settable (lua_State *L, const TValue *t, TValue *key, StkId val) {
   int loop;
+#if LUA_OUR_BUGFIXES
+  TValue temp;
+#endif
   for (loop = 0; loop < MAXTAGLOOP; loop++) {
     const TValue *tm;
     if (ttistable(t)) {  /* `t' is a table? */
@@ -175,7 +186,15 @@ void luaV_settable (lua_State *L, const TValue *t, TValue *key, StkId val) {
       callTM(L, tm, t, key, val);
       return;
     }
+#if LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.4-4: luaV_settable may invalidate a reference to
+       a table and try to reuse it. Plain struct copy instead of setobj, so
+       the copy does not touch lua_tainted (taint behaviour unchanged). */
+    temp = *tm;  /* avoid pointing inside table (may rehash) */
+    t = &temp;
+#else
     t = tm;  /* else repeat with `tm' */ 
+#endif
   }
   luaG_runerror(L, "loop in settable");
 }

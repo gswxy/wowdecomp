@@ -37,8 +37,18 @@ static int isnumeral(expdesc *e) {
 void luaK_nil (FuncState *fs, int from, int n) {
   Instruction *previous;
   if (fs->pc > fs->lasttarget) {  /* no jumps to current position? */
+#if LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.1-7: assignment of nil to a parameter at function
+       start may be optimized away */
+    if (fs->pc == 0) {  /* function start? */
+      if (from >= fs->nactvar)
+        return;  /* positions are already clean */
+    }
+    else
+#else
     if (fs->pc == 0)  /* function start? */
       return;  /* positions are already clean */
+#endif
     if (GET_OPCODE(*(previous = &fs->f->code[fs->pc-1])) == OP_LOADNIL) {
       int pfrom = GETARG_A(*previous);
       int pto = GETARG_B(*previous);
@@ -609,10 +619,14 @@ void luaK_goiftrue (FuncState *fs, expdesc *e) {
       pc = NO_JUMP;  /* always true; do nothing */
       break;
     }
+#if !LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.4-3 + 5.1.4-9: VFALSE with pending jumps must go
+       through jumponcond (wrong code for some boolean expressions) */
     case VFALSE: {
       pc = luaK_jump(fs);  /* always jump */
       break;
     }
+#endif
     case VJMP: {
       invertjump(fs, e);
       pc = e->u.s.info;
@@ -637,10 +651,14 @@ static void luaK_goiffalse (FuncState *fs, expdesc *e) {
       pc = NO_JUMP;  /* always false; do nothing */
       break;
     }
+#if !LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.4-3 + 5.1.4-9: VTRUE with pending jumps must go
+       through jumponcond (wrong code for some boolean expressions) */
     case VTRUE: {
       pc = luaK_jump(fs);  /* always jump */
       break;
     }
+#endif
     case VJMP: {
       pc = e->u.s.info;
       break;
@@ -735,10 +753,25 @@ static void codearith (FuncState *fs, OpCode op, expdesc *e1, expdesc *e2) {
   if (constfolding(op, e1, e2))
     return;
   else {
+#if LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.1-6: free the registers in stack order (wrong
+       code for arithmetic expressions in some scenarios) */
+    int o2 = (op != OP_UNM && op != OP_LEN) ? luaK_exp2RK(fs, e2) : 0;
+    int o1 = luaK_exp2RK(fs, e1);
+    if (o1 > o2) {
+      freeexp(fs, e1);
+      freeexp(fs, e2);
+    }
+    else {
+      freeexp(fs, e2);
+      freeexp(fs, e1);
+    }
+#else
     int o1 = luaK_exp2RK(fs, e1);
     int o2 = (op != OP_UNM && op != OP_LEN) ? luaK_exp2RK(fs, e2) : 0;
     freeexp(fs, e2);
     freeexp(fs, e1);
+#endif
     e1->u.s.info = luaK_codeABC(fs, op, 0, o1, o2);
     e1->k = VRELOCABLE;
   }
@@ -770,7 +803,12 @@ void luaK_prefix (FuncState *fs, UnOpr op, expdesc *e) {
   e2.t = e2.f = NO_JUMP; e2.k = VKNUM; e2.u.nval = 0;
   switch (op) {
     case OPR_MINUS: {
+#if LUA_OUR_BUGFIXES
+      /* LUA_OUR_BUGFIXES 5.1.2-2: wrong code for '-nil', '-true', '-false' */
+      if (!isnumeral(e))
+#else
       if (e->k == VK)
+#endif
         luaK_exp2anyreg(fs, e);  /* cannot operate on non-numeric constants */
       codearith(fs, OP_UNM, e, &e2);
       break;
@@ -802,10 +840,23 @@ void luaK_infix (FuncState *fs, BinOpr op, expdesc *v) {
       luaK_exp2nextreg(fs, v);  /* operand must be on the `stack' */
       break;
     }
+#if LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.1-6: comparison operands always go to RK */
+    case OPR_ADD: case OPR_SUB: case OPR_MUL: case OPR_DIV:
+    case OPR_MOD: case OPR_POW: {
+      if (!isnumeral(v)) luaK_exp2RK(fs, v);
+      break;
+    }
+    default: {
+      luaK_exp2RK(fs, v);
+      break;
+    }
+#else
     default: {
       if (!isnumeral(v)) luaK_exp2RK(fs, v);
       break;
     }
+#endif
   }
 }
 

@@ -195,6 +195,9 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud, int profile) {
   g->gcpause = LUAI_GCPAUSE;
   g->gcstepmul = LUAI_GCMUL;
   g->gcdept = 0;
+#if LUA_OUR_BUGFIXES
+  g->nCresume = 0;
+#endif
   for (i=0; i<NUM_TAGS; i++) g->mt[i] = NULL;
   if (luaD_rawrunprotected(L, f_luaopen, NULL) != 0) {
     /* memory allocation error: free partial state */

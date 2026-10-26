@@ -216,7 +216,12 @@ typedef union TString {
 
 
 #define getstr(ts)	cast(const char *, (ts) + 1)
+#if LUA_OUR_BUGFIXES
+/* LUA_OUR_BUGFIXES 5.1.3-12: internal macro 'svalue' is wrong */
+#define svalue(o)       getstr(rawtsvalue(o))
+#else
 #define svalue(o)       getstr(tsvalue(o))
+#endif
 
 
 

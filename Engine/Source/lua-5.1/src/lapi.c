@@ -126,6 +126,18 @@ void luaA_pushobject (lua_State *L, const TValue *o) {
 // VERIFY: bd829ab2 auto
 // OFFSET: 0x0084DAB0
 LUA_API int lua_checkstack (lua_State *L, int size) {
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.3-3: arithmetic overflow for large 'size' */
+  int res = 1;
+  lua_lock(L);
+  if (size > LUAI_MAXCSTACK || (L->top - L->base + size) > LUAI_MAXCSTACK)
+    res = 0;  /* stack overflow */
+  else if (size > 0) {
+    luaD_checkstack(L, size);
+    if (L->ci->top < L->top + size)
+      L->ci->top = L->top + size;
+  }
+#else
   int res;
   lua_lock(L);
   if ((L->top - L->base + size) > LUAI_MAXCSTACK)
@@ -136,6 +148,7 @@ LUA_API int lua_checkstack (lua_State *L, int size) {
       L->ci->top = L->top + size;
     res = 1;
   }
+#endif
   lua_unlock(L);
   return res;
 }
@@ -888,7 +901,12 @@ LUA_API int lua_setfenv (lua_State *L, int idx) {
       res = 0;
       break;
   }
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.2-11: lua_setfenv may crash over an invalid object */
+  if (res) luaC_objbarrier(L, gcvalue(o), hvalue(L->top - 1));
+#else
   luaC_objbarrier(L, gcvalue(o), hvalue(L->top - 1));
+#endif
   L->top--;
   lua_unlock(L);
   return res;
@@ -1078,10 +1096,21 @@ LUA_API int lua_gc (lua_State *L, int what, int data) {
         g->GCthreshold = g->totalbytes - a;
       else
         g->GCthreshold = 0;
+#if LUA_OUR_BUGFIXES
+      /* LUA_OUR_BUGFIXES 5.1.3-10: user-requested GC step may loop forever */
+      while (g->GCthreshold <= g->totalbytes) {
+        luaC_step(L);
+        if (g->gcstate == GCSpause) {  /* end of cycle? */
+          res = 1;  /* signal it */
+          break;
+        }
+      }
+#else
       while (g->GCthreshold <= g->totalbytes)
         luaC_step(L);
       if (g->gcstate == GCSpause)  /* end of cycle? */
         res = 1;  /* signal it */
+#endif
       break;
     }
     case LUA_GCSETPAUSE: {

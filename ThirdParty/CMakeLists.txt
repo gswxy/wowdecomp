@@ -125,22 +125,28 @@ target_include_directories(freetype
 )
 
 add_library(expat STATIC
+    expat/lib/xcs.c
     expat/lib/xmlparse.c
     expat/lib/xmlrole.c
     expat/lib/xmltok.c
 )
 
+if(WIN32)
+    target_sources(expat PRIVATE expat/lib/random_rand_s.c)
+else()
+    target_sources(expat PRIVATE expat/lib/random_dev_urandom.c)
+endif()
+
 target_compile_definitions(expat
     PUBLIC
-        _STATIC
-    PRIVATE
-        COMPILED_FROM_DSP
-        _LIB
+        XML_STATIC
 )
 
 target_include_directories(expat
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/expat/lib
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/expat
 )
 
 add_library(pcre STATIC

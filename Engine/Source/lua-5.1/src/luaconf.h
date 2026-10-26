@@ -749,6 +749,41 @@ union luai_Cast { double l_d; long l_l; };
 ** without modifying the main part of the file.
 */
 
+/*
+@@ LUA_OUR_BUGFIXES enables the official lua.org 5.1 bug patches
+@* (www.lua.org/bugs.html) applied to this Blizzard-modified 5.1.1.
+@* Each patched block is guarded by it and names its bug id.
+*/
+#ifndef LUA_OUR_BUGFIXES
+#define LUA_OUR_BUGFIXES	1
+#endif
+
+/*
+@@ LUA_OUR_MAXRESUME limits nested coroutine resumes (bug 5.1.2-4).
+@@ LUA_OUR_MAXASSIGNVARS limits variables in one assignment (bug 5.1.2-7).
+@* Both sit just below the depth where unpatched 5.1.1 overflowed the
+@* 1 MB main-thread stack of Wow32/Wow64 (clang-cl /O2, measured under
+@* Wine 2026-10-27): resumes crash at 2191 (x86) / 1009 (x64), assignment
+@* lists at 12917 / 7168 variables. Upstream uses LUAI_MAXCCALLS (200)
+@* for both, which would reject code that ran before; any assignment over
+@* ~250 variables already fails with "function or expression too complex".
+*/
+#if defined(_WIN64) || defined(__LP64__)
+#ifndef LUA_OUR_MAXRESUME
+#define LUA_OUR_MAXRESUME	900
+#endif
+#ifndef LUA_OUR_MAXASSIGNVARS
+#define LUA_OUR_MAXASSIGNVARS	6500
+#endif
+#else
+#ifndef LUA_OUR_MAXRESUME
+#define LUA_OUR_MAXRESUME	2000
+#endif
+#ifndef LUA_OUR_MAXASSIGNVARS
+#define LUA_OUR_MAXASSIGNVARS	12000
+#endif
+#endif
+
 
 
 #endif

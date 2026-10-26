@@ -69,7 +69,7 @@ namespace
         float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
     constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
@@ -145,6 +145,7 @@ namespace
         texture::Image m_out;                 ///< RGBA8 at the scene's extent, B, G, R, A: what is copied into the scene
         texture::Image m_ao[2];               ///< RGBA16F at half the world viewport (rg16f would need shaderStorageImageExtendedFormats)
         texture::Image m_bloom[kBloomLevels]; ///< RGBA16F, halved level by level from the scene's extent
+        texture::Image m_ssilvb[2];           ///< BENILLA SSILVB: RGBA16F at the world viewport's size (gather, then the blur's ping-pong)
         texture::Image m_giMap;               ///< BENILLA probe GI: the probe field (RGBA32F), uploaded when its serial moves
         uint32_t m_giSerial = 0;
         texture::Image m_skyMap;              ///< BENILLA sky occlusion: the tops map (R32F), uploaded when its serial moves
@@ -223,6 +224,9 @@ namespace
             { kLightingTonemapComp, sizeof kLightingTonemapComp },
             { kLightingGiComp, sizeof kLightingGiComp },
             { kLightingSkyComp, sizeof kLightingSkyComp },
+            { kLightingSsilvbComp, sizeof kLightingSsilvbComp },
+            { kLightingSsilvbAoComp, sizeof kLightingSsilvbAoComp },
+            { kLightingSsilvbBlurComp, sizeof kLightingSsilvbBlurComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -722,7 +726,8 @@ namespace
     void VulkanLighting::OpaqueDone()
     {
         const GxLightingParams& p = this->m_params;
-        const bool ssao = (p.m_features & GxLighting_Ssao) && p.m_ssaoIntensity > 0.0f;
+        const bool ssao = (p.m_features & GxLighting_Ssao) && (p.m_ssaoIntensity > 0.0f || (p.m_ssilvb && p.m_ssgiIntensity > 0.0f));
+        const bool ssilvb = ssao && p.m_ssilvb;
         const bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
         const bool gi = (p.m_features & GxLighting_ProbeGi) && p.m_giProbes;
         const bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
@@ -738,7 +743,9 @@ namespace
         const VkRect2D vp = this->IViewportRect();
         const uint32_t aoWidth = (vp.extent.width + 1) / 2;
         const uint32_t aoHeight = (vp.extent.height + 1) / 2;
-        const bool aoOk = !ssao || (this->IEnsure(this->m_ao[0], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false) && this->IEnsure(this->m_ao[1], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false));
+        const bool aoOk = !ssao
+            || (ssilvb ? this->IEnsure(this->m_ssilvb[0], vp.extent.width, vp.extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, false) && this->IEnsure(this->m_ssilvb[1], vp.extent.width, vp.extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, false)
+                       : this->IEnsure(this->m_ao[0], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false) && this->IEnsure(this->m_ao[1], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false));
         if (!aoOk || !this->IEnsure(this->m_out, width, height, VK_FORMAT_R8G8B8A8_UNORM, false)) return;
 
         VkCommandBuffer cmd = frame::Outside();
@@ -751,7 +758,29 @@ namespace
         float source[4] = { 1.0f / aoWidth, 1.0f / aoHeight, 0.0f, 0.0f };
         bool ok = true;
 
-        if (ssao)
+        if (ssilvb)
+        {
+            // BENILLA SSILVB (D3d11Lighting.cpp ISsilvb): the gather at the viewport's size, the separable blur, then
+            // the apply pass's composite (gxPass.x 2). The AO-only variant while the indirect strength is zero.
+            const uint32_t vw = vp.extent.width;
+            const uint32_t vh = vp.extent.height;
+            this->IToGeneral(cmd, this->m_ssilvb[0]);
+            this->IToGeneral(cmd, this->m_ssilvb[1]);
+            const Input s0 = { this->m_ssilvb[0].view, VK_IMAGE_LAYOUT_GENERAL };
+            const Input s1 = { this->m_ssilvb[1].view, VK_IMAGE_LAYOUT_GENERAL };
+            float full[4] = { 1.0f / vw, 1.0f / vh, 0.0f, 0.0f };
+
+            this->IConstants(c, vw, vh, full);
+            ok = this->IDispatch(cmd, p.m_ssgiIntensity > 0.0f ? Prog_Ssilvb : Prog_SsilvbAo, c, this->m_depth.view, sceneIn, {}, this->m_ssilvb[0], vw, vh);
+            full[2] = 1.0f;
+            this->IConstants(c, vw, vh, full);
+            ok = ok && this->IDispatch(cmd, Prog_SsilvbBlur, c, this->m_depth.view, s0, {}, this->m_ssilvb[1], vw, vh);
+            full[2] = 0.0f;
+            full[3] = 1.0f;
+            this->IConstants(c, vw, vh, full);
+            ok = ok && this->IDispatch(cmd, Prog_SsilvbBlur, c, this->m_depth.view, s1, {}, this->m_ssilvb[0], vw, vh);
+        }
+        else if (ssao)
         {
             this->IToGeneral(cmd, this->m_ao[0]);
             this->IToGeneral(cmd, this->m_ao[1]);
@@ -782,9 +811,9 @@ namespace
         if (ssao || !between)
         {
             this->IConstants(c, width, height, source);
-            c.m_pass[0] = ssao ? 1.0f : 0.0f;
+            c.m_pass[0] = ssilvb ? 2.0f : (ssao ? 1.0f : 0.0f);
             c.m_pass[1] = fog && !between ? 1.0f : 0.0f;
-            const Input aoIn = ssao ? Input{ this->m_ao[0].view, VK_IMAGE_LAYOUT_GENERAL } : sceneIn;
+            const Input aoIn = ssilvb ? Input{ this->m_ssilvb[0].view, VK_IMAGE_LAYOUT_GENERAL } : (ssao ? Input{ this->m_ao[0].view, VK_IMAGE_LAYOUT_GENERAL } : sceneIn);
             ok = ok && this->IDispatch(cmd, Prog_Apply, c, this->m_depth.view, aoIn, sceneIn, this->m_out, vp.extent.width, vp.extent.height);
             ok = ok && this->IIntoScene(cmd, c, vp);
         }
@@ -889,7 +918,7 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_giMap, &this->m_skyMap };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 

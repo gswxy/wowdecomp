@@ -1,0 +1,4 @@
+// BENILLA SSILVB gather, full (indirect + AO): LightingSsilvb.glsl
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "LightingSsilvb.glsl"

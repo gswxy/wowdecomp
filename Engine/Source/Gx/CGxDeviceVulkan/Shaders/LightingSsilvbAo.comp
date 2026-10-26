@@ -1,0 +1,5 @@
+// BENILLA SSILVB gather, AO only (indirect strength 0: 2 slices x 4 steps): LightingSsilvb.glsl
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define SSILVB_AO_ONLY
+#include "LightingSsilvb.glsl"

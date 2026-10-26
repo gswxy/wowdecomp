@@ -95,7 +95,14 @@ void main() {
     vec4 s = texelFetch(gxColor2, px, 0);
     vec3 c = s.rgb;
 
-    if (gxPass.x > 0.5) {
+    if (gxPass.x > 1.5) {
+        // BENILLA SSILVB (Lighting.hlsl SsilvbCompositePs): occlusion + bounce, ^(1/2.2) for the gamma frame;
+        // lightingDebug 1, 4, 5: the factor instead of the scene. gxColor the blurred SSILVB image (viewport-sized).
+        vec4 indirect = texelFetch(gxColor, px - ivec2(gxViewportPx.xy), 0);
+        float occlusion = clamp(mix(1.0, clamp(indirect.a, 0.0, 1.0), gxSsilvb.x * 2.0), 0.0, 1.0);
+        vec3 bounce = max(indirect.rgb, 0.0) * (gxSsilvb.y * 8.0);
+        c = GxMultiply(c, pow(clamp(occlusion + bounce, 0.0, 4.0), vec3(1.0 / 2.2)), gxTone.z == 1.0 || gxTone.z >= 4.0);
+    } else if (gxPass.x > 0.5) {
         vec4 ao = AoComposite(pos, d);
         c = ao.w > 0.5 ? ao.rgb : c * ao.rgb;
     }

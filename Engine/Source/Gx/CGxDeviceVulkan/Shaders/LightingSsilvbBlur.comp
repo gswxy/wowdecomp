@@ -1,0 +1,46 @@
+// BENILLA SSILVB: separable depth-aware 5-tap along gxSource.zw (Lighting.hlsl SsilvbBlurPs); gxColor and the output
+// are the viewport's size, the depth is the scene's (at the viewport's origin)
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D gxOut;
+
+void main() {
+    ivec2 t = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 last = ivec2(gxTarget.xy) - 1;
+
+    if (any(greaterThan(t, last))) {
+        return;
+    }
+
+    ivec2 origin = ivec2(gxViewportPx.xy);
+    vec4 c = texelFetch(gxColor, t, 0);
+    float d = GxDepthAt(origin + t);
+
+    if (!GxIsGeometry(d)) {
+        imageStore(gxOut, t, c);
+        return;
+    }
+
+    float z0 = GxClipW(GxViewPos(vec2(origin + t) + 0.5, d));
+    float tolerance = max(0.03 * z0, 0.02);
+    ivec2 dir = ivec2(gxSource.zw);
+    vec4 sum = vec4(0.0);
+    float weight = 0.0;
+
+    for (int k = -2; k <= 2; k++) {
+        ivec2 q = clamp(t + dir * k, ivec2(0), last);
+        float qd = GxDepthAt(origin + q);
+
+        if (!GxIsGeometry(qd)) {
+            continue;
+        }
+
+        float w = exp(-0.5 * float(k * k)) * exp(-abs(GxClipW(GxViewPos(vec2(origin + q) + 0.5, qd)) - z0) / tolerance);
+        sum += texelFetch(gxColor, q, 0) * w;
+        weight += w;
+    }
+
+    imageStore(gxOut, t, weight > 0.0 ? sum / weight : c);
+}

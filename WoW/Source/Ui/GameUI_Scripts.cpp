@@ -1192,15 +1192,15 @@ static int32_t Script_AcceptGroup(lua_State* L) {
         uint32_t roles = 0;
 
         if (StringToBOOL(L, 1, 0)) {
-            roles = CGLookingForGroup::ROLE_FLAGS::TANK;
+            roles = ROLE_FLAGS::TANK;
         }
 
         if (StringToBOOL(L, 2, 0)) {
-            roles |= CGLookingForGroup::ROLE_FLAGS::HEALER;
+            roles |= ROLE_FLAGS::HEALER;
         }
 
         if (StringToBOOL(L, 3, 0)) {
-            roles |= CGLookingForGroup::ROLE_FLAGS::DAMAGER;
+            roles |= ROLE_FLAGS::DAMAGER;
         }
 
         CGPlayer_C::AcceptGroup(roles);

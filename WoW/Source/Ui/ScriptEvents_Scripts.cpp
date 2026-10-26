@@ -18,6 +18,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "WoW/Source/Ui/GameUI.h"
 #include "WoW/Source/Ui/PartyFrame.h"
+#include "WoW/Source/Ui/LFGRoles.h"
 #include "WoW/Source/Game/GameClient/PetNameCache.h"
 #include "WoW/Source/Magic/MagicClient/SpellEnums.h"
 #include "WoW/Source/Magic/MagicClient/Spell_C.h"
@@ -2956,9 +2957,9 @@ static int32_t Script_UnitGroupRolesAssigned(lua_State* L) {
     Script_GetGUIDFromToken(lua_tolstring(L, 1, nullptr), guid, false);
     CGRaidMember* member = CGRaidInfo::FindMemberByGuid(guid);
     uint32_t role = member ? member->m_groupRole : CGPartyInfo::GetGroupRole(guid);
-    lua_pushboolean(L, (role >> 1) & 1);
-    lua_pushboolean(L, (role >> 2) & 1);
-    lua_pushboolean(L, (role >> 3) & 1);
+    lua_pushboolean(L, (role & ROLE_FLAGS::TANK) != 0);
+    lua_pushboolean(L, (role & ROLE_FLAGS::HEALER) != 0);
+    lua_pushboolean(L, (role & ROLE_FLAGS::DAMAGER) != 0);
     return 3;
 }
 

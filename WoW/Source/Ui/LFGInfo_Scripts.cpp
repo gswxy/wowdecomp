@@ -65,10 +65,10 @@ static char s_rewardItemTexture[260];
 static int32_t Script_GetLFGRoles(lua_State* L) {
     if (s_cvLfgSelectedRoles) {
         int32_t roles = s_cvLfgSelectedRoles->m_intValue;
-        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
-        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::TANK);
-        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
-        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
+        lua_pushboolean(L, roles & ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, roles & ROLE_FLAGS::TANK);
+        lua_pushboolean(L, roles & ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, roles & ROLE_FLAGS::DAMAGER);
     } else {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -121,28 +121,28 @@ static int32_t Script_GetLFGDeserterExpiration(lua_State* L) {
 // OFFSET: 0x005548F0
 static int32_t Script_GetAvailableRoles(lua_State* L) {
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
-    uint8_t roles = CGLookingForGroup::GetClassRoles(rec->m_id);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::TANK);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
+    ROLE_FLAGS_8 roles = CGLookingForGroup::GetClassRoles(rec->m_id);
+    lua_pushboolean(L, roles & ROLE_FLAGS::TANK);
+    lua_pushboolean(L, roles & ROLE_FLAGS::HEALER);
+    lua_pushboolean(L, roles & ROLE_FLAGS::DAMAGER);
     return 3;
 }
 
 // VERIFY: c1cf44e1 auto
 // OFFSET: 0x00553D60
 static int32_t Script_SetLFGRoles(lua_State* L) {
-    int32_t roles = StringToBOOL(L, 1, 0) != 0;
+    int32_t roles = StringToBOOL(L, 1, 0) ? ROLE_FLAGS::LEADER : ROLE_FLAGS::NONE;
 
     if (StringToBOOL(L, 2, 0)) {
-        roles |= CGLookingForGroup::ROLE_FLAGS::TANK;
+        roles |= ROLE_FLAGS::TANK;
     }
 
     if (StringToBOOL(L, 3, 0)) {
-        roles |= CGLookingForGroup::ROLE_FLAGS::HEALER;
+        roles |= ROLE_FLAGS::HEALER;
     }
 
     if (StringToBOOL(L, 4, 0)) {
-        roles |= CGLookingForGroup::ROLE_FLAGS::DAMAGER;
+        roles |= ROLE_FLAGS::DAMAGER;
     }
 
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
@@ -707,7 +707,7 @@ static int32_t Script_JoinLFG(lua_State* L) {
         return 0;
     }
 
-    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~0x1)) {
+    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~ROLE_FLAGS::LEADER)) {
         CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
         return 0;
     }
@@ -804,7 +804,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     lua_pushstring(L, dungeon->m_name);
     lua_pushstring(L, dungeon->m_textureFilename);
 
-    uint32_t roles = 0;
+    ROLE_FLAGS roles = ROLE_FLAGS::NONE;
     uint32_t accepted = 0;
 
     for (uint32_t i = 0; i < 5; i++) {
@@ -815,11 +815,11 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
         }
     }
 
-    if (roles & CGLookingForGroup::ROLE_FLAGS::TANK) {
+    if (roles & ROLE_FLAGS::TANK) {
         lua_pushstring(L, "TANK");
-    } else if (roles & CGLookingForGroup::ROLE_FLAGS::HEALER) {
+    } else if (roles & ROLE_FLAGS::HEALER) {
         lua_pushstring(L, "HEALER");
-    } else if (roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER) {
+    } else if (roles & ROLE_FLAGS::DAMAGER) {
         lua_pushstring(L, "DAMAGER");
     } else {
         lua_pushstring(L, "UNKNOWN");
@@ -843,7 +843,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     lua_pushnumber(L, total);
     lua_pushnumber(L, completed);
     lua_pushnumber(L, 5.0);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
+    lua_pushboolean(L, roles & ROLE_FLAGS::LEADER);
     lua_pushboolean(L, (dungeon->m_flags >> 2) & 0x1);
     return 12;
 }
@@ -1403,10 +1403,10 @@ static float s_teleportTime;
 // OFFSET: 0x005529E0
 static int32_t AddLFGPlayerInfo(lua_State* L, LFGListPlayer* player) {
     if (player) {
-        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
-        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK);
-        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
-        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::TANK);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::DAMAGER);
         lua_pushnumber(L, player->unk_0064);
         lua_pushnumber(L, player->m_talents[0]);
         lua_pushnumber(L, player->m_talents[1]);
@@ -1560,12 +1560,12 @@ static int32_t Script_CompleteLFGRoleCheck(lua_State* L) {
         return 0;
     }
 
-    uint8_t roles = 0;
+    ROLE_FLAGS roles = ROLE_FLAGS::NONE;
 
     if (StringToBOOL(L, 1, 0)) {
-        roles = FilterRolesByClass(static_cast<uint8_t>(s_cvLfgSelectedRoles->m_intValue));
+        roles = FilterRolesByClass(static_cast<ROLE_FLAGS_8>(s_cvLfgSelectedRoles->m_intValue));
 
-        if (!(roles & CGLookingForGroup::ROLE_FLAGS::COMBAT_ROLES)) {
+        if (!(roles & ROLE_FLAGS::COMBAT_ROLES)) {
             CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
             lua_pushboolean(L, 0);
             return 1;
@@ -1574,7 +1574,7 @@ static int32_t Script_CompleteLFGRoleCheck(lua_State* L) {
 
     CDataStore msg;
     msg.Put(static_cast<uint32_t>(CMSG_LFG_SET_ROLES));
-    msg.Put(roles);
+    msg.Put(static_cast<uint8_t>(roles));
     msg.Finalize();
     ClientServices::Send2(&msg);
     lua_pushboolean(L, 1);
@@ -1943,7 +1943,7 @@ static int32_t Script_GetLastQueueStatusIndex(lua_State* L) {
 // VERIFY: bf1376c8 auto
 // OFFSET: 0x0055A0C0
 static int32_t Script_PartyLFGStartBackfill(lua_State* L) {
-    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & 0xFFFFFFFE)) {
+    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~ROLE_FLAGS::LEADER)) {
         CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
         return 0;
     }

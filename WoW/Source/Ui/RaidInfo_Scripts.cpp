@@ -364,19 +364,19 @@ static int32_t Script_GetRaidRosterInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::TANK) {
+    if (member->m_groupRole & ROLE_FLAGS::TANK) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::HEALER) {
+    if (member->m_groupRole & ROLE_FLAGS::HEALER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::DAMAGER) {
+    if (member->m_groupRole & ROLE_FLAGS::DAMAGER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);

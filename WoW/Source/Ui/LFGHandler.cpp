@@ -99,7 +99,7 @@ void LFGHandler::ReadPlayerInfo(CDataStore* msg, LFGLIST* list, LFGListPlayer* p
     }
 
     if (flags & 0x10) {
-        msg->Get(player->m_roles);
+        msg->GetData(&player->m_roles, sizeof(player->m_roles));
     }
 
     if (flags & 0x20) {

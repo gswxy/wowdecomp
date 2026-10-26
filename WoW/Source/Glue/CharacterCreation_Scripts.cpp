@@ -291,10 +291,10 @@ static int32_t Script_GetSelectedClass(lua_State* L) {
 
     lua_pushnumber(L, index + 1);
 
-    uint8_t roles = CGLookingForGroup::GetClassRoles(CCharacterCreation::m_selectedClassID);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::TANK);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
-    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
+    ROLE_FLAGS_8 roles = CGLookingForGroup::GetClassRoles(CCharacterCreation::m_selectedClassID);
+    lua_pushboolean(L, roles & ROLE_FLAGS::TANK);
+    lua_pushboolean(L, roles & ROLE_FLAGS::HEALER);
+    lua_pushboolean(L, roles & ROLE_FLAGS::DAMAGER);
     return 6;
 }
 

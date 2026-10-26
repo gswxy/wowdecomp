@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "Engine/Source/Storm/H/stpl.h"
 #include "WoW/Source/Ui/LFGLIST.h"
+#include "WoW/Source/Ui/LFGRoles.h"
 #include "WoW/Source/Object/WGUID.h"
 #include "WoW/Source/Net/Types.h"
 
@@ -95,7 +96,7 @@ struct LFGRewardInfo {
 };
 
 struct LFGProposalMember {
-    /* 0000 */ uint32_t m_roles;
+    /* 0000 */ ROLE_FLAGS m_roles;
     /* 0004 */ uint32_t m_isLocal;
     /* 0008 */ uint32_t m_inDungeon;
     /* 000C */ uint32_t m_inSameGroup;
@@ -148,7 +149,7 @@ struct LFGBootProposal {
 struct LFGRoleCheckMember {
     /* 0000 */ WOWGUID m_guid;
     /* 0008 */ int32_t m_confirmed;
-    /* 000C */ uint32_t m_roles;
+    /* 000C */ ROLE_FLAGS m_roles;
     /* 0010 */ uint8_t m_level;
     /* 0011 */ uint8_t unused_0011[3];
     /* 0014 */ uint32_t unused_0014;
@@ -177,14 +178,6 @@ class CGLookingForGroup {
         HEALER_ROLE = 5,
         DAMAGE_ROLE = 6,
         NUM_SORT_COLUMNS = 7,
-    };
-
-    enum ROLE_FLAGS : int32_t {
-        LEADER = 0x1,
-        TANK = 0x2,
-        HEALER = 0x4,
-        DAMAGER = 0x8,
-        COMBAT_ROLES = 0xE,
     };
 
     struct LFGEntryInfo {
@@ -228,7 +221,7 @@ class CGLookingForGroup {
     static LFGRewardItem* GetDungeonRewardItem(uint32_t slot, int32_t index);
     static void RequestLFGPlayerInfo();
     static void ClearPartyInfo();
-    static uint8_t GetClassRoles(uint32_t classID);
+    static ROLE_FLAGS_8 GetClassRoles(uint32_t classID);
     static bool HasRaidDungeon(LFGInfo* info);
     static void UpdateLFDEntries();
     static void UpdateLFREntries();
@@ -267,6 +260,6 @@ void LookingForGroupUnregisterScriptFunctions();
 
 void DungeonEncounterCountMatchingRows(int32_t mapId, int32_t difficulty, uint32_t completedMask, uint32_t* total, uint32_t* completed);
 int32_t PushDungeonEncounterInfo(lua_State* L, int32_t mapId, int32_t difficulty, int32_t index, uint32_t completedMask);
-uint32_t FilterRolesByClass(uint8_t roles);
+ROLE_FLAGS FilterRolesByClass(ROLE_FLAGS_8 roles);
 
 #endif

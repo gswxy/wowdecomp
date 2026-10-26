@@ -833,7 +833,7 @@ int32_t LFGPacketHandler(void* param, NETMESSAGE msgId, uint32_t time, CDataStor
             }
 
             if (accepted) {
-                FrameScript_SignalEvent(SCRIPT_EVENT_LFG_ROLE_CHECK_ROLE_CHOSEN, "%s%b%b%b", name->m_name, (roles >> 1) & 1, (roles >> 2) & 1, (roles >> 3) & 1);
+                FrameScript_SignalEvent(SCRIPT_EVENT_LFG_ROLE_CHECK_ROLE_CHOSEN, "%s%b%b%b", name->m_name, (roles & ROLE_FLAGS::TANK) != 0, (roles & ROLE_FLAGS::HEALER) != 0, (roles & ROLE_FLAGS::DAMAGER) != 0);
             } else {
                 CGGameUI::DisplayError(ERR_LFG_PLAYER_DECLINED_ROLE_CHECK, name->m_name);
             }
@@ -859,7 +859,7 @@ int32_t LFGPacketHandler(void* param, NETMESSAGE msgId, uint32_t time, CDataStor
                 }
 
                 LFGProposalMember& member = proposal.m_members[i];
-                msg->Get(member.m_roles);
+                msg->GetData(&member.m_roles, sizeof(member.m_roles));
                 msg->GetInt8(member.m_isLocal);
                 msg->GetInt8(member.m_inDungeon);
                 msg->GetInt8(member.m_inSameGroup);
@@ -921,7 +921,7 @@ int32_t LFGPacketHandler(void* param, NETMESSAGE msgId, uint32_t time, CDataStor
                 uint8_t confirmed = 0;
                 msg->Get(confirmed);
                 member.m_confirmed = confirmed;
-                msg->Get(member.m_roles);
+                msg->GetData(&member.m_roles, sizeof(member.m_roles));
                 msg->Get(member.m_level);
 
                 if (ClntObjMgrGetActivePlayer() == member.m_guid) {
@@ -945,7 +945,7 @@ int32_t LFGPacketHandler(void* param, NETMESSAGE msgId, uint32_t time, CDataStor
                     NameCache* name = g_nameDBCache.GetRecord(member.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
 
                     if (name) {
-                        FrameScript_SignalEvent(SCRIPT_EVENT_LFG_ROLE_CHECK_ROLE_CHOSEN, "%s%b%b%b", name->m_name, (CGLookingForGroup::m_roleCheckMembers.m_data[i].m_roles >> 1) & 1, (CGLookingForGroup::m_roleCheckMembers.m_data[i].m_roles >> 2) & 1, (CGLookingForGroup::m_roleCheckMembers.m_data[i].m_roles >> 3) & 1);
+                        FrameScript_SignalEvent(SCRIPT_EVENT_LFG_ROLE_CHECK_ROLE_CHOSEN, "%s%b%b%b", name->m_name, (member.m_roles & ROLE_FLAGS::TANK) != 0, (member.m_roles & ROLE_FLAGS::HEALER) != 0, (member.m_roles & ROLE_FLAGS::DAMAGER) != 0);
                     }
                 }
             }

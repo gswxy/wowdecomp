@@ -3687,9 +3687,9 @@ uint32_t BuildRaidDisplayList(int32_t type) {
         PENDINGUSERLIST* user = &s_pendingUsers.m_data[i];
         uint8_t flags = 4;
 
-        if (member->m_rank == 2) {
+        if (member->m_rank == CGRaidMember::RANK::LEADER) {
             flags = 7;
-        } else if (member->m_rank == 1) {
+        } else if (member->m_rank == CGRaidMember::RANK::ASSISTANT) {
             flags = 6;
         }
 

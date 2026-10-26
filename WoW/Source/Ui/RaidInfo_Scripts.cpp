@@ -151,7 +151,7 @@ static int32_t Script_ConfirmReadyCheck(lua_State* L) {
 static int32_t Script_IsRaidOfficer(lua_State* L) {
     CGRaidMember* member = CGRaidInfo::FindMemberByGuid(ClntObjMgrGetActivePlayer());
 
-    if (member && member->m_rank > 0) {
+    if (member && member->m_rank > CGRaidMember::RANK::MEMBER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -205,7 +205,7 @@ static int32_t Script_GetReadyCheckStatus(lua_State* L) {
 
     CGRaidMember* self = CGRaidInfo::FindMemberByGuid(ClntObjMgrGetActivePlayer());
 
-    if (!self || self->m_rank <= 0) {
+    if (!self || self->m_rank <= CGRaidMember::RANK::MEMBER) {
         lua_pushstring(L, status);
         return 1;
     }

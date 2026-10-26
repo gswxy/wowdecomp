@@ -1,5 +1,7 @@
 #include "GameUI.h"
 #include <cmath>
+#include <cstdio>
+#include <ctime>
 #include <cstdarg>
 #include <cstring>
 #include "Engine/Source/Base/CDataStore.h"
@@ -2599,6 +2601,33 @@ static int32_t Script_GetLoadTimings(lua_State* L) {
     return ASYNC_KIND_COUNT + 13;
 }
 #endif
+// CUSTOM: /frametimes report: appends a header (local time, zone - subzone, map and player x y z), the text and a
+// blank line to Logs\FrameTimes.log; opened and closed per call so a crash loses nothing
+static int32_t Script_FrameTimesLog(lua_State* L) {
+    const char* text = luaL_checkstring(L, 1);
+    std::FILE* file = std::fopen("Logs\\FrameTimes.log", "ab");
+
+    if (!file) {
+        return 0;
+    }
+
+    std::time_t now = std::time(nullptr);
+    char stamp[32];
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    std::fprintf(file, "%s  %s - %s", stamp, CGGameUI::m_realZoneText ? CGGameUI::m_realZoneText : "",
+        CGGameUI::m_subZoneText ? CGGameUI::m_subZoneText : "");
+    CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
+
+    if (player) {
+        C3Vector position = player->GetPosition();
+        std::fprintf(file, "  map %u  %.1f %.1f %.1f", ClntObjMgrGetMapID(), position.x, position.y, position.z);
+    }
+
+    std::fprintf(file, "\r\n%s\r\n\r\n", text);
+    std::fclose(file);
+    return 0;
+}
+
 // CUSTOM (Badgermilk0 port): where a frame's time goes (GxFrameLatency.h), smoothed ms: cpu, gpu wait (gxFixLag), fps
 // cap, present (vsync and a full swap chain block here), the whole frame
 static int32_t Script_GetFrameTimings(lua_State* L) {
@@ -2613,18 +2642,29 @@ static int32_t Script_GetFrameTimings(lua_State* L) {
 // CUSTOM (Badgermilk0 port): ms per FrameProfileSection in enum order (unitUpdate, worldUpdate, cull, animParallel,
 // animSerial, animBatch, terrain, wmo, worldOther, nameplates, models, detail, liquid, effects, shadows, grassFill,
 // grassLights), then the counters in enum order (models animated, draw calls, grass chunks, grass draws, grass fills,
-// grass streamed), then the animation threads (the Model2 workers and the main thread)
+// grass streamed), then the animation threads (the Model2 workers and the main thread), then the movement sections
+// (transports, spline, replay, smooth) and counters (spline movers, replay movers), appended after the threads so the
+// earlier returns keep their positions
 static int32_t Script_GetSceneTimings(lua_State* L) {
-    for (uint32_t i = 0; i < FRAMEPROFILE_COUNT; i++) {
+    for (uint32_t i = 0; i < FRAMEPROFILE_MOVE_TRANSPORTS; i++) {
         lua_pushnumber(L, g_frameProfile.m_ms[i]);
     }
 
-    for (uint32_t i = 0; i < FRAMEPROFILE_COUNTERS; i++) {
+    for (uint32_t i = 0; i < FRAMEPROFILE_MOVERS_SPLINE; i++) {
         lua_pushnumber(L, g_frameProfile.m_counters[i]);
     }
 
     CM2Scene* scene = World::s_m2Scene;
     lua_pushnumber(L, scene && scene->m_cache ? scene->m_cache->m_threadCount + 1 : 1);
+
+    for (uint32_t i = FRAMEPROFILE_MOVE_TRANSPORTS; i < FRAMEPROFILE_COUNT; i++) {
+        lua_pushnumber(L, g_frameProfile.m_ms[i]);
+    }
+
+    for (uint32_t i = FRAMEPROFILE_MOVERS_SPLINE; i < FRAMEPROFILE_COUNTERS; i++) {
+        lua_pushnumber(L, g_frameProfile.m_counters[i]);
+    }
+
     return FRAMEPROFILE_COUNT + FRAMEPROFILE_COUNTERS + 1;
 }
 
@@ -6294,6 +6334,7 @@ static FrameScript_Method s_ScriptFunctions[] = {
 #endif
     // CUSTOM (Badgermilk0 port)
     { "GetFrameTimings", &Script_GetFrameTimings },
+    { "FrameTimesLog", &Script_FrameTimesLog },   // CUSTOM
     { "GetSceneTimings", &Script_GetSceneTimings },
     { "GetGpuTimings", &Script_GetGpuTimings },
     { "GetGroundEffectBuffers", &Script_GetGroundEffectBuffers },

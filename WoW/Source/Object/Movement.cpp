@@ -1,5 +1,6 @@
 #include "Movement.h"
 #include "WoW/Source/Object/SmoothMove.h"
+#include "Engine/Source/Base/FrameProfile.h"   // CUSTOM
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -5369,9 +5370,14 @@ void CMovement_C::MoveUnits(uint32_t time, uint32_t lastUpdateTime) {
     }
 
     CMovement_C* mover = globals->m_movers.Head();
+    // CUSTOM: /frametimes Movement line; one timestamp per mover, each charged to its kind
+    uint64_t ticks[2] = {};
+    uint32_t count[2] = {};
+    uint64_t mark = FrameProfileNow();
 
     while (mover) {
         CMovement_C* next = globals->m_movers.Next(mover);
+        uint32_t replay = !(mover->m_flags & MOVEMENTFLAG_SPLINE_ENABLED);   // CUSTOM
 
         if (mover->m_flags & MOVEMENTFLAG_SPLINE_ENABLED) {
             mover->SkipTime(time - lastUpdateTime);
@@ -5379,8 +5385,18 @@ void CMovement_C::MoveUnits(uint32_t time, uint32_t lastUpdateTime) {
             mover->ExecuteMovement(time, lastUpdateTime);
         }
 
+        uint64_t now = FrameProfileNow();   // CUSTOM
+        ticks[replay] += now - mark;
+        count[replay]++;
+        mark = now;
+
         mover = next;
     }
+
+    FrameProfileAdd(FRAMEPROFILE_MOVE_SPLINE, 0, ticks[0]);   // CUSTOM
+    FrameProfileAdd(FRAMEPROFILE_MOVE_REPLAY, 0, ticks[1]);
+    FrameProfileCount(FRAMEPROFILE_MOVERS_SPLINE, count[0]);
+    FrameProfileCount(FRAMEPROFILE_MOVERS_REPLAY, count[1]);
 }
 
 // VERIFY: 1ce66aca manual

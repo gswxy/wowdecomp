@@ -31,6 +31,12 @@ enum FrameProfileSection {
     // parts of a section above, timed with FrameProfileAdd; never switched to
     FRAMEPROFILE_GRASS_FILL,    // of DETAIL: grass batches rebuilt on the CPU (FillVertices/FillIndices)
     FRAMEPROFILE_GRASS_LIGHTS,  // of DETAIL: the lights picked for each grass chunk
+    // unit movement (MovementIdleMoveUnits, an idle event outside the world render), timed with FrameProfileAdd;
+    // after the sections above so GetSceneTimings keeps their return order
+    FRAMEPROFILE_MOVE_TRANSPORTS, // MovementMoveTransports: transports and what rides them
+    FRAMEPROFILE_MOVE_SPLINE,     // CMovement_C::MoveUnits, spline movers (SkipTime): server-driven creatures
+    FRAMEPROFILE_MOVE_REPLAY,     // CMovement_C::MoveUnits, the rest (ExecuteMovement with collision): players
+    FRAMEPROFILE_MOVE_SMOOTH,     // SmoothMove::Tick
     FRAMEPROFILE_COUNT,
     FRAMEPROFILE_NONE = FRAMEPROFILE_COUNT
 };
@@ -42,6 +48,8 @@ enum FrameProfileCounter {
     FRAMEPROFILE_GRASS_DRAWS,     // grass batches drawn (up to four per chunk, one per texture)
     FRAMEPROFILE_GRASS_FILLS,     // grass batches rebuilt on the CPU
     FRAMEPROFILE_GRASS_STREAMED,  // grass batches that found no free baked buffer and went to a stream buffer
+    FRAMEPROFILE_MOVERS_SPLINE,   // movers on a spline in CMovement_C::MoveUnits
+    FRAMEPROFILE_MOVERS_REPLAY,   // other movers in CMovement_C::MoveUnits
     FRAMEPROFILE_COUNTERS
 };
 

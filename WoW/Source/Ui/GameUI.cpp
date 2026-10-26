@@ -3683,28 +3683,36 @@ void CGGameUI::BeginCinematicInternal(void* param) {
     }
 }
 
-// CUSTOM (Badgermilk0 port): the /frametimes slash command, defined at every world entry (SlashCmdList is FrameXML's)
+// CUSTOM (Badgermilk0 port): the /frametimes slash command, defined at every world entry (SlashCmdList is FrameXML's);
+// CUSTOM: writes its lines to Logs\\FrameTimes.log (FrameTimesLog) and says so in chat
 static const char* s_frameTimesSlashCommand = R"lua(
 SLASH_FRAMETIMES1 = "/frametimes"
 SlashCmdList.FRAMETIMES = function()
+    local lines = {}
+    local function print(line) lines[#lines + 1] = line:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
     local cpu, gpuWait, capWait, present, frame = GetFrameTimings()
     print(("|cff33ff99Frame|r %.2f ms (%.0f fps): cpu %.2f, gpu wait %.2f, fps cap %.2f, present %.2f"):format(
         frame, frame > 0 and 1000 / frame or 0, cpu, gpuWait, capWait, present))
     local units, update, cull, animMT, animST, batch, terrain, wmo, other, plates, models, detail, liquid, effects,
         shadows, grassFill, grassLights, animated, draws, grassChunks, grassDraws, grassFills, grassStreamed,
-        threads = GetSceneTimings()
+        threads, moveTransports, moveSpline, moveReplay, moveSmooth, splineMovers, replayMovers = GetSceneTimings()
     print(("|cff33ff99World|r units %.2f, update %.2f, cull %.2f, animate %.2f (%d threads) + %.2f serial + %.2f batch; %.0f models"):format(
         units, update, cull, animMT, threads, animST, batch, animated))
     print(("|cff33ff99Draw|r terrain %.2f, wmo %.2f, models %.2f, grass %.2f, liquid %.2f, effects %.2f, shadows %.2f, plates %.2f, other %.2f; %.0f draw calls"):format(
         terrain, wmo, models, detail, liquid, effects, shadows, plates, other, draws))
     print(("|cff33ff99Grass|r %.0f chunks, %.0f draws; rebuilt %.0f (%.2f ms), %.0f streamed; lights %.2f ms; %d buffers"):format(
         grassChunks, grassDraws, grassFills, grassFill, grassStreamed, grassLights, GetGroundEffectBuffers()))
+    print(("|cff33ff99Movement|r %.2f ms: replay %.2f (%.0f players), splines %.2f (%.0f), smoothing %.2f, transports %.2f"):format(
+        moveReplay + moveSpline + moveSmooth + moveTransports, moveReplay, replayMovers, moveSpline, splineMovers,
+        moveSmooth, moveTransports))
     local gpuFrame, _, _, _, _, _, _, gTerrain, gWmo, gOther, gPlates, gModels, gDetail, gLiquid, gEffects, gShadows = GetGpuTimings()
     if gpuFrame then
         local world = gTerrain + gWmo + gOther + gPlates + gModels + gDetail + gLiquid + gEffects + gShadows
         print(("|cff33ff99GPU|r %.2f ms: shadows %.2f, terrain %.2f, wmo %.2f, models %.2f, grass %.2f, liquid %.2f, effects %.2f, other %.2f, ui and rest %.2f"):format(
             gpuFrame, gShadows, gTerrain, gWmo, gModels, gDetail, gLiquid, gEffects, gOther + gPlates, math.max(gpuFrame - world, 0)))
     end
+    FrameTimesLog(table.concat(lines, "\r\n"))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99Frame times|r written to Logs\\FrameTimes.log")
 end
 )lua";
 

@@ -1,4 +1,5 @@
 #include "Movement_C.h"
+#include "Engine/Source/Base/FrameProfile.h"   // CUSTOM
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -202,13 +203,17 @@ int32_t MovementIdleMoveUnits(const void* data, void* param) {
     int32_t elapsed = now - globals->m_lastUpdateTime;
 
     if (elapsed > 0) {
+        uint64_t start = FrameProfileNow();   // CUSTOM: /frametimes Movement line
         MovementMoveTransports(now, elapsed);
+        FrameProfileAdd(FRAMEPROFILE_MOVE_TRANSPORTS, start, FrameProfileNow());   // CUSTOM
 
         if (globals->m_movers.Head()) {
             CMovement_C::MoveUnits(now, globals->m_lastUpdateTime);
         }
 
+        start = FrameProfileNow();   // CUSTOM
         SmoothMove::Tick(elapsed);   // CUSTOM
+        FrameProfileAdd(FRAMEPROFILE_MOVE_SMOOTH, start, FrameProfileNow());   // CUSTOM
 
         CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 

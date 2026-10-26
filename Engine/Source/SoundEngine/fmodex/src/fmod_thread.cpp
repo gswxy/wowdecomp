@@ -252,11 +252,14 @@ FMOD_RESULT Thread::closeThread()
     {
         FMOD_RESULT result;
 
-        result = FMOD_OS_Semaphore_Create(&mEndSema);
+        // Not stock: created into a local, then published before mRunning drops so the worker sees it.
+        FMOD_OS_SEMAPHORE *endsema = 0;
+        result = FMOD_OS_Semaphore_Create(&endsema);
         if (result != FMOD_OK)
         {
             return result;
         }
+        mEndSema = endsema;
 
         mRunning = false;
 

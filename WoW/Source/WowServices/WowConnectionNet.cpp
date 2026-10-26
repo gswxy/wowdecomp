@@ -113,7 +113,7 @@ void WowConnectionNet::RunWorker(int32_t index) {
         this->Service(worker.m_connection, serviceFlags);
 
         worker.m_lock.Enter();
-        InterlockedExchangeAdd(reinterpret_cast<volatile LONG*>(&worker.m_connection->m_serviceCount), -1);
+        worker.m_connection->m_serviceCount -= 1; // Not stock: std::atomic, was InterlockedExchangeAdd
         worker.m_connection->Release();
         worker.m_connection = nullptr;
         worker.m_lock.Leave();
@@ -132,7 +132,7 @@ void WowConnectionNet::SignalWorker(WowConnection* connection, uint32_t flags) {
 
     connection->m_refCount.Increment();
     connection->m_serviceFlags = flags;
-    InterlockedExchangeAdd(reinterpret_cast<volatile LONG*>(&connection->m_serviceCount), 1);
+    connection->m_serviceCount += 1; // Not stock: std::atomic, was InterlockedExchangeAdd
 
     for (int32_t i = 0; i < this->m_numWorkers; i++) {
         WowConnectionNet::WORKER& worker = this->m_workers[i];
@@ -226,7 +226,7 @@ void WowConnectionNet::Stop() {
             ConsolePrintf("Network thread %d did not exit normally", i);
             GxTeardownLog("WowConnectionNet::Stop: network thread %d did not exit in 10 s", i);
         } else if (worker.m_connection) {
-            InterlockedExchangeAdd(reinterpret_cast<volatile LONG*>(&worker.m_connection->m_serviceCount), -1);
+            worker.m_connection->m_serviceCount -= 1; // Not stock: std::atomic, was InterlockedExchangeAdd
             worker.m_connection->Release();
             worker.m_connection = nullptr;
         }

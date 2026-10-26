@@ -42,7 +42,12 @@ namespace FMOD
 
         FMOD_RESULT  init()
         {
-            gGlobal = mGlobal;
+            // Not stock: store only when it differs. Statically linked, mGlobal is always gGlobal already, and the
+            // unconditional store raced with the mixer thread's reads of gGlobal.
+            if (gGlobal != mGlobal)
+            {
+                gGlobal = mGlobal;
+            }
             return FMOD_OK;
         }
     };

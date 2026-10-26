@@ -101,10 +101,12 @@ static const LoginErrorURL s_loginErrorURLs[5] = {
 };
 
 // STATIC: 0x00AC3DA0
-int32_t CGlueMgr::m_loginResult = -1;
+// Not stock: atomic, written by the net thread (SetLoginStateAndResult), read by the main thread.
+std::atomic<int32_t> CGlueMgr::m_loginResult{-1};
 
 // STATIC: 0x00AC3DA4
-int32_t CGlueMgr::m_loginState = -1;
+// Not stock: atomic, see m_loginResult.
+std::atomic<int32_t> CGlueMgr::m_loginState{-1};
 
 // STATIC: 0x00AC3DA8
 int32_t CGlueMgr::m_lastLoginResult = -1;
@@ -221,7 +223,8 @@ int32_t CGlueMgr::m_rereadContest;
 int32_t CGlueMgr::m_acceptedContest;
 
 // STATIC: 0x00B6AF78
-uint8_t CGlueMgr::m_authenticated;
+// Not stock: atomic, see m_loginResult.
+std::atomic<uint8_t> CGlueMgr::m_authenticated;
 
 // STATIC: 0x00B6AF79
 bool CGlueMgr::s_scriptFunctionsLoaded;
@@ -245,7 +248,8 @@ int32_t CGlueMgr::m_processServerAlert;
 uint32_t CGlueMgr::m_pendingTimerAlert;
 
 // STATIC: 0x00B6AF94
-int32_t CGlueMgr::m_accountMsgAvailable;
+// Not stock: atomic, see m_loginResult.
+std::atomic<int32_t> CGlueMgr::m_accountMsgAvailable;
 
 // STATIC: 0x00B6AF98
 static int32_t s_disconnectReason;
@@ -2109,42 +2113,47 @@ WOWGUID CGlueMgr::GetActive() {
 // VERIFY: db8aba56 manual
 // OFFSET: 0x004D80C0
 void CGlueMgr::DisplayLoginStatus() {
-    if (CGlueMgr::m_lastLoginState == CGlueMgr::m_loginState && CGlueMgr::m_lastLoginResult == CGlueMgr::m_loginResult) {
+    // Not stock: the net thread writes m_loginState/m_loginResult; read each once and use
+    // only the copies below, so a write between the range check and the string-table index cannot index out of range.
+    int32_t loginState = CGlueMgr::m_loginState;
+    int32_t loginResult = CGlueMgr::m_loginResult;
+
+    if (CGlueMgr::m_lastLoginState == loginState && CGlueMgr::m_lastLoginResult == loginResult) {
         return;
     }
 
-    CGlueMgr::m_lastLoginState = CGlueMgr::m_loginState;
-    CGlueMgr::m_lastLoginResult = CGlueMgr::m_loginResult;
+    CGlueMgr::m_lastLoginState = loginState;
+    CGlueMgr::m_lastLoginResult = loginResult;
 
-    if (CGlueMgr::m_loginState == LOGIN_STATE_FAILED) {
-        if (CGlueMgr::m_loginResult < 0 || CGlueMgr::m_loginResult >= LOGIN_RESULT_MAX) {
+    if (loginState == LOGIN_STATE_FAILED) {
+        if (loginResult < 0 || loginResult >= LOGIN_RESULT_MAX) {
             return;
         }
 
-        if (CGlueMgr::m_loginResult == LOGIN_PARENTALCONTROL) {
+        if (loginResult == LOGIN_PARENTALCONTROL) {
             FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s%s", "PARENTAL_CONTROL", FrameScript_GetText(g_LoginResultStringNames[LOGIN_PARENTALCONTROL], -1, GENDER_NOT_APPLICABLE), "AUTH_PARENTAL_CONTROL_URL");
             return;
         }
 
-        const char* text = FrameScript_GetText(g_LoginResultStringNames[CGlueMgr::m_loginResult], -1, GENDER_NOT_APPLICABLE);
+        const char* text = FrameScript_GetText(g_LoginResultStringNames[loginResult], -1, GENDER_NOT_APPLICABLE);
         const char* button;
 
         if (SStrStrUTF8I(text, "<HTML>")) {
             button = "OKAY_HTML";
 
-            if (CGlueMgr::m_loginResult == LOGIN_FAILED) {
+            if (loginResult == LOGIN_FAILED) {
                 FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s", "CONNECTION_HELP_HTML", text);
                 return;
             }
         } else {
-            button = CGlueMgr::m_loginResult == LOGIN_FAILED ? "CONNECTION_HELP" : "OKAY";
+            button = loginResult == LOGIN_FAILED ? "CONNECTION_HELP" : "OKAY";
         }
 
         FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s", button, text);
         return;
     }
 
-    int32_t state = CGlueMgr::m_loginState;
+    int32_t state = loginState;
     bool show = state >= 0 && state < LOGIN_STATE_MAX;
 
     if (state == LOGIN_STATE_DISCONNECTED || state == LOGIN_STATE_SURVEY) {

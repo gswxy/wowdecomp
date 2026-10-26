@@ -3,6 +3,8 @@
 
 #include "fmod_settings.h"
 
+#include <atomic>
+
 #include "fmod_string.h"
 #include "fmod_os_misc.h"
 
@@ -22,11 +24,13 @@ namespace FMOD
 
         char                 mName[FMOD_STRING_MAXNAMELEN];
         void                *mHandle;
-        bool                 mRunning;
+        // Not stock: atomic, written by closeThread/initThread on the API thread and polled by the worker (same size).
+        std::atomic<bool>    mRunning;
         void                *mUserData;
         void                *mStack;
         FMOD_OS_SEMAPHORE   *mSema;
-        FMOD_OS_SEMAPHORE   *mEndSema;
+        // Not stock: atomic, created by closeThread and signalled by the exiting worker (same size).
+        std::atomic<FMOD_OS_SEMAPHORE *> mEndSema;
         void               (*mUserCallback)(void *userdata);
         
         static THREAD_RETURNTYPE THREAD_CALLCONV callback(void *userdata);

@@ -11,7 +11,21 @@ class CGItem_C;
 struct lua_State;
 
 struct AuctionSortCriteria {
-    /* 0000 */ int32_t m_column;
+    enum COLUMN : int32_t {
+        LEVEL = 0,
+        QUALITY = 1,
+        BUYOUT_THEN_BID = 2,
+        DURATION = 3,
+        BID_STATUS = 4,
+        NAME = 5,
+        MIN_BID_BUYOUT = 6,
+        SELLER = 7,
+        BID = 8,
+        QUANTITY = 9,
+        BUYOUT = 10,
+    };
+
+    /* 0000 */ COLUMN m_column;
     /* 0004 */ int32_t m_reverse;
     /* 0008 */ int32_t m_valid;
 };
@@ -184,7 +198,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
 AuctionItemInfo* GetListAuction(uint32_t index);
 AuctionItemInfo* GetOwnerAuction(uint32_t index);
 AuctionItemInfo* GetBidderAuction(uint32_t index);
-bool AuctionSortToColumnIndex(const char* name, int32_t* column);
+bool AuctionSortToColumnIndex(const char* name, AuctionSortCriteria::COLUMN* column);
 int32_t AuctionListComparer(const void* a, const void* b);
 int32_t CompareFunction(const void* a, const void* b);
 int32_t AuctionBidderListComparer(const void* a, const void* b);

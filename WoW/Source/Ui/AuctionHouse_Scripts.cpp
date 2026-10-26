@@ -304,7 +304,7 @@ static int32_t Script_IsAuctionSortReversed(lua_State* L) {
         return 0;
     }
 
-    int32_t column = 1;
+    AuctionSortCriteria::COLUMN column = AuctionSortCriteria::COLUMN::QUALITY;
     const char* type = lua_tolstring(L, 1, nullptr);
     const char* sort = lua_tolstring(L, 2, nullptr);
 
@@ -414,7 +414,7 @@ static int32_t Script_SortAuctionSetSort(lua_State* L) {
         return 0;
     }
 
-    int32_t column = 1;
+    AuctionSortCriteria::COLUMN column = AuctionSortCriteria::COLUMN::QUALITY;
     const char* type = lua_tolstring(L, 1, nullptr);
     const char* sort = lua_tolstring(L, 2, nullptr);
     bool reverse = lua_type(L, 3) == LUA_TBOOLEAN && lua_toboolean(L, 3);
@@ -997,7 +997,7 @@ static int32_t Script_SortAuctionItems(lua_State* L) {
         return 0;
     }
 
-    int32_t column = 1;
+    AuctionSortCriteria::COLUMN column = AuctionSortCriteria::COLUMN::QUALITY;
     const char* type = lua_tolstring(L, 1, nullptr);
     const char* sort = lua_tolstring(L, 2, nullptr);
 

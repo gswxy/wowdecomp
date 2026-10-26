@@ -2077,6 +2077,7 @@ void CWorldScene::BuildHorizonProjection(C44Matrix* projection) {   // FARLAND: 
     CGCamera* camera = CGWorldFrame::GetActiveCamera();
     float farZ = camera->m_farZ;
     float fov = camera->FOV();
+    FarLand::UpdateHorizonScale();   // BENILLA far view: not in 12340
     GxuXformCreateProjection_Exact(fov * 0.60000002f, camera->m_aspect, FarLand::HorizonNear(farZ), World::s_horizonFarClipScale * World::s_farClip, *projection);
 }
 

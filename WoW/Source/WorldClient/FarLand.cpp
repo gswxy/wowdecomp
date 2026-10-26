@@ -28,6 +28,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/WorldClient/WorldParam.h"
 #include "WoW/Source/DB/Rec/LiquidTypeRec.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
@@ -74,6 +75,7 @@ constexpr float kHazeReach = 2.5f;
 constexpr float kHorizonNear = 600.0f;
 int32_t s_uploads = 4;
 float s_hazeFalloff = 1.0f / 300.0f;   // farLandHazeHeight
+float s_farView = 10000.0f;     // farViewDistance (BENILLA far view)
 
 CGxShader* s_vs = nullptr;
 CGxShader* s_ps = nullptr;
@@ -483,6 +485,10 @@ void RegisterCVars() {
         s_hazeFalloff = h > 1.0f ? 1.0f / h : 0.0f;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farViewDistance", "farLand: the horizon (far land, far trees) reaches this many yards whatever the view distance (benilla's 10 km far plane; default 10000, 0 = stock horizonFarclipScale x farclip)", 1, "10000", [](CVar*, const char*, const char* value, void*) -> bool {
+        s_farView = std::min(std::max(SStrToFloat(value), 0.0f), 20000.0f);
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("farLandUploads", "farLand: most baked tiles copied into the atlases per frame (1..32, default 4)", 1, "4", [](CVar*, const char*, const char* value, void*) -> bool {
         s_uploads = std::min(std::max(SStrToInt(value), 1), 32);
         return true;
@@ -491,6 +497,16 @@ void RegisterCVars() {
 
 bool Drawing() {
     return s_enabled && !s_shaderFailed;
+}
+
+void UpdateHorizonScale() {
+    CVar* stockCvar = CWorldParam::cvar_horizonFarClip;
+    const float stock = stockCvar ? std::min(std::max(stockCvar->m_floatValue, 3.0f), 6.0f) : 6.0f;
+    float scale = stock;
+    if (Drawing() && s_farView > 0.0f && World::s_farClip > 1.0f) {
+        scale = std::max(stock, s_farView / World::s_farClip);
+    }
+    World::s_horizonFarClipScale = scale;
 }
 
 float FogCap(float farClip) {

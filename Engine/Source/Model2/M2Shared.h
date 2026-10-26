@@ -73,6 +73,8 @@ class CM2Shared {
     /* 019C */ uint32_t m_lastUsedTime;
     /* 01A0 */ TSLink<CM2Shared> m_updateLink;
 
+    static int32_t s_doodadInstancing;   // DOODADINST: CVar doodadInstancing, not in 12340
+
     static void LoadFailedCallback(void* param);
     static void LoadSucceededCallback(void* param);
 #if defined(WOWDECOMP_ARCH_64)

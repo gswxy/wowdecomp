@@ -23,7 +23,10 @@
 #include "WoW/Source/WorldClient/VolumetricFog.h"
 #include "WoW/Source/LiquidSystem/Liquid.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Model2/CM2SceneRender.h"
 #include "Engine/Source/Model2/M2TreeSway.h"
 #include "WoW/Source/WorldClient/FarTrees.h"
 #include "WoW/Source/WorldClient/TreeLeaves.h"
@@ -715,6 +718,21 @@ void CWorldParam::Initialize() {
         CM2Scene::s_groundDecals = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    // DOODADINST: not in 12340. Stock doodad groups (M2BatchDoodads) take up to 75 copies a draw instead of the skin's
+    // bone budget (21 for most stock skins, 0 = never grouped for converted retail ones); D3D11/Vulkan only.
+    CVar::Register("doodadInstancing", "D3D11/Vulkan: up to 75 identical static doodads per draw (stock: the skin's bone budget, usually 21); applies to models loaded after it changes", 1, "0", [](CVar*, const char*, const char* value, void*) -> bool {
+        CM2Shared::s_doodadInstancing = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    ConsoleCommandRegister("doodadInstancingStats", [](const char*, const char*) -> int32_t {
+        char line[160];
+        SStrPrintf(line, sizeof(line), "doodadInstancingStats: %u grouped doodads in %u draws since last call (%u draws saved)",
+            g_m2DoodadInstances, g_m2DoodadDraws, g_m2DoodadInstances - g_m2DoodadDraws);
+        ConsoleWrite(line, DEFAULT_COLOR);
+        g_m2DoodadInstances = 0;
+        g_m2DoodadDraws = 0;
+        return 1;
+    }, CATEGORY_GRAPHICS, "Prints how many doodads the grouped doodad draws drew and how many draws that saved, then resets");
     // BENILLA: not in 12340 (rig_anim/pose.rs animation LOD). Models past 50 / 100 / 200 yd re-posed every 2nd / 3rd / 4th frame.
     CVar::Register("animLod", "Distant models animate at a lower rate (every 2nd frame past 50 yd, 3rd past 100, 4th past 200); 0 = every frame", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         CM2Scene::s_animLod = SStrToInt(value) != 0;

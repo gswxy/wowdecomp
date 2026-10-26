@@ -19,6 +19,9 @@ class CShaderEffect;
 class M2Element;
 struct CGxBuf;
 
+extern uint32_t g_m2DoodadInstances;   // DOODADINST: not in 12340, doodadInstancingStats
+extern uint32_t g_m2DoodadDraws;
+
 class CM2SceneRender {
     public:
     /* 0000 */ C44Matrix m_matrix;

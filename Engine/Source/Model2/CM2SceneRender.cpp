@@ -36,6 +36,10 @@ static C44Matrix s_identity;
 // RegisterCVars; Engine does not depend on WoW). BatchFog rewrites a late batch's fog with the fitted linear fog
 // (in: the stock values, out: the fog to draw; returns false to keep stock). FogParticles is true while late
 // particles should take the fog like any late model.
+// DOODADINST: not in 12340. Doodads drawn through DrawBatchDoodad and the draws they took (console doodadInstancingStats).
+uint32_t g_m2DoodadInstances = 0;
+uint32_t g_m2DoodadDraws = 0;
+
 bool (*g_vfogM2BatchFog)(const float modelPos[3], float& start, float& end, float& density, float color[3]) = nullptr;
 bool (*g_vfogM2FogParticles)() = nullptr;
 
@@ -827,6 +831,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
 
     uint32_t total = this->m_curElement->m_count;
     uint32_t instances = this->m_curShared->AllocInstances(total);
+    g_m2DoodadInstances += total;   // DOODADINST: doodadInstancingStats
 
     if (instances > total) {
         instances = total;
@@ -885,6 +890,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
             batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
             g_theGxDevicePtr->Draw(&batch, 1);
+            g_m2DoodadDraws++;
         }
     } else {
         for (uint32_t done = 0; done < total; done += instances) {

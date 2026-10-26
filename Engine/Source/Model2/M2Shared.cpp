@@ -25,6 +25,8 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Os/OsMemory.h"
 
+int32_t CM2Shared::s_doodadInstancing = 0;   // DOODADINST: CVar doodadInstancing, not in 12340
+
 // STATIC: 0x00A45644
 static const uint32_t s_skinProfileBoneCounts[4] = { 256, 64, 53, 21 };
 
@@ -1141,8 +1143,19 @@ int32_t CM2Shared::InitializeSkinProfile() {
 
     this->m_maxInstances = skinData->m_indices.m_count ? 0x10000 / skinData->m_indices.m_count : 1;
 
+    // DOODADINST: not in 12340 (CVar doodadInstancing). Stock caps a doodad group draw at the skin's bone budget
+    // (21 in ~95% of the stock world skins, 0 in converted retail ones, which then never group); the shader
+    // register file holds 75 bones (c31..c255, the clamp in DrawBatchDoodad / RenderBatchShadowMap), so on
+    // D3D11/Vulkan up to 75 one-bone copies share a draw. Read when the skin loads.
+    uint32_t boneBudget = skinData->m_boneCountMax;
+    EGxApi api = g_theGxDevicePtr ? g_theGxDevicePtr->DeviceApi() : GxApi_D3d9;
+
+    if (CM2Shared::s_doodadInstancing && (api == GxApi_D3d11 || api == GxApi_Vulkan)) {
+        boneBudget = 75;
+    }
+
     for (uint32_t i = 0; i < skinData->m_skinSections.m_count; i++) {
-        uint32_t instances = skinData->m_boneCountMax / skinData->m_skinSections[i].m_boneCount;
+        uint32_t instances = skinData->m_skinSections[i].m_boneCount ? boneBudget / skinData->m_skinSections[i].m_boneCount : 1;
 
         if (this->m_maxInstances > instances) {
             this->m_maxInstances = instances;

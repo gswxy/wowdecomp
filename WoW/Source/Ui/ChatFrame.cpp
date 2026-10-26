@@ -3950,21 +3950,21 @@ void CGChat::HandleFlagsChanged(WOWGUID guid, uint8_t oldFlags, uint8_t newFlags
         s_activeDisplayChannelFlags = newFlags;
     }
 
-    if (!(oldFlags & 0x2) && (newFlags & 0x2)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR)) {
         CGChat::AddChatMessage("SET_MODERATOR", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x2) && !(newFlags & 0x2)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR)) {
         CGChat::AddChatMessage("UNSET_MODERATOR", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 
-    if (!(oldFlags & 0x4) && (newFlags & 0x4)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
         CGChat::AddChatMessage("SET_VOICE", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x4) && !(newFlags & 0x4)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
         CGChat::AddChatMessage("UNSET_VOICE", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 
-    if (!(oldFlags & 0x10) && (newFlags & 0x10)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK)) {
         CGChat::AddChatMessage("SET_SPEAK", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x10) && !(newFlags & 0x10)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK)) {
         CGChat::AddChatMessage("UNSET_SPEAK", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 }
@@ -5931,11 +5931,11 @@ void CGChat::DisplayPendingUserList(ChatChannel* channel) {
 
         const char* prefix = "";
 
-        if (user->m_flags & 0x1) {
+        if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::OWNER) {
             prefix = "*";
-        } else if (user->m_flags & 0x2) {
+        } else if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) {
             prefix = "@";
-        } else if (!(user->m_flags & 0x4)) {
+        } else if (!(user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
             prefix = "#";
         }
 

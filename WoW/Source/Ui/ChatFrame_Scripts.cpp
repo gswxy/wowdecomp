@@ -1433,13 +1433,13 @@ static int32_t Script_GetChannelRosterInfo(lua_State* L) {
         lua_pushstring(L, FrameScript_GetText("UNKNOWN", -1, GENDER_NOT_APPLICABLE));
     }
 
-    if (user->m_flags & 0x1) {
+    if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::OWNER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (user->m_flags & 0x2) {
+    if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -1850,7 +1850,7 @@ static int32_t Script_GetSavedInstanceInfo(lua_State* L) {
 static int32_t Script_IsDisplayChannelOwner(lua_State* L) {
     uint32_t index = CGChat::FindDisplayChannelIndex(CGChat::s_activeDisplayChannelName, s_activeDisplayChannelType);
 
-    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & 0x1)) {
+    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & CGChat::CHANNEL_MEMBER_FLAGS::OWNER)) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -1864,7 +1864,7 @@ static int32_t Script_IsDisplayChannelOwner(lua_State* L) {
 static int32_t Script_IsDisplayChannelModerator(lua_State* L) {
     uint32_t index = CGChat::FindDisplayChannelIndex(CGChat::s_activeDisplayChannelName, s_activeDisplayChannelType);
 
-    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & 0x3)) {
+    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & CGChat::CHANNEL_MEMBER_FLAGS::OWNER_OR_MODERATOR)) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);

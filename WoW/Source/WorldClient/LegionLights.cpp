@@ -6,9 +6,13 @@
 #include "WoW/Source/WorldClient/LegionLights.h"
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
+#include <initializer_list>
+#include <string>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
@@ -105,9 +109,12 @@ struct Static {
     int32_t slot;           // baked occlusion in the atlas, -1 none
     uint32_t used;          // the last frame it was selected (atlas LRU)
     bool noBake;            // the bake found the lamp shut in its own holder's collision: screen-space rays only
+    bool emissive;          // EMISSIVE: derived from the model's glow (key is a fake, never dereferenced)
 };
 std::unordered_map<const CM2Light*, Static> s_static;
 std::unordered_map<const CMapDoodadDef*, std::vector<const CM2Light*>> s_staticByDoodad;
+CVar* s_emissive;
+std::unordered_set<const CMapDoodadDef*> s_pending;    // EMISSIVE: placed before their skin profile arrived
 
 // LIGHTBAKE (baked shadows): per static lamp a cube of kFace^2 rays a face cast once through the world's collision
 // (World::Intersect: terrain, WMOs, doodads), the hit distance / kMaxRadius in 8 bits, into an atlas of kColumns slots
@@ -287,6 +294,294 @@ T FirstKey(const M2Data& data, const M2Track<T>& track, T fallback) {
     return loaded && track.m_sequenceKeys.m_count && track.m_sequenceKeys[0].m_count ? track.m_sequenceKeys[0][0] : fallback;
 }
 
+// EMISSIVE (benilla-bourbon crates/benilla-world/src/modern/lights/emissive.rs, 1:1): a placed doodad that authors
+// no casting light but draws a flame or a glow (unlit additive particles, additive cards, a fixture's unlit glass)
+// gets one derived point light at the glowing parts' centroid, colour = unit-peak mean x intensity scale, which
+// stands for diffuse colour x diffuse intensity as an authored M2 light's does.
+// ponytail: bones at rest (no billboard carrier shift), no flame flicker, no WMO window glows (v1).
+namespace Emissive {
+constexpr float kMinEmission = 0.02f;
+constexpr float kReferenceSize = 0.35f;
+constexpr float kEmissionToIntensity = 0.55f;
+constexpr float kMaxIntensity = 1.5f;
+constexpr float kUntintedGlow[3] = { 1.0f, 0.72f, 0.38f };
+constexpr float kUntintedLimit = 0.08f;
+constexpr float kGlowWeight = 0.9f;
+constexpr float kReferenceCard = 0.5f;
+constexpr float kMinFlameSize = 0.04f;
+constexpr float kEmitterReach = 2.5f;
+
+struct Sum {
+    float weight = 0.0f;
+    float rgb[3] = {};
+    void Add(const float c[3], float w) {
+        weight += w;
+        for (int i = 0; i < 3; ++i) {
+            rgb[i] += c[i] * w;
+        }
+    }
+};
+
+std::string Lower(const char* path) {
+    std::string s(path);
+    for (char& c : s) {
+        c = c == '/' ? '\\' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return s;
+}
+
+bool Contains(const std::string& s, std::initializer_list<const char*> keys) {
+    for (const char* k : keys) {
+        if (s.find(k) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The track's peak over its rest keys (benilla shown_at_rest), fallback when it has none loaded.
+float Peak(const M2Data& data, const M2Track<fixed16>& track, float fallback) {
+    const bool loaded = track.m_loopIndex != 0xFFFF || (data.m_sequences.m_count && (data.m_sequences[0].m_flags & 0x20));
+    if (!loaded || !track.m_sequenceKeys.m_count || !track.m_sequenceKeys[0].m_count) {
+        return fallback;
+    }
+    float peak = -1e30f;
+    const M2Array<fixed16>& keys = track.m_sequenceKeys[0];
+    for (uint32_t i = 0; i < keys.m_count; ++i) {
+        peak = std::max(peak, keys[i].m_value / 32767.0f);
+    }
+    return peak;
+}
+
+// emission_of: an unlit additive particle's opacity-weighted ramp mean, weighted by size and opacity.
+bool EmissionOf(const M2Particle& p, Sum& sum) {
+    if ((p.m_blendMode != M2PARTICLEBLEND_NO_ALPHA_ADD && p.m_blendMode != M2PARTICLEBLEND_ADD) || !(p.m_flags & 1)) {
+        return false;   // not Add, or lit (M2Model: material flag 1 = lit iff file flag 0x1 clear)
+    }
+    const uint32_t n = std::min(p.m_colorTrack.m_values.m_count, p.m_alphaTrack.m_values.m_count);
+    if (!n) {
+        return false;
+    }
+    float alphaSum = 0.0f;
+    float rgb[3] = {};
+    for (uint32_t k = 0; k < n; ++k) {
+        const float a = std::clamp(p.m_alphaTrack.m_values[k].m_value / 32767.0f, 0.0f, 1.0f);
+        const C3Vector& c = p.m_colorTrack.m_values[k];
+        alphaSum += a;
+        rgb[0] += std::max(c.x / 255.0f, 0.0f) * a;
+        rgb[1] += std::max(c.y / 255.0f, 0.0f) * a;
+        rgb[2] += std::max(c.z / 255.0f, 0.0f) * a;
+    }
+    if (alphaSum <= 0.0f) {
+        return false;
+    }
+    const float mean[3] = { rgb[0] / alphaSum, rgb[1] / alphaSum, rgb[2] / alphaSum };
+    const float luminance = 0.2126f * mean[0] + 0.7152f * mean[1] + 0.0722f * mean[2];
+    float size = 0.0f;
+    for (uint32_t k = 0; k < p.m_scaleTrack.m_values.m_count; ++k) {
+        size = std::max(size, p.m_scaleTrack.m_values[k].x);
+    }
+    if (size < kMinFlameSize) {
+        return false;
+    }
+    const float weight = luminance * std::clamp(size / kReferenceSize, 0.25f, 3.0f) * (alphaSum / n);
+    if (weight < kMinEmission) {
+        return false;
+    }
+    sum.Add(mean, weight);
+    return true;
+}
+
+// glow_emission: an additive card's tint (untinted reads warm), weighted by size.
+void GlowEmission(const float tint[4], float size, Sum& sum) {
+    const float alpha = std::clamp(tint[3], 0.0f, 1.0f);
+    const float rgb[3] = { std::max(tint[0], 0.0f), std::max(tint[1], 0.0f), std::max(tint[2], 0.0f) };
+    const float peak = std::max({ rgb[0], rgb[1], rgb[2] });
+    if (alpha <= 0.0f || peak <= 0.0f) {
+        return;
+    }
+    const float spread = peak - std::min({ rgb[0], rgb[1], rgb[2] });
+    const float hue[3] = { spread <= kUntintedLimit ? kUntintedGlow[0] : rgb[0] / peak, spread <= kUntintedLimit ? kUntintedGlow[1] : rgb[1] / peak,
+                           spread <= kUntintedLimit ? kUntintedGlow[2] : rgb[2] / peak };
+    const float weight = peak * alpha * std::clamp(size / kReferenceCard, 0.25f, 3.0f) * kGlowWeight;
+    if (weight >= kMinEmission) {
+        sum.Add(hue, weight);
+    }
+}
+
+struct Card {
+    C3Vector lo, hi, mid;
+    float tint[4];
+    uint32_t first, count;  // skin vertex range
+};
+
+// The model's batches drawn at rest that are additive glow cards (glass false) or a fixture's unlit glass (true).
+std::vector<Card> Cards(const M2Data& data, const M2SkinProfile& skin, bool glass) {
+    std::vector<Card> cards;
+    for (uint32_t b = 0; b < skin.m_batches.m_count; ++b) {
+        const M2Batch& batch = skin.m_batches[b];
+        if (batch.m_materialIndex >= data.m_materials.m_count || batch.m_skinSectionIndex >= skin.m_skinSections.m_count) {
+            continue;
+        }
+        const M2Material& mat = data.m_materials[batch.m_materialIndex];
+        const bool additive = mat.m_blendMode == M2BLEND_NO_ALPHA_ADD || mat.m_blendMode == M2BLEND_ADD;
+        const bool env = batch.m_textureCoordComboIndex < data.m_textureCoordCombos.m_count && data.m_textureCoordCombos[batch.m_textureCoordComboIndex] > 2;
+        // glass: the file's unlit flag on a non-additive batch (M2Shared::Initialize also sets it on mod blends: refused)
+        if (env || (glass ? additive || !(mat.m_flags & 1) || mat.m_blendMode >= M2BLEND_MOD : !additive)) {
+            continue;
+        }
+        // shown_at_rest: colour alpha and texture weight not zero throughout
+        const bool hasColor = batch.m_colorIndex < data.m_colors.m_count;
+        if (hasColor && Peak(data, data.m_colors[batch.m_colorIndex].m_alpha, 1.0f) <= 0.0f) {
+            continue;
+        }
+        if (batch.m_textureWeightComboIndex < data.m_textureWeightCombos.m_count) {
+            const uint16_t w = data.m_textureWeightCombos[batch.m_textureWeightComboIndex];
+            if (w < data.m_textureWeights.m_count && Peak(data, data.m_textureWeights[w].m_weight, 1.0f) <= 0.0f) {
+                continue;
+            }
+        }
+        const M2SkinSection& section = skin.m_skinSections[batch.m_skinSectionIndex];
+        Card card{ C3Vector(1e30f, 1e30f, 1e30f), C3Vector(-1e30f, -1e30f, -1e30f), C3Vector(0.0f, 0.0f, 0.0f), { 1.0f, 1.0f, 1.0f, 1.0f }, section.m_vertexStart, 0 };
+        for (uint32_t v = section.m_vertexStart; v < section.m_vertexStart + section.m_vertexCount && v < skin.m_vertices.m_count; ++v) {
+            const uint16_t g = skin.m_vertices[v];
+            if (g >= data.m_vertices.m_count) {
+                continue;
+            }
+            const C3Vector& p = data.m_vertices[g].m_position;
+            card.lo = C3Vector(std::min(card.lo.x, p.x), std::min(card.lo.y, p.y), std::min(card.lo.z, p.z));
+            card.hi = C3Vector(std::max(card.hi.x, p.x), std::max(card.hi.y, p.y), std::max(card.hi.z, p.z));
+            card.mid = card.mid + p;
+            ++card.count;
+        }
+        if (!card.count) {
+            continue;
+        }
+        card.mid = card.mid * (1.0f / card.count);
+        // the tint: M2Color's rgb when it is constant (an animated one is left untinted, as benilla's batches)
+        if (hasColor) {
+            const M2Track<C3Vector>& rgb = data.m_colors[batch.m_colorIndex].m_color;
+            if (rgb.m_sequenceKeys.m_count && rgb.m_sequenceKeys[0].m_count == 1) {
+                const C3Vector c = FirstKey(data, rgb, C3Vector(1.0f, 1.0f, 1.0f));
+                card.tint[0] = c.x;
+                card.tint[1] = c.y;
+                card.tint[2] = c.z;
+            }
+        }
+        cards.push_back(card);
+    }
+    return cards;
+}
+
+float CardSize(const Card& c) {
+    return std::max({ c.hi.x - c.lo.x, c.hi.y - c.lo.y, c.hi.z - c.lo.z }) * 0.5f;
+}
+
+// combine + glow_anchor: the light's model-space position and colour x intensity, false when nothing emits.
+bool Derive(const CM2Shared& shared, C3Vector& pos, float colour[3]) {
+    const M2Data& data = *shared.m_data;
+    const M2SkinProfile& skin = *shared.m_skinData;
+    const std::string path = Lower(shared.m_fileName);
+    const std::string file = path.substr(path.find_last_of('\\') + 1);
+    // is_living_swarm, is_light_shaft; ours (wxl-light research 10 §6): props whose glints are not lamps
+    if (path.find("\\critter\\") != std::string::npos || file.find("firefl") != std::string::npos ||
+        path.find("\\volumetriclights\\") != std::string::npos || Contains(file, { "lightshaft", "lightbeam", "lightray" }) ||
+        Contains(file, { "portal", "banner", "pennant", "flag", "miningnode", "waterfall", "steam", "mist", "cauldron", "unlit", "broken" })) {
+        return false;
+    }
+    Sum sum;
+    std::vector<C3Vector> emitters;
+    for (uint32_t i = 0; i < data.m_particles.m_count; ++i) {
+        const M2Particle& p = data.m_particles[i];
+        // emits_at_rest
+        if (FirstKey<uint8_t>(data, p.m_visibilityTrack, 1) && FirstKey(data, p.m_emissionRateTrack, 1.0f) > 0.0f && EmissionOf(p, sum)) {
+            emitters.push_back(p.m_position);
+        }
+    }
+    std::vector<Card> cards = Cards(data, skin, false);
+    for (const Card& c : cards) {
+        GlowEmission(c.tint, CardSize(c), sum);
+    }
+    if (sum.weight < kMinEmission) {
+        // fixture_glass: a lamp, lantern, candle... whose light is its unlit glass
+        if (!Contains(file, { "lamp", "lantern", "candle", "torch", "brazier", "sconce", "chandelier", "candelabra" })) {
+            return false;
+        }
+        sum = Sum();
+        emitters.clear();
+        cards = Cards(data, skin, true);
+        for (const Card& c : cards) {
+            GlowEmission(c.tint, CardSize(c), sum);
+        }
+        if (sum.weight < kMinEmission) {
+            return false;
+        }
+    }
+    const float peak = std::max({ sum.rgb[0], sum.rgb[1], sum.rgb[2] });
+    if (peak <= 0.0f) {
+        return false;
+    }
+    const float intensity = std::min(sum.weight * kEmissionToIntensity, kMaxIntensity);
+    for (int i = 0; i < 3; ++i) {
+        colour[i] = sum.rgb[i] / peak * intensity;
+    }
+    // glow_anchor: the cards' centroids and the emitters within reach of a card vertex
+    C3Vector at(0.0f, 0.0f, 0.0f);
+    float n = 0.0f;
+    for (const C3Vector& e : emitters) {
+        bool inReach = cards.empty();
+        for (size_t c = 0; c < cards.size() && !inReach; ++c) {
+            for (uint32_t v = cards[c].first; v < cards[c].first + cards[c].count && v < skin.m_vertices.m_count && !inReach; ++v) {
+                const uint16_t g = skin.m_vertices[v];
+                if (g < data.m_vertices.m_count) {
+                    const C3Vector d = data.m_vertices[g].m_position - e;
+                    inReach = d.x * d.x + d.y * d.y + d.z * d.z <= kEmitterReach * kEmitterReach;
+                }
+            }
+        }
+        if (inReach) {
+            at = at + e;
+            n += 1.0f;
+        }
+    }
+    for (const Card& c : cards) {
+        at = at + c.mid;
+        n += 1.0f;
+    }
+    if (n <= 0.0f) {
+        return false;
+    }
+    pos = at * (1.0f / n);
+    return true;
+}
+}  // namespace Emissive
+
+// EMISSIVE: the doodad's derived light into the static list; false while its skin profile is still loading.
+bool AddEmissive(const CMapDoodadDef* def) {
+    const CM2Model* model = def->m_model;
+    const CM2Shared* shared = model ? model->m_shared : nullptr;
+    if (!shared || !shared->m_data) {
+        return true;    // nothing to read (the doodad's next UpdateBounds tries again)
+    }
+    for (uint32_t i = 0; i < shared->m_data->m_lights.m_count; ++i) {
+        if (shared->m_data->m_lights[i].m_type == M2LIGHT_POINT) {
+            return true;    // has_authored_light: the model's own lamp answers for it
+        }
+    }
+    if (!(shared->m_flags & 2) || !shared->m_skinData) {
+        return false;   // CM2Shared::FinishLoadingSkinProfile not yet run
+    }
+    C3Vector local;
+    float colour[3];
+    if (!Emissive::Derive(*shared, local, colour)) {
+        return true;
+    }
+    const CM2Light* key = reinterpret_cast<const CM2Light*>(reinterpret_cast<const char*>(def) + 1);   // fake, odd
+    s_static[key] = Static{ def, local * def->m_mat, { colour[0], colour[1], colour[2] }, -1, 0, false, true };
+    s_staticByDoodad[def] = { key };
+    return true;
+}
+
 // The light's sphere against the view frustum's sides (view space, z forward, ndc = xy / z * scale + offset).
 bool InFrustum(const float v[3], float r, const float* proj) {
     const float planes[4][2] = { { proj[0], proj[8] }, { proj[5], proj[9] } };
@@ -408,18 +703,19 @@ void RegisterCVars() {
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");
     s_baked = reg("lightBakedShadows", "Walls, ground and buildings between a fixed lamp and a surface block its light, worked out once per lamp (also off screen): 0 = off, 1 = full (default)", "1");
     s_atlasSize = reg("lightBakedShadowAtlas", "Texels high of the baked lamp shadow store, 64..4096 (a power of two; 16 rows of 10 lamps, 64 KB a row): 512 = 320 lamps, 2 MB (default)", "512");
+    s_emissive = reg("lightEmissive", "Doodads that draw a flame or a glow but carry no light of their own (braziers, candles, glowing lanterns) light the world around them, from the colour of that glow: 1 = on (default), 0 = off", "1");
     s_shadows = reg("lightShadows", "Things standing between a lamp and a surface block its light (screen-space shadow rays): 0 = off, 1 = full (default), between = lighter shadows", "1");
 }
 
 void AddDoodad(const CMapDoodadDef* def) {
     RemoveDoodad(def);
     CM2Model* model = def->m_model;
-    const M2Data* data = model && model->m_shared && model->m_lights ? model->m_shared->m_data : nullptr;
+    const M2Data* data = model && model->m_shared ? model->m_shared->m_data : nullptr;
     if (!data) {
         return;
     }
     std::vector<const CM2Light*> keys;
-    for (uint32_t i = 0; i < data->m_lights.m_count; i++) {
+    for (uint32_t i = 0; model->m_lights && i < data->m_lights.m_count; i++) {
         const M2Light& light = data->m_lights[i];
         const float intensity = FirstKey(*data, light.m_diffuseIntensity, 1.0f);
         const C3Vector colour = FirstKey(*data, light.m_diffuseColor, C3Vector(0.0f, 0.0f, 0.0f));
@@ -429,15 +725,18 @@ void AddDoodad(const CMapDoodadDef* def) {
         // ponytail: the bone's rest pose taken as identity (lamps hang from static or barely swinging bones)
         const CM2Light* key = &model->m_lights[i].m_light;
         Static& s = s_static[key];
-        s = Static{ def, light.m_position * def->m_mat, { colour.x * intensity, colour.y * intensity, colour.z * intensity }, -1, 0, false };
+        s = Static{ def, light.m_position * def->m_mat, { colour.x * intensity, colour.y * intensity, colour.z * intensity }, -1, 0, false, false };
         keys.push_back(key);
     }
     if (!keys.empty()) {
         s_staticByDoodad[def] = std::move(keys);
+    } else if (!AddEmissive(def)) {
+        s_pending.insert(def);  // EMISSIVE: no authored light; derived once its skin profile is in
     }
 }
 
 void RemoveDoodad(const CMapDoodadDef* def) {
+    s_pending.erase(def);
     auto it = s_staticByDoodad.find(def);
     if (it == s_staticByDoodad.end()) {
         return;
@@ -467,6 +766,9 @@ void OnWorld(bool solidDone) {
     const int mode = s_mode ? s_mode->m_intValue : 0;
     if (!solidDone) {
         CGxDevice::SetDepthUser(CGxDevice::DepthUser_Lights, false);    // set again by Draw
+        for (auto it = s_pending.begin(); it != s_pending.end();) {     // EMISSIVE: skins that have arrived
+            it = AddEmissive(*it) ? s_pending.erase(it) : std::next(it);
+        }
     }
     CM2Scene* scene = World::s_m2Scene;
     CGxDevice* device = g_theGxDevicePtr;
@@ -544,10 +846,14 @@ void OnWorld(bool solidDone) {
             add(native->m_pos, c, att, nullptr);
         }
     }
+    const bool emissiveOff = s_emissive && s_emissive->m_intValue == 0;
     // LAMPSON: every placed doodad's lamp, always, at its static colour; the live light only moves it while animated
     for (const auto& entry : s_static) {
         const CM2Light* key = entry.first;
-        const bool live = key->m_scene == scene && key->m_stamp == scene->m_frameStamp && key->m_visible;
+        if (entry.second.emissive && emissiveOff) {
+            continue;
+        }
+        const bool live = !entry.second.emissive && key->m_scene == scene && key->m_stamp == scene->m_frameStamp && key->m_visible;
         const float att[3] = { 0.0f, 0.7f, 0.03f };     // CM2Light's, every M2 light
         add(live ? key->m_pos : entry.second.pos, entry.second.colour, att, key);
     }

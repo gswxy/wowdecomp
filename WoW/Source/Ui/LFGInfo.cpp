@@ -25,7 +25,27 @@
 #include "WoW/Source/Ui/LFGHandler.h"
 
 struct LFGJoinResultError {
-    /* 0000 */ uint32_t m_result;
+    enum RESULT : uint32_t {
+        ROLE_CHECK_FAILED_WITH_REASON = 1,
+        GROUP_FULL = 2,
+        NO_LFG_OBJECT = 4,
+        NO_SLOTS_PLAYER = 5,
+        NO_SLOTS_PARTY = 6,
+        MISMATCHED_SLOTS = 7,
+        PARTY_PLAYERS_FROM_DIFFERENT_REALMS = 8,
+        MEMBERS_NOT_PRESENT = 9,
+        GET_INFO_TIMEOUT = 10,
+        INVALID_SLOT = 11,
+        DESERTER_PLAYER = 12,
+        DESERTER_PARTY = 13,
+        RANDOM_COOLDOWN_PLAYER = 14,
+        RANDOM_COOLDOWN_PARTY = 15,
+        TOO_MANY_MEMBERS = 16,
+        CANT_USE_DUNGEONS = 17,
+        ROLE_CHECK_FAILED = 18,
+    };
+
+    /* 0000 */ RESULT m_result;
     /* 0004 */ UIErrors m_error;
 };
 
@@ -659,23 +679,23 @@ static void ClearSearchResults() {
 
 // STATIC: 0x00ACDDA8
 static const LFGJoinResultError s_joinResultErrors[17] = {
-    { 1, ERR_LFG_ROLE_CHECK_FAILED },
-    { 2, ERR_LFG_GROUP_FULL },
-    { 4, ERR_LFG_NO_LFG_OBJECT },
-    { 5, ERR_LFG_NO_SLOTS_PLAYER },
-    { 6, ERR_LFG_NO_SLOTS_PARTY },
-    { 7, ERR_LFG_MISMATCHED_SLOTS },
-    { 8, ERR_LFG_PARTY_PLAYERS_FROM_DIFFERENT_REALMS },
-    { 9, ERR_LFG_MEMBERS_NOT_PRESENT },
-    { 10, ERR_LFG_GET_INFO_TIMEOUT },
-    { 11, ERR_LFG_INVALID_SLOT },
-    { 12, ERR_LFG_DESERTER_PLAYER },
-    { 13, ERR_LFG_DESERTER_PARTY },
-    { 14, ERR_LFG_RANDOM_COOLDOWN_PLAYER },
-    { 15, ERR_LFG_RANDOM_COOLDOWN_PARTY },
-    { 16, ERR_LFG_TOO_MANY_MEMBERS },
-    { 17, ERR_LFG_CANT_USE_DUNGEONS },
-    { 18, ERR_LFG_ROLE_CHECK_FAILED },
+    { LFGJoinResultError::RESULT::ROLE_CHECK_FAILED_WITH_REASON, ERR_LFG_ROLE_CHECK_FAILED },
+    { LFGJoinResultError::RESULT::GROUP_FULL, ERR_LFG_GROUP_FULL },
+    { LFGJoinResultError::RESULT::NO_LFG_OBJECT, ERR_LFG_NO_LFG_OBJECT },
+    { LFGJoinResultError::RESULT::NO_SLOTS_PLAYER, ERR_LFG_NO_SLOTS_PLAYER },
+    { LFGJoinResultError::RESULT::NO_SLOTS_PARTY, ERR_LFG_NO_SLOTS_PARTY },
+    { LFGJoinResultError::RESULT::MISMATCHED_SLOTS, ERR_LFG_MISMATCHED_SLOTS },
+    { LFGJoinResultError::RESULT::PARTY_PLAYERS_FROM_DIFFERENT_REALMS, ERR_LFG_PARTY_PLAYERS_FROM_DIFFERENT_REALMS },
+    { LFGJoinResultError::RESULT::MEMBERS_NOT_PRESENT, ERR_LFG_MEMBERS_NOT_PRESENT },
+    { LFGJoinResultError::RESULT::GET_INFO_TIMEOUT, ERR_LFG_GET_INFO_TIMEOUT },
+    { LFGJoinResultError::RESULT::INVALID_SLOT, ERR_LFG_INVALID_SLOT },
+    { LFGJoinResultError::RESULT::DESERTER_PLAYER, ERR_LFG_DESERTER_PLAYER },
+    { LFGJoinResultError::RESULT::DESERTER_PARTY, ERR_LFG_DESERTER_PARTY },
+    { LFGJoinResultError::RESULT::RANDOM_COOLDOWN_PLAYER, ERR_LFG_RANDOM_COOLDOWN_PLAYER },
+    { LFGJoinResultError::RESULT::RANDOM_COOLDOWN_PARTY, ERR_LFG_RANDOM_COOLDOWN_PARTY },
+    { LFGJoinResultError::RESULT::TOO_MANY_MEMBERS, ERR_LFG_TOO_MANY_MEMBERS },
+    { LFGJoinResultError::RESULT::CANT_USE_DUNGEONS, ERR_LFG_CANT_USE_DUNGEONS },
+    { LFGJoinResultError::RESULT::ROLE_CHECK_FAILED, ERR_LFG_ROLE_CHECK_FAILED },
 };
 
 // VERIFY: 5418061a manual
@@ -956,13 +976,13 @@ int32_t LFGPacketHandler(void* param, NETMESSAGE msgId, uint32_t time, CDataStor
             msg->Get(reason);
             DebugLog("LFGMessage: LFG_JOIN_RESULT - Result: %u, Reason: %u", result, reason);
 
-            if (result == 6) {
+            if (result == LFGJoinResultError::RESULT::NO_SLOTS_PARTY) {
                 CGLookingForGroup::m_partyLockInfo.Clear();
                 CGLookingForGroup::ParsePartyInfo(msg);
                 CGLookingForGroup::m_partyLockInfo.m_valid = 1;
             }
 
-            if (result == 1) {
+            if (result == LFGJoinResultError::RESULT::ROLE_CHECK_FAILED_WITH_REASON) {
                 if (reason == 3) {
                     CGGameUI::DisplayError(ERR_LFG_ROLE_CHECK_FAILED_TIMEOUT);
                     break;

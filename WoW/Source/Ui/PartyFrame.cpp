@@ -400,9 +400,9 @@ int32_t CGPartyInfo::GetPartyAssignments(lua_State* L, int32_t assignment) {
     uint8_t flag = 0;
 
     if (assignment == 0) {
-        flag = 2;
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK;
     } else if (assignment == 1) {
-        flag = 4;
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST;
     }
 
     if (lua_isstring(L, 2)) {

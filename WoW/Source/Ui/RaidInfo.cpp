@@ -806,7 +806,7 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
         member->m_subgroup = subgroups[i];
         member->m_assignments = flags[i];
         member->m_groupRole = roles[i];
-        member->m_rank = member->m_guid == CGPartyInfo::m_leader ? CGRaidMember::RANK::LEADER : static_cast<CGRaidMember::RANK>(flags[i] & 0x1);
+        member->m_rank = member->m_guid == CGPartyInfo::m_leader ? CGRaidMember::RANK::LEADER : static_cast<CGRaidMember::RANK>(flags[i] & CGPartyInfo::ASSIGNMENT_FLAGS::ASSISTANT);
         memcpy(&member->m_stats, &stats[i], sizeof(CGPartyMemberState));
 
         if (online[i]) {
@@ -1052,9 +1052,9 @@ int32_t CGRaidInfo::GetPartyAssignments(lua_State* L, int32_t assignment) {
     uint8_t flag = 0;
 
     if (assignment == 0) {
-        flag = 2;
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK;
     } else if (assignment == 1) {
-        flag = 4;
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST;
     }
 
     if (lua_isstring(L, 2)) {

@@ -349,9 +349,9 @@ static int32_t Script_GetRaidRosterInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (member->m_assignments & 2) {
+    if (member->m_assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK) {
         lua_pushstring(L, "MAINTANK");
-    } else if (member->m_assignments & 4) {
+    } else if (member->m_assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST) {
         lua_pushstring(L, "MAINASSIST");
     } else {
         lua_pushnil(L);

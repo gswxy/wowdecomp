@@ -786,9 +786,9 @@ uint32_t GetCombatLogFlags(const WOWGUID& guid) {
     if ((flags & 0x400) && ((flags & 0x6) || (owner == ClntObjMgrGetActivePlayer() && inGroup))) {
         uint8_t assignments = inRaid ? CGRaidInfo::GetPartyAssignments(guid) : CGPartyInfo::GetPartyAssignments(guid);
 
-        if (assignments & 0x2) {
+        if (assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK) {
             flags |= 0x40000;
-        } else if (assignments & 0x4) {
+        } else if (assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST) {
             flags |= 0x80000;
         }
     }

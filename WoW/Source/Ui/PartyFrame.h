@@ -55,6 +55,12 @@ struct PartyReadyCheckInfo {
 
 class CGPartyInfo {
     public:
+    enum ASSIGNMENT_FLAGS : int32_t {
+        ASSISTANT = 0x1,
+        MAIN_TANK = 2,
+        MAIN_ASSIST = 4,
+    };
+
     static void ChangeRaidDifficulty(int32_t heroic);
     static void LeaveWorld();
     static uint32_t m_memberRoles[4];

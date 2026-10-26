@@ -131,14 +131,20 @@ std::unordered_set<const CMapDoodadDef*> s_pending;    // EMISSIVE: placed befor
 // a row (6 faces side by side); LRU over the slots, at most kBakeMs of rays a frame. LegionLights.hlsl BakedVisibility.
 // ponytail: collision geometry, not a rendered cube depth map (no rig to verify a GPU bake on three backends, and
 // this fits ps_3_0 everywhere); props without collision (fences, banners) are left to the screen-space rays.
-constexpr int kFace = 16;
-constexpr int kColumns = 10;                // 10 x 6 x 16 = 960 of a 1024 wide atlas
+// benilla 8 stage 2 (locallight.wgsl): faces 16 -> 32 texels for the contact-hardening soft filter below.
+constexpr int kFace = 32;
+constexpr int kColumns = 5;                 // 5 x 6 x 32 = 960 of a 1024 wide atlas
 constexpr int kAtlasW = 1024;
 constexpr int kRays = 6 * kFace * kFace;
 constexpr double kBakeMs = 1.0;
 constexpr float kBakeStart = 0.5f;          // yd: rays start this far out (the lamp's own flame and wick)
 constexpr float kBakeShut = 1.0f;           // yd: more than half the rays blocked inside this = shut in its holder
 constexpr uint32_t kBakeRegister = 60;      // c60 (1 / atlas w, 1 / atlas h, face texels, darkness)
+constexpr uint32_t kSoftRegister = 61;      // c61 benilla LightGrid.soft (taps, emitter radius yd, shade, 0)
+constexpr float kSoftTaps = 12.0f;          // locallight.wgsl Cinematic tier: 12 taps (MAX_TAPS)
+constexpr float kEmitterRadius = 0.35f;     // lights/mod.rs EMITTER_RADIUS
+constexpr float kSoftShade = 0.9f;          // the Cinematic tier's shade floor
+CVar* s_soft;
 constexpr uint32_t kIntersectFlags = 0x111; // terrain, WMO, doodad collision (Missile_C's static world)
 CVar* s_baked;
 CVar* s_atlasSize;
@@ -182,7 +188,7 @@ void DropAtlas() {
 
 // The atlas at lightBakedShadowAtlas rows; a new size starts it over.
 bool PrepareAtlas() {
-    int h = static_cast<int>(Var(s_atlasSize, 512.0f, 64.0f, 4096.0f));
+    int h = static_cast<int>(Var(s_atlasSize, 1024.0f, 64.0f, 4096.0f));
     int pow2 = 64;
     while (pow2 < h) {
         pow2 <<= 1;
@@ -765,6 +771,9 @@ void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
     const float bake[4] = { 1.0f / kAtlasW, s_atlasH ? 1.0f / s_atlasH : 0.0f, static_cast<float>(kFace),
                             baked ? kShadowDarkness * Var(s_baked, 1.0f, 0.0f, 1.0f) : 0.0f };
     SetPs(kBakeRegister, bake, 1);
+    const bool soft = Var(s_soft, 1.0f, 0.0f, 1.0f) > 0.0f;
+    const float softRegs[4] = { soft ? kSoftTaps : 1.0f, kEmitterRadius, kSoftShade * Var(s_baked, 1.0f, 0.0f, 1.0f), 0.0f };
+    SetPs(kSoftRegister, softRegs, 1);
     Bind(1, baked ? s_atlas : nullptr);
     Bind(0, depth);
     BindNormalBuffer();
@@ -813,7 +822,8 @@ void RegisterCVars() {
     s_normalBuffer = reg("gxNormalBuffer", "The world's models, buildings and ground also write their smooth normals, which the lamps (lightMode), the mountains' shadow (shadowMask) and SSAO light by: 1 = on (default), 0 = rebuild them from the depth (faceted)", "1");
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");
     s_baked = reg("lightBakedShadows", "Walls, ground and buildings between a fixed lamp and a surface block its light, worked out once per lamp (also off screen): 0 = off, 1 = full (default)", "1");
-    s_atlasSize = reg("lightBakedShadowAtlas", "Texels high of the baked lamp shadow store, 64..4096 (a power of two; 16 rows of 10 lamps, 64 KB a row): 512 = 320 lamps, 2 MB (default)", "512");
+    s_atlasSize = reg("lightBakedShadowAtlas", "Texels high of the baked lamp shadow store, 64..4096 (a power of two; 32 rows of 5 lamps, 128 KB a row): 1024 = 160 lamps, 4 MB (default)", "1024");
+    s_soft = reg("lightShadowSoft", "Baked lamp shadows take benilla's contact-hardening soft filter (crisp where the caster touches the ground, softer further out): 1 = on (default), 0 = the old hard 2 x 2 filter", "1");
     s_emissive = reg("lightEmissive", "Doodads that draw a flame or a glow but carry no light of their own (braziers, candles, glowing lanterns) light the world around them, from the colour of that glow: 1 = on (default), 0 = off", "1");
     s_shadows = reg("lightShadows", "Things standing between a lamp and a surface block its light (screen-space shadow rays): 0 = off, 1 = full (default), between = lighter shadows", "1");
 }

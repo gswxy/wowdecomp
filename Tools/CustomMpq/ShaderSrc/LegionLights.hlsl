@@ -14,6 +14,8 @@
 // Baked shadows (2026-10-24, lightbake): a static lamp's colour.w / attenuation.w carry its slot's texel origin
 // (y, x; y -1 = none) in s1, the cube of ray hit distances / 40 yd cast once through the world's collision
 // (LegionLights.cpp RunBake), c4-c7 view to world, c60 (1 / atlas w, 1 / atlas h, face texels, darkness 0 = off).
+// Soft baked shadows (2026-10-26, benilla 8 stage 2, locallight.wgsl local_visibility): c61 = benilla's LightGrid.soft
+// (taps, emitter radius yd, shade floor, 0); taps > 1 = blocker search + Vogel disc, contact-hardening.
 #include "vf_common.hlsli"
 #include "vf_gbuffer.hlsli"
 
@@ -23,6 +25,7 @@ float4 cLights[kLights * 3] : register(c11);
 float4 cLightShadow : register(c59);
 
 float4 cBake : register(c60);
+float4 cSoft : register(c61);
 
 sampler2D sDepth : register(s0);
 sampler2D sBake : register(s1);
@@ -84,6 +87,51 @@ float BakeTap(float2 origin, float face, float2 t)
 // Faces as RayDir: major axis a, sign face & 1, u along axis a + 1, v along a + 2.
 static const float kBakeRange = 40;     // yd: LegionLights.cpp kMaxRadius, a texel's 254 (255 = no hit)
 
+// locallight.wgsl: BLOCKER_TAPS, MAX_TAPS, the penumbra clamp in face texels
+static const int kBlockerTaps = 6;
+static const int kMaxTaps = 12;
+static const float kMaxPenumbraTexels = 12;
+static const float kMinPenumbraTexels = 1;
+
+// locallight.wgsl vogel_offset (r in 0..1 over the disc)
+float2 VogelOffset(float index, float count, float rotation)
+{
+    float r = sqrt((index + 0.5) / count);
+    float theta = index * 2.399963229728653 + rotation;
+    return float2(r * cos(theta), r * sin(theta));
+}
+
+// locallight.wgsl local_visibility's soft path on the baked cube: stored radial hit distances (yd) instead of
+// reverse-Z depth, compared against the same reach as the hard path. world = the receiver in world space.
+float SoftBakedVisibility(float2 origin, float face, float2 t, float reach, float L, float major, float3 world)
+{
+    float3 wrapped = frac(world * 0.1);
+    float rotation = frac(dot(wrapped, float3(12.9898, 78.233, 37.719))) * 6.2831853;
+    float toYd = kBakeRange * 255.0 / 254.0;
+    float blocker = 0;
+    float blockers = 0;
+    [loop] for (int i = 0; i < kBlockerTaps; ++i)
+    {
+        float stored = BakeTap(origin, face, floor(t + 0.5 + VogelOffset(i, kBlockerTaps, rotation + 1.3) * kMaxPenumbraTexels)) * toYd;
+        if (stored < reach)
+        {
+            blocker += stored;
+            blockers += 1;
+        }
+    }
+    if (blockers <= 0)
+        return 1;
+    float occluder = max(blocker / blockers, 0.25);   // CUBE_NEAR
+    float penumbra = cSoft.y * max(L - occluder, 0) / occluder;   // radial: the bake stores ray lengths
+    // a yard at distance major is 0.5 / major of the face's [0,1] uv, cBake.z texels across
+    float spread = clamp(penumbra * 0.5 / max(major, 1e-3) * cBake.z, kMinPenumbraTexels, kMaxPenumbraTexels);
+    float lit = 0;
+    [loop] for (int j = 0; j < kMaxTaps; ++j)
+        lit += BakeTap(origin, face, floor(t + 0.5 + VogelOffset(j, kMaxTaps, rotation) * spread)) * toYd >= reach;
+    float visibility = lit / kMaxTaps;
+    return lerp(1 - cSoft.z, 1, visibility);
+}
+
 float BakedVisibility(float3 p, float3 n, float3 lamp, float2 origin)
 {
     float3 w = mul(float4(p + n * 0.15 - lamp, 0), cViewToWorld).xyz;
@@ -111,6 +159,8 @@ float BakedVisibility(float3 p, float3 n, float3 lamp, float2 origin)
     float2 f = t - t0;
     // the bias grows with the distance: a texel spans about 2 / face texels of a radian
     float reach = L - 0.4 - L * 2.0 / cBake.z;
+    if (cSoft.x > 1)
+        return SoftBakedVisibility(origin, face, t, reach, L, max(aw.x, max(aw.y, aw.z)), mul(float4(p, 1), cViewToWorld).xyz);
     float4 lit = float4(BakeTap(origin, face, t0), BakeTap(origin, face, t0 + float2(1, 0)),
                         BakeTap(origin, face, t0 + float2(0, 1)), BakeTap(origin, face, t0 + 1)) * (kBakeRange * 255.0 / 254.0) >= reach;
     float open = lerp(lerp(lit.x, lit.y, f.x), lerp(lit.z, lit.w, f.x), f.y);

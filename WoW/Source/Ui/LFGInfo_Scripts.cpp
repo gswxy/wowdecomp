@@ -47,7 +47,7 @@ static float s_playerLockRequestTime;
 static float s_partyLockRequestTime;
 
 // STATIC: 0x00ACD644
-static const char* s_lfgTypeTokens[7] = {
+static const char* s_lfgTypeTokens[CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES] = {
     "LFG_TYPE_NONE",
     "LFG_TYPE_DUNGEON",
     "LFG_TYPE_RAID",
@@ -154,13 +154,13 @@ static int32_t Script_SetLFGRoles(lua_State* L) {
 // VERIFY: 9e5c5761 auto
 // OFFSET: 0x00552DD0
 static int32_t Script_GetLFGTypes(lua_State* L) {
-    lua_checkstack(L, 7);
+    lua_checkstack(L, CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES);
 
-    for (uint32_t i = 0; i < 7; i++) {
+    for (uint32_t i = 0; i < CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES; i++) {
         lua_pushstring(L, FrameScript_GetText(s_lfgTypeTokens[i], -1, GENDER_NOT_APPLICABLE));
     }
 
-    return 7;
+    return CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES;
 }
 
 // VERIFY: 364604e4 auto
@@ -611,7 +611,7 @@ static int32_t Script_GetLFGDungeonRewardInfo(lua_State* L) {
     int32_t dungeonID = lua_tointeger(L, 1);
     LfgDungeonsRec* rec = g_lfgDungeonsDB.GetRecord(dungeonID);
 
-    if (!rec || (rec->m_typeID != 6 && !(rec->m_flags & 0x4))) {
+    if (!rec || (rec->m_typeID != CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RANDOM_DUNGEON && !(rec->m_flags & 0x4))) {
         return 0;
     }
 
@@ -743,7 +743,7 @@ static int32_t Script_GetLFDChoiceLockedState(lua_State* L) {
     if (CGLookingForGroup::m_partyLockInfo.m_valid) {
         for (LFGLockInfo* member = CGLookingForGroup::m_partyLockInfo.m_members.Head(); member; member = CGLookingForGroup::m_partyLockInfo.m_members.Next(member)) {
             for (LFGDungeonEntry* entry = member->m_dungeons.Head(); entry; entry = member->m_dungeons.Next(entry)) {
-                if ((entry->m_slot >> 24) != 2 && entry->m_locked) {
+                if ((entry->m_slot >> 24) != CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RAID && entry->m_locked) {
                     lua_pushnumber(L, entry->m_slot & 0xFFFFFF);
                     lua_pushnumber(L, entry->m_lockReason);
                     lua_settable(L, -3);
@@ -830,7 +830,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     uint32_t total = 0;
     uint32_t completed = 0;
 
-    if (dungeon->m_typeID == 6) {
+    if (dungeon->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RANDOM_DUNGEON) {
         total = 0;
         completed = CGLookingForGroup::m_proposal.m_completedMask != 0;
     } else if (dungeon->m_flags & 0x4) {

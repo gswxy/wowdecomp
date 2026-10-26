@@ -157,6 +157,17 @@ struct LFGRoleCheckMember {
 class LfgDungeonsRec;
 class CGLookingForGroup {
     public:
+    enum DUNGEON_TYPE : int32_t {
+        LFG_TYPE_NONE = 0,
+        LFG_TYPE_DUNGEON = 1,
+        LFG_TYPE_RAID = 2,
+        LFG_TYPE_QUEST = 3,
+        LFG_TYPE_ZONE = 4,
+        LFG_TYPE_HEROIC_DUNGEON = 5,
+        LFG_TYPE_RANDOM_DUNGEON = 6,
+        NUM_LFG_TYPES = 7,
+    };
+
     enum SORT_COLUMN : int32_t {
         ZONE = 0,
         LEVEL = 1,

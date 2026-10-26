@@ -179,9 +179,17 @@ class ChatChannel {
 };
 
 struct DisplayChannel {
+    enum TYPE : int32_t {
+        CHANNEL = 0,
+        BATTLEGROUND = 1,
+        PARTY = 2,
+        RAID = 3,
+        HEADER = 4,
+    };
+
     /* 0000 */ int32_t m_channelIndex;
     /* 0004 */ int32_t m_headerIndex;
-    /* 0008 */ int32_t m_type;
+    /* 0008 */ TYPE m_type;
     /* 000C */ int32_t m_collapsed;
     /* 0010 */ int32_t m_enabled;
     /* 0014 */ int32_t m_voiceEnabled;

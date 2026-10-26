@@ -69,6 +69,12 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum BIDDER_SORT_RANK : int32_t {
+        NO_BIDDER = 0,
+        OTHER_BIDDER = 1,
+        ACTIVE_PLAYER_MATCH = 2,
+    };
+
     enum LIST_TYPE : int32_t {
         BROWSE_LIST = 0,
         BIDDER_LIST = 1,

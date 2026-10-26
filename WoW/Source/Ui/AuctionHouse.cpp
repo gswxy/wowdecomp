@@ -780,22 +780,22 @@ static int32_t CheckSortCriteria(int32_t column, const AuctionItemInfo* a, const
         }
 
         case 4: {
-            int32_t statusA;
+            CGAuctionHouse::BIDDER_SORT_RANK statusA;
 
             if (a->m_bidder == ClntObjMgrGetActivePlayer()) {
-                statusA = 2;
+                statusA = CGAuctionHouse::BIDDER_SORT_RANK::ACTIVE_PLAYER_MATCH;
             } else if (a->m_bidder) {
-                statusA = 1;
+                statusA = CGAuctionHouse::BIDDER_SORT_RANK::OTHER_BIDDER;
             } else {
-                statusA = 0;
+                statusA = CGAuctionHouse::BIDDER_SORT_RANK::NO_BIDDER;
             }
 
-            int32_t statusB = 0;
+            CGAuctionHouse::BIDDER_SORT_RANK statusB = CGAuctionHouse::BIDDER_SORT_RANK::NO_BIDDER;
 
             if (b->m_bidder == ClntObjMgrGetActivePlayer()) {
-                statusB = 2;
+                statusB = CGAuctionHouse::BIDDER_SORT_RANK::ACTIVE_PLAYER_MATCH;
             } else if (b->m_bidder) {
-                statusB = 1;
+                statusB = CGAuctionHouse::BIDDER_SORT_RANK::OTHER_BIDDER;
             }
 
             if (statusA == statusB) {

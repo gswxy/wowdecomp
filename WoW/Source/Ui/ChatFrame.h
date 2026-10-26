@@ -187,6 +187,12 @@ struct DisplayChannel {
         HEADER = 4,
     };
 
+    enum : int32_t {
+        PARTY_INDEX = -1,
+        RAID_INDEX = -2,
+        BATTLEGROUND_INDEX = -3,
+    };
+
     /* 0000 */ int32_t m_channelIndex;
     /* 0004 */ int32_t m_headerIndex;
     /* 0008 */ TYPE m_type;

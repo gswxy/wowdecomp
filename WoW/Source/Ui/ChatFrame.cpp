@@ -3748,7 +3748,7 @@ void RebuildDisplayChannelList(int32_t signal) {
     if (!s_collapsedHeaders[0]) {
         if (party && !raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
-            entry->m_channelIndex = -1;
+            entry->m_channelIndex = DisplayChannel::PARTY_INDEX;
             entry->m_headerIndex = -1;
             entry->m_collapsed = 0;
             entry->m_flags = 0;
@@ -3764,7 +3764,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             count = 2;
         } else if (raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
-            entry->m_channelIndex = -2;
+            entry->m_channelIndex = DisplayChannel::RAID_INDEX;
             entry->m_headerIndex = -1;
             entry->m_collapsed = 0;
             entry->m_flags = 0;
@@ -3782,7 +3782,7 @@ void RebuildDisplayChannelList(int32_t signal) {
 
         if (battleground) {
             DisplayChannel* entry = &CGChat::s_displayChannels[count];
-            entry->m_channelIndex = -3;
+            entry->m_channelIndex = DisplayChannel::BATTLEGROUND_INDEX;
             entry->m_headerIndex = -1;
             entry->m_collapsed = 0;
             entry->m_flags = 0;

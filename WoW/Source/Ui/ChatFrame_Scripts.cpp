@@ -1230,15 +1230,15 @@ static int32_t Script_GetChannelDisplayInfo(lua_State* L) {
         const char* token;
 
         switch (channelIndex) {
-            case -1:
+            case DisplayChannel::PARTY_INDEX:
                 token = "CHAT_MSG_PARTY";
                 break;
 
-            case -2:
+            case DisplayChannel::RAID_INDEX:
                 token = "CHAT_MSG_RAID";
                 break;
 
-            case -3:
+            case DisplayChannel::BATTLEGROUND_INDEX:
                 token = "CHAT_MSG_BATTLEGROUND";
                 break;
 

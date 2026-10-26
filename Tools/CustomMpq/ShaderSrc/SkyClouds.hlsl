@@ -24,7 +24,8 @@ float4 gAtG : register(c10);   // rgb = the light's glow (linear); w, gAtS.w, gA
 float4 gAtS : register(c11);   // xyz = toward the sun or moon
 float4 gAtZ : register(c12);   // rgb = the sky straight up (linear)
 float4 gDep : register(c13);   // the disc alone: xy = the viewport's origin in the depth's pixels, zw = 1 / its size
-float4 gSky : register(c14);   // the disc alone: x = the sky's depth (vf_common IsSky: above it), y = 1: sDepth is live
+float4 gSky : register(c14);   // the disc alone: x = the sky's depth (vf_common IsSky: above it), y = 1: sDepth is live,
+                               // z = skyDiscDip: the sky at the sprite's rim x (1 - z), back to itself by 3 x its half size
 
 // ---- Atmosphere.hpp
 float3 SkyAt(float3 d, float kb, float kg)
@@ -134,9 +135,9 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
 {
     float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     float3 dir = normalize(gR.xyz * ndc.x + gU.xyz * ndc.y + gF.xyz);
-    // The disc alone (SkyClouds::DrawOverFog, over vfog's composite): nothing outside the sprite's quad.
+    // The disc alone (SkyClouds::DrawDisc, after our sky or over vfog's composite): nothing outside its dip.
     bool only = gR.w > 0.5;
-    [branch] if (only && (dir.z <= 0.0 || dot(dir, gSun.xyz) < cos(1.5 * gSun.w)))
+    [branch] if (only && (dir.z <= 0.0 || dot(dir, gSun.xyz) < cos(3.0 * gSun.w)))
         return float4(0.0, 0.0, 0.0, 0.0);
     // Only where vfog fogged sky (its own depth, not the bound depth-stencil's state after the composite).
     [branch] if (only && gSky.y > 0.5 && tex2Dlod(sDepth, float4((gDep.xy + uv * gDr.zw) * gDep.zw, 0.0, 0.0)).r <= gSky.x)
@@ -213,7 +214,14 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
                 body = m.rgb * gBody.rgb * cover;
             }
             [branch] if (only)
-                return float4(cover > 1.0e-4 ? saturate(body / cover) : float3(0.0, 0.0, 0.0), cover * through);
+            {
+                // The sprite over the sky, and the sky round it eased down (where the clouds let the disc through):
+                // out = body * through + dst * (1 - a), 1 - a = (1 - cover * through) * (1 - dip).
+                float dip = gSky.z * through * (1.0 - smoothstep(0.6 * gSun.w, 3.0 * gSun.w, ang));
+                float ct = cover * through;
+                float a = ct + (1.0 - ct) * dip;
+                return float4(a > 1.0e-4 ? saturate(body * through / a) : float3(0.0, 0.0, 0.0), a);
+            }
             body += gBody.rgb * ((1.0 - gAtH.w) * 0.22 * exp(-ang / 0.105));   // the moon's halo (wxl-light's 3 x 0.035)
         }
         stay = through * (1.0 - gAtH.w) * (1.0 - cover);

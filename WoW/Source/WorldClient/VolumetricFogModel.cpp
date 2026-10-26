@@ -339,11 +339,19 @@ void ForeverDistanceLayer(const FrameInputs& in, const Config& cfg, const FogPar
     // look.rs key_hue: the glow fades to white by 1 - moon_hue while the moon keys
     const float hueFade = (1.0f - std::clamp(look.moonHue, 0.0f, 1.0f)) * moon;
 
+    // The standard sliders on Forever's own solve, 1 at their defaults (the Forever look): vfogSunScatter scales the
+    // key's in-scatter (standard: every layer's diffuse x sunScatter), vfogShaftIntensity the off-sun share (the
+    // backward lobe here; standard: the phase floor, which this layer is exempt from). Haze and ground copy both.
+    const Config defaults;
+    const float scatterGain = std::isfinite(cfg.sunScatter) ? std::max(cfg.sunScatter, 0.0f) / defaults.sunScatter : 1.0f;
+    const float shaftGain = !cfg.shafts ? 0.0f : std::isfinite(cfg.shaftIntensity) ? cfg.shaftIntensity / defaults.shaftIntensity : 1.0f;
+    const float offSun = std::clamp(isotropic * shaftGain, 0.0f, 1.0f);
+
     out = FogLayer{};
     out.start = 0.9f * nearClear;     // froxelfog's smoothstep(0.8 clear, clear) ease as a hard start at its mean
     out.density = cfg.stockFog ? density * cfg.farFog * cfg.density : 0.0f;
     out.g = kForwardG;
-    out.isotropic = -std::max(isotropic, 1e-6f);   // < 0: no shaft floor (LayerPhase takes |isotropic|)
+    out.isotropic = -std::max(offSun, 1e-6f);   // < 0: no shaft floor (LayerPhase takes |isotropic|)
     out.strength = 0.0f;
     out.exponent = 1.0f;
     out.skyFalloff = 0.0f;   // benilla: no sky thinning, the height falloff alone (the sky tail, vf_integrate)
@@ -353,7 +361,7 @@ void ForeverDistanceLayer(const FrameInputs& in, const Config& cfg, const FogPar
     for (int c = 0; c < 3; ++c) {
         const float glow = look.glow[c] + (1.0f - look.glow[c]) * hueFade;
         out.emissive[c] = ambientIn[c] * look.hazeTint[c];
-        out.diffuse[c] = keyIn[c] * glow * scale;
+        out.diffuse[c] = keyIn[c] * glow * scale * scatterGain;
     }
     Unshadowed(out);
 }

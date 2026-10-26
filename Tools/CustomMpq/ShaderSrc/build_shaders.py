@@ -111,7 +111,7 @@ SHADERS = {
     'VFogCausticsAbove': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6, 7), 0, 'VFogCaustics', {'UNDER': 0}),
     'VFogCausticsUnder': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 7), 0, 'VFogCaustics', {'UNDER': 1}),
     # sky and clouds (wxl-light Clouds.cpp, SKY-CLOUDS-PLAN.md): s0 the cloud noise atlas, s3 the moon, s4 the cloud sheet
-    'SkyClouds': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 4), 0, 'SkyClouds', {}),
+    'SkyClouds': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 3, 4), 0, 'SkyClouds', {}),
 }
 # Cata water (waterStyle 1, docs/BACKLOG_PORT.md "Cata water"): the ProcWater VS and ProcWaterAbove / Below PS,
 # drawn by the liquid material in place of vsLiquidWater / psLiquidWater (WorldClient/CataWater.cpp).

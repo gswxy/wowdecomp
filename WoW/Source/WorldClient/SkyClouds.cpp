@@ -44,9 +44,11 @@ CVar* s_cvEnable;
 CVar* s_cvCover;
 CVar* s_cvSpeed;
 CVar* s_cvReflect;
+CVar* s_cvDip;
 
 // wxl-light's fixed settings (light.ini defaults): opacity 0.9, sunset 0.85, depth_colour 1, disc 1, zone 1.
 constexpr float kOpacity = 0.9f;
+constexpr float kDiscDip = 0.2f;   // skyDiscDip default: the sky at the disc's rim kept 20% under its own value
 constexpr float kSunsetWarmth = 0.85f;
 constexpr float kDepthColour = 1.0f;
 constexpr uint32_t kAliveMs = 500;
@@ -251,10 +253,13 @@ void DrawFarQuad(const VolumetricFog::WorldViewport& vp) {
 
 }  // namespace
 
+void DrawDisc(bool skyPass);
+
 void RegisterCVars() {
     s_cvEnable = CVar::Register("skyClouds", "Volumetric clouds in place of the stock cloud sheet, and (with gfxSunArc) wxl-light's sky (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvCover = CVar::Register("skyCloudCover", "skyClouds: cloud cover in fair weather where the zone has no cloud sheet (0 = none, 1 = overcast)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvSpeed = CVar::Register("skyCloudSpeed", "skyClouds: how fast the cloud shapes drift (1 = wxl-light)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvDip = CVar::Register("skyDiscDip", "gfxSunArc: how far the sky round the sun/moon sprite is eased down so the sprite reads on the glow (0 = off, 0.2)", 1, "0.2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvReflect = CVar::Register("skyCloudsReflect", "skyClouds in the water reflection too (0 = the stock sheet there)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
@@ -310,9 +315,9 @@ void Draw() {
     // colour (DNPlanet::Render: a 1 x m_scale quad 12 yd out, texture x m_color, alpha-blended), at our arc's place.
     const DayNight::DNPlanet& planet = moon ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
     CGxTex* bodyTex = arc ? TextureGetGxTex(planet.m_texture, 0, nullptr) : nullptr;
-    // Under vfog the disc goes over the fogged frame (DrawOverFog): under it the fog's sun lobe (and foreverFog's,
-    // above 1 at the sun) lifts the sky round the disc to the disc's own brightness and only a glow is left.
-    const bool overFog = !reflecting && VolumetricFog::Active();
+    // The world view's disc is its own pass (DrawDisc): right after this quad, or with vfog after its composite (the
+    // fog's sun lobe would wash it out). Only the water reflection keeps it inside this quad.
+    const bool discPass = !reflecting;
 
     const VolumetricFog::WorldViewport vp = VolumetricFog::LiveWorldViewport();
     if (vp.w < 1.0f || vp.h < 1.0f) {
@@ -329,7 +334,7 @@ void Draw() {
     float c[13][4] = {};
     c[0][0] = v[0] / xs; c[0][1] = v[4] / xs; c[0][2] = v[8] / xs;
     c[1][0] = v[1] / ys; c[1][1] = v[5] / ys; c[1][2] = v[9] / ys; c[1][3] = stock ? 1.0f : 0.0f;
-    c[2][0] = v[2];      c[2][1] = v[6];      c[2][2] = v[10];     c[2][3] = bodyTex && !overFog ? 1.0f : 0.0f;
+    c[2][0] = v[2];      c[2][1] = v[6];      c[2][2] = v[10];     c[2][3] = bodyTex && !discPass ? 1.0f : 0.0f;
     float (*atmo)[4] = c + 8;
     Palette(f, share, atmo);
     atmo[0][3] = paint;
@@ -391,7 +396,7 @@ void Draw() {
     if (!reflecting) {
         s_discDrawn = arc;
         s_discMs = now;
-        s_over.pending = overFog && bodyTex && c[6][3] > 0.0f;
+        s_over.pending = discPass && bodyTex && c[6][3] > 0.0f;
         if (s_over.pending) {
             std::memcpy(s_over.c, c, sizeof(c));
             s_over.c[0][3] = 1.0f;   // the shader's disc-only mode
@@ -400,12 +405,17 @@ void Draw() {
             s_over.noise = noise;
             s_over.stock = stock;
         }
+        if (s_over.pending && !VolumetricFog::Active()) {
+            DrawDisc(true);
+        }
     }
 }
 
-// After vfog's composite: only the disc (the stock sprite through our clouds), alpha-blended over the fogged sky as
-// the stock sun goes over the dome; the stock fog never fogs the sun either. Depth 1, LEQUAL: sky pixels only.
-void DrawOverFog() {
+// Only the disc (the stock sprite through our clouds), alpha-blended over the sky as the stock sun goes over the dome,
+// with the glow round it eased down by skyDiscDip so a white sprite still reads on a sky the sun lobe has driven to
+// ToDisplay's ceiling (0.92) or vfog's in-scatter to 1. skyPass: in RenderSky right after our quad (no vfog); else
+// after vfog's composite (the stock fog never fogs the sun either). Sky pixels only.
+void DrawDisc(bool skyPass) {
     if (!s_over.pending || CataWater::Reflecting() || !Shader()) {
         return;
     }
@@ -421,14 +431,16 @@ void DrawOverFog() {
     std::memcpy(c, s_over.c, sizeof(s_over.c));
     CGxTex* depth = nullptr;
     float skyFrom = 1.0f;
-    const bool sampled = VolumetricFog::SkyDepth(depth, skyFrom) && depth->m_width > 0 && depth->m_height > 0;
+    const bool sampled = !skyPass && VolumetricFog::SkyDepth(depth, skyFrom) && depth->m_width > 0 && depth->m_height > 0;
     if (sampled) {
         c[13][0] = vp.x; c[13][1] = vp.y; c[13][2] = 1.0f / depth->m_width; c[13][3] = 1.0f / depth->m_height;
         c[14][0] = skyFrom; c[14][1] = 1.0f;
     }
+    c[14][2] = s_cvDip ? Clamp01(s_cvDip->m_floatValue) : kDiscDip;
     CGxDevice* device = g_theGxDevicePtr;
     VolumetricFog::SavedPassState saved;
     VolumetricFog::BeginPasses(saved);
+    GxRsSet(GxRs_ScissorTest, skyPass ? 1 : 0);   // RenderSky's portal rect
     GxRsSet(GxRs_DepthTest, sampled ? 0 : 1);
     GxRsSet(GxRs_DepthFunc, 0);       // LEQUAL
     GxRsSet(GxRs_ColorWrite, 7);
@@ -447,6 +459,10 @@ void DrawOverFog() {
         device->DeviceSceneDepthBound(true);
     }
     VolumetricFog::EndPasses(saved, vp);
+}
+
+void DrawOverFog() {
+    DrawDisc(false);
 }
 
 }  // namespace SkyClouds

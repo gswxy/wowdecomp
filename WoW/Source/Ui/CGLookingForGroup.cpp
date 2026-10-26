@@ -548,11 +548,11 @@ static int QSortLFGParty(const void* a, const void* b) {
         return 1;
     }
 
-    for (uint32_t i = 0; i < 7; i++) {
+    for (uint32_t i = 0; i < CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS; i++) {
         int32_t result = 0;
 
         switch (CGLookingForGroup::m_unkBEA820[i].m_id) {
-            case 0: {
+            case CGLookingForGroup::SORT_COLUMN::ZONE: {
                 AreaTableRec* areaA = g_areaTableDB.GetRecord(leaderA->m_areaID);
                 AreaTableRec* areaB = g_areaTableDB.GetRecord(leaderB->m_areaID);
 
@@ -563,14 +563,14 @@ static int QSortLFGParty(const void* a, const void* b) {
                 break;
             }
 
-            case 1:
+            case CGLookingForGroup::SORT_COLUMN::LEVEL:
                 if (leaderA->m_level != leaderB->m_level) {
                     result = leaderA->m_level < leaderB->m_level ? -1 : 1;
                 }
 
                 break;
 
-            case 2: {
+            case CGLookingForGroup::SORT_COLUMN::CLASS: {
                 NameCache* nameA = g_nameDBCache.GetRecord(leaderA->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 NameCache* nameB = g_nameDBCache.GetRecord(leaderB->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 ChrClassesRec* classA;
@@ -583,7 +583,7 @@ static int QSortLFGParty(const void* a, const void* b) {
                 break;
             }
 
-            case 3: {
+            case CGLookingForGroup::SORT_COLUMN::NAME: {
                 NameCache* nameA = g_nameDBCache.GetRecord(leaderA->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 NameCache* nameB = g_nameDBCache.GetRecord(leaderB->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
 
@@ -612,11 +612,11 @@ static int QSortLFGPlayer(const void* a, const void* b) {
     LFGListPlayer* playerA = *static_cast<LFGListPlayer* const*>(a);
     LFGListPlayer* playerB = *static_cast<LFGListPlayer* const*>(b);
 
-    for (uint32_t i = 0; i < 7; i++) {
+    for (uint32_t i = 0; i < CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS; i++) {
         int32_t result = 0;
 
         switch (CGLookingForGroup::m_unkBEA820[i].m_id) {
-            case 0: {
+            case CGLookingForGroup::SORT_COLUMN::ZONE: {
                 AreaTableRec* areaA = g_areaTableDB.GetRecord(playerA->m_areaID);
                 AreaTableRec* areaB = g_areaTableDB.GetRecord(playerB->m_areaID);
 
@@ -627,14 +627,14 @@ static int QSortLFGPlayer(const void* a, const void* b) {
                 break;
             }
 
-            case 1:
+            case CGLookingForGroup::SORT_COLUMN::LEVEL:
                 if (playerA->m_level != playerB->m_level) {
                     result = playerA->m_level < playerB->m_level ? -1 : 1;
                 }
 
                 break;
 
-            case 2: {
+            case CGLookingForGroup::SORT_COLUMN::CLASS: {
                 NameCache* nameA = g_nameDBCache.GetRecord(playerA->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 NameCache* nameB = g_nameDBCache.GetRecord(playerB->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 ChrClassesRec* classA;
@@ -647,7 +647,7 @@ static int QSortLFGPlayer(const void* a, const void* b) {
                 break;
             }
 
-            case 3: {
+            case CGLookingForGroup::SORT_COLUMN::NAME: {
                 NameCache* nameA = g_nameDBCache.GetRecord(playerA->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
                 NameCache* nameB = g_nameDBCache.GetRecord(playerB->m_key.m_guid.m_guid, WOWGUID(), nullptr, nullptr, false);
 
@@ -658,15 +658,15 @@ static int QSortLFGPlayer(const void* a, const void* b) {
                 break;
             }
 
-            case 4:
+            case CGLookingForGroup::SORT_COLUMN::TANK_ROLE:
                 result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK);
                 break;
 
-            case 5:
+            case CGLookingForGroup::SORT_COLUMN::HEALER_ROLE:
                 result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
                 break;
 
-            case 6:
+            case CGLookingForGroup::SORT_COLUMN::DAMAGE_ROLE:
                 result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
                 break;
 

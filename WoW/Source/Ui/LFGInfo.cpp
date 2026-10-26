@@ -68,7 +68,7 @@ TSFixedArray<CGLookingForGroup::LFGEntryInfo> CGLookingForGroup::m_lfdEntries;
 TSFixedArray<CGLookingForGroup::LFGEntryInfo> CGLookingForGroup::m_lfrEntries;
 
 // STATIC: 0x00BEA820
-CGLookingForGroup::LFGEntryInfo CGLookingForGroup::m_unkBEA820[7];
+CGLookingForGroup::LFGEntryInfo CGLookingForGroup::m_unkBEA820[CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS];
 
 // STATIC: 0x00BEA858
 LFGBootProposal CGLookingForGroup::m_bootProposal;
@@ -459,7 +459,7 @@ void CGLookingForGroup::InitializeGame() {
     CGLookingForGroup::m_roleCheckSlots.m_count = 0;
     CGLookingForGroup::m_roleCheckMembers.m_count = 0;
 
-    for (uint32_t i = 0; i < 7; i++) {
+    for (uint32_t i = 0; i < CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS; i++) {
         CGLookingForGroup::m_unkBEA820[i].m_id = i;
         CGLookingForGroup::m_unkBEA820[i].m_order = 0;
     }

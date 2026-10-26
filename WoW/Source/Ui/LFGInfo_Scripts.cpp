@@ -1975,7 +1975,7 @@ static int32_t Script_SearchLFGSort(lua_State* L) {
         return 0;
     }
 
-    int32_t type = 3;
+    CGLookingForGroup::SORT_COLUMN type = CGLookingForGroup::SORT_COLUMN::NAME;
     const char* name = lua_tolstring(L, 1, nullptr);
 
     if (!SStrCmpI(name, "group", STORM_MAX_STR)) {
@@ -1985,25 +1985,25 @@ static int32_t Script_SearchLFGSort(lua_State* L) {
     }
 
     if (!SStrCmpI(name, "name", STORM_MAX_STR)) {
-        type = 3;
+        type = CGLookingForGroup::SORT_COLUMN::NAME;
     } else if (!SStrCmpI(name, "level", STORM_MAX_STR)) {
-        type = 1;
+        type = CGLookingForGroup::SORT_COLUMN::LEVEL;
     } else if (!SStrCmpI(name, "class", STORM_MAX_STR)) {
-        type = 2;
+        type = CGLookingForGroup::SORT_COLUMN::CLASS;
     } else if (!SStrCmpI(name, "zone", STORM_MAX_STR)) {
-        type = 0;
+        type = CGLookingForGroup::SORT_COLUMN::ZONE;
     } else if (!SStrCmpI(name, "tank", STORM_MAX_STR)) {
-        type = 4;
+        type = CGLookingForGroup::SORT_COLUMN::TANK_ROLE;
     } else if (!SStrCmpI(name, "healer", STORM_MAX_STR)) {
-        type = 5;
+        type = CGLookingForGroup::SORT_COLUMN::HEALER_ROLE;
     } else if (!SStrCmpI(name, "damage", STORM_MAX_STR)) {
-        type = 6;
+        type = CGLookingForGroup::SORT_COLUMN::DAMAGE_ROLE;
     }
 
     int32_t index = 0;
 
     while (CGLookingForGroup::m_unkBEA820[index].m_id != type) {
-        if (++index >= 7) {
+        if (++index >= CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS) {
             CGLookingForGroup::ResortLFGLists();
             return 0;
         }

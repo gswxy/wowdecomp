@@ -157,6 +157,17 @@ struct LFGRoleCheckMember {
 class LfgDungeonsRec;
 class CGLookingForGroup {
     public:
+    enum SORT_COLUMN : int32_t {
+        ZONE = 0,
+        LEVEL = 1,
+        CLASS = 2,
+        NAME = 3,
+        TANK_ROLE = 4,
+        HEALER_ROLE = 5,
+        DAMAGE_ROLE = 6,
+        NUM_SORT_COLUMNS = 7,
+    };
+
     enum ROLE_FLAGS : int32_t {
         LEADER = 0x1,
         TANK = 0x2,
@@ -179,7 +190,7 @@ class CGLookingForGroup {
     static LFGLIST m_searchResults;
     static LFGLIST m_prevSearchResults;
     static LFGProposal m_proposal;
-    static CGLookingForGroup::LFGEntryInfo m_unkBEA820[7];
+    static CGLookingForGroup::LFGEntryInfo m_unkBEA820[SORT_COLUMN::NUM_SORT_COLUMNS];
     static LFGBootProposal m_bootProposal;
     static uint8_t m_unkBEAA10;
     static uint8_t m_unkACD660;

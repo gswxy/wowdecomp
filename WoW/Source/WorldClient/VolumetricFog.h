@@ -262,6 +262,9 @@ bool LiquidDepthWrite();                    // force liquid depth writes while A
 // foreverSky: BENILLA sky.rs dome_stops' tints from the cross-faded zone look (sky_tint on the dome stops, fog_tint on
 // its horizon fog colour); false (sky untouched) unless vfog draws this frame with foreverFog 1 and foreverSky 1.
 bool ForeverSkyTint(float sky[3], float fog[3]);
+// foreverSky's gate: foreverSkyStrength 0..1 while vfog draws with foreverFog 1 and foreverSky 1, else 0. DayNight's
+// LoadLightingBands takes Forever's own dome colours (VFog\\ForeverSky.bin) by it; the look tints above multiply on top.
+float ForeverSkyStrength();
 // foreverFog (vfog drawing): the far land / far trees' silhouette colour (wdl.wgsl modern), false = not this frame
 bool ForeverSilhouette(float rgb[3]);
 float GlowAmount(float client);             // coa ForeverGlow: the glow amount the FFX glow gets (UpdateScreenEffectParams)

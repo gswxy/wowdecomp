@@ -2,6 +2,10 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/DB/DBClient/ForeverSky.h"
+#include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/ConsoleBase/IConsole.h"
+#include <vector>
 #include "WoW/Source/DB/Rec/LightIntBandRec.h"
 #include "WoW/Source/DB/Rec/LightParamsRec.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
@@ -116,6 +120,46 @@ CImVector DayNight::LoadLightIntBand(int32_t time, const LightParamsRec* params,
     LightIntBandRec rec;
     g_lightIntBandDB.GetRecord(band + 18 * params->m_id - 17, &rec);
     return InterpolateIntBand(rec, time);
+}
+
+// not stock: foreverSky = Wowhead Forever's own sky colours (VFog\ForeverSky.bin, ForeverSky.h) on the dome stops
+// m_skyColors[0..4] (bands 2..6) of the params ids it lists, interpolated as the stock band, lerped stock -> Forever by
+// strength (foreverSkyStrength). Band 7 (the fog colour, m_skyColors[5]) stays stock: the world fog and vfog's haze
+// read it. Read once through SFile on first use; no or bad file = the stock sky.
+void DayNight::ForeverSkyStops(int32_t time, const LightParamsRec* params, float strength, CImVector* sky) {
+    static ForeverSky::Table s_table;
+    static bool s_tried = false;
+    if (!s_tried) {
+        s_tried = true;
+        SFileImpl* file = nullptr;
+        SFileOpenFile("VFog\\ForeverSky.bin", &file);
+        if (file) {
+            std::vector<uint8_t> data(SFileGetFileSize(file, nullptr));
+            const bool read = !data.empty() && SFileReadFile(file, data.data(), static_cast<uint32_t>(data.size()), nullptr, nullptr, 0);
+            SFileCloseFile(file);
+            if (!read || !ForeverSky::Parse(data.data(), data.size(), s_table)) {
+                ConsolePrintf("foreverSky: VFog\\ForeverSky.bin is bad; stock sky");
+            }
+        } else {
+            ConsolePrintf("foreverSky: no VFog\\ForeverSky.bin; stock sky");
+        }
+    }
+    const auto it = params ? s_table.find(params->m_id) : s_table.end();
+    if (it == s_table.end()) {
+        return;
+    }
+    const ForeverSky::Keys& k = it->second;
+    LightIntBandRec rec;
+    rec.m_num = k.num;
+    std::memcpy(rec.m_time, k.time, sizeof(rec.m_time));
+    for (int32_t i = 0; i < 5; i++) {
+        std::memcpy(rec.m_data, k.data[i], sizeof(rec.m_data));
+        const CImVector f = InterpolateIntBand(rec, time);
+        CImVector& c = sky[i];
+        c.r = static_cast<uint8_t>(CMath::fint_(c.r + (f.r - c.r) * strength + 0.5f));
+        c.g = static_cast<uint8_t>(CMath::fint_(c.g + (f.g - c.g) * strength + 0.5f));
+        c.b = static_cast<uint8_t>(CMath::fint_(c.b + (f.b - c.b) * strength + 0.5f));
+    }
 }
 
 // VERIFY: 95c2a7e6 auto

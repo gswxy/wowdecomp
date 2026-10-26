@@ -338,6 +338,12 @@ void DayNight::LoadLightingBands(int32_t time, CurrentLight* light, const LightP
     light->m_skyColors[3] = DayNight::LoadLightIntBand(time, params, 5);
     light->m_skyColors[4] = DayNight::LoadLightIntBand(time, params, 6);
     light->m_skyColors[5] = DayNight::LoadLightIntBand(time, params, 7);
+
+    // not stock: foreverSky = Forever's own dome stops for the params ids VFog\\ForeverSky.bin lists (Lights.cpp)
+    if (const float forever = VolumetricFog::ForeverSkyStrength(); forever > 0.0f) {
+        DayNight::ForeverSkyStops(time, params, forever, light->m_skyColors);
+    }
+
     light->m_shadowOpacity = DayNight::LoadLightIntBand(time, params, 8);
     light->m_sunCloudColors[0] = DayNight::LoadLightIntBand(time, params, 9);
     light->m_sunCloudColors[1] = DayNight::LoadLightIntBand(time, params, 10);
@@ -1735,7 +1741,8 @@ void DayNight::DNSky::SetColors() {
 
     // not stock: foreverSky = BENILLA sky.rs dome_stops: the five dome stops x the zone look's sky_tint and the horizon
     // fog colour x its fog_tint, in gamma (quant255, clamped to the byte), for the dome only: the bands are restored at
-    // the end, so the world fog and everything else read the stock colours.
+    // the end, so the world fog and everything else read the untinted colours (the stops are Forever's own since
+    // LoadLightingBands, the fog colour stays stock).
     CImVector stockSky[6];
     float skyTint[3], fogTint[3];
     const bool foreverSky = VolumetricFog::ForeverSkyTint(skyTint, fogTint);

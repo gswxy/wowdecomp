@@ -27,7 +27,8 @@ Contents:
                           coa-vfog data/fogdata.bin, read by VolumetricFogData.cpp; waterdata.bin: the Forever
                           water presets, FFT tiles and foam masks, coa-vfog data/waterdata.bin, read by
                           VolumetricFogWater.cpp; cloudnoise.bin: wxl-light's 64^3 BGRA cloud noise, src/CloudNoise.bin,
-                          read by SkyClouds.cpp).
+                          read by SkyClouds.cpp; ForeverSky.bin: Wowhead Forever's sky colours per LightParams id, foreverSky,
+                          read by DB/DBClient/Lights.cpp, baked by the forever_sky scratchpad bake_forever_sky.py).
   Interface\\...         every file in Tools/CustomMpq/Interface (FrameXML\\VideoOptionsAdvanced.lua: the Video
                           Options > Advanced page, run by GameUI.cpp after the stock FrameXML.toc).
 Cache/vkpipelines.bin is a runtime cache and stays loose.

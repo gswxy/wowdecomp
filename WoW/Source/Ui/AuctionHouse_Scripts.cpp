@@ -294,7 +294,7 @@ static int32_t Script_GetNumAuctionItems(lua_State* L) {
 static const uint32_t s_timeLeftThresholds[3] = { 1800000, 7200000, 43200000 };
 
 // STATIC: 0x00A15248
-static const uint32_t AUCTION_RUN_TIMES[3] = { 720, 1440, 2880 };
+static const CGAuctionHouse::RUN_TIME AUCTION_RUN_TIMES[CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES] = { CGAuctionHouse::RUN_TIME::RUN_TIME_SHORT, CGAuctionHouse::RUN_TIME::RUN_TIME_DEFAULT, CGAuctionHouse::RUN_TIME::RUN_TIME_LONG };
 
 // VERIFY: ae094fc9 manual
 // OFFSET: 0x0059AB90
@@ -724,7 +724,7 @@ static int32_t Script_CalculateAuctionDeposit(lua_State* L) {
     }
 
     uint32_t index = static_cast<uint32_t>(lua_tonumber(L, 1) - 1.0);
-    uint32_t runTime = index >= 3 ? 1440 : AUCTION_RUN_TIMES[index];
+    CGAuctionHouse::RUN_TIME runTime = index >= CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES ? CGAuctionHouse::RUN_TIME::RUN_TIME_DEFAULT : AUCTION_RUN_TIMES[index];
     int32_t count;
 
     if (lua_isnumber(L, 2)) {
@@ -1117,7 +1117,7 @@ static int32_t Script_StartAuction(lua_State* L) {
     }
 
     uint32_t index = static_cast<uint32_t>(lua_tonumber(L, 3) - 1.0);
-    uint32_t runTime = index >= 3 ? 1440 : AUCTION_RUN_TIMES[index];
+    CGAuctionHouse::RUN_TIME runTime = index >= CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES ? CGAuctionHouse::RUN_TIME::RUN_TIME_DEFAULT : AUCTION_RUN_TIMES[index];
     uint32_t stackSize = 0;
 
     if (lua_isnumber(L, 4)) {

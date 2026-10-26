@@ -83,6 +83,13 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum RUN_TIME : uint32_t {
+        RUN_TIME_SHORT = 720,
+        RUN_TIME_DEFAULT = 1440,
+        RUN_TIME_LONG = 2880,
+        NUM_RUN_TIMES = 3,
+    };
+
     static const int32_t MAX_SORT_CRITERIA = 12;
 
     enum BIDDER_SORT_RANK : int32_t {
@@ -116,7 +123,7 @@ class CGAuctionHouse {
     static WOWGUID m_multisellAuctioneer;
     static uint32_t m_multisellBid;
     static uint32_t m_multisellBuyout;
-    static uint32_t m_multisellDuration;
+    static RUN_TIME m_multisellDuration;
     static uint32_t m_multisellStackSize;
     static uint32_t m_multisellTotal;
     static uint32_t m_numSellItems;

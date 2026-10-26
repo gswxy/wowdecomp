@@ -27,7 +27,7 @@ struct AuctionFindItemsParam {
 };
 
 // STATIC: 0x00A394BC
-static const uint32_t s_depositRunTimes[3] = { 720, 1440, 2880 };
+static const CGAuctionHouse::RUN_TIME s_depositRunTimes[CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES] = { CGAuctionHouse::RUN_TIME::RUN_TIME_SHORT, CGAuctionHouse::RUN_TIME::RUN_TIME_DEFAULT, CGAuctionHouse::RUN_TIME::RUN_TIME_LONG };
 
 // STATIC: 0x00C0E740
 uint32_t CGAuctionHouse::m_multisellRemaining;
@@ -42,7 +42,7 @@ uint32_t CGAuctionHouse::m_multisellBid;
 uint32_t CGAuctionHouse::m_multisellBuyout;
 
 // STATIC: 0x00C0E758
-uint32_t CGAuctionHouse::m_multisellDuration;
+CGAuctionHouse::RUN_TIME CGAuctionHouse::m_multisellDuration;
 
 // STATIC: 0x00C0E75C
 uint32_t CGAuctionHouse::m_multisellStackSize;
@@ -2237,7 +2237,7 @@ void CGAuctionHouse::ShutdownGame() {
 // VERIFY: c943a21b manual
 // OFFSET: 0x0076DDE0
 uint32_t CalculateAuctionDeposit(uint32_t depositRate, uint32_t sellPrice, uint32_t runTime) {
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES; i++) {
         if (runTime == s_depositRunTimes[i]) {
             uint32_t deposit = static_cast<uint32_t>(static_cast<float>(depositRate * sellPrice / 100) * runTime * 0.0041666669f);
             return deposit < 100 ? 100 : deposit;

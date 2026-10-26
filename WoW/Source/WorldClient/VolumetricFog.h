@@ -101,6 +101,7 @@ struct ForeverLook {
 // The zone look at `minute` of the day (VolumetricFogModel.cpp, look.rs look_for_zone_at); zone = AreaTable top-level id.
 ForeverLook ForeverLookForZone(uint32_t zone, float minute);
 ForeverLook LerpLook(const ForeverLook& a, const ForeverLook& b, float t);
+ForeverLook ForeverNeutralLook();   // look.rs ZoneLook::NEUTRAL (foreverFogStrength 0)
 
 struct FrameInputs {
     bool foreverFog;                // foreverFog: the distance layer is BENILLA's medium (media.rs solve), lit by `look`

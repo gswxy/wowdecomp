@@ -1031,6 +1031,10 @@ float NightAt(float minute) {
 }
 }  // namespace
 
+ForeverLook ForeverNeutralLook() {
+    return kNeutral;
+}
+
 ForeverLook LerpLook(const ForeverLook& a, const ForeverLook& b, float t) {
     auto m = [t](float x, float y) { return x + (y - x) * t; };
     ForeverLook o;

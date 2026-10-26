@@ -356,6 +356,8 @@ float SmoothedInteriorBlend() {
 
 CVar* s_foreverFog = nullptr;   // foreverFog
 CVar* s_foreverSky = nullptr;   // foreverSky
+CVar* s_foreverFogStrength = nullptr;   // foreverFogStrength: the zone look blended toward the neutral row
+CVar* s_foreverSkyStrength = nullptr;   // foreverSkyStrength: the dome tints blended toward 1
 
 // foreverFog: BENILLA look.rs update_look. The player's area walked up its AreaTable parents to the top-level zone,
 // that zone's look at this minute of the day, cross-faded over about 2 s (lerp by dt / 2 a frame).
@@ -381,7 +383,9 @@ void UpdateForeverLook(FrameInputs& in) {
         s_look = LerpLook(s_look, target, std::min(static_cast<float>(now - s_lastMs) * 0.0005f, 1.0f));
     }
     s_lastMs = now;
-    in.look = s_look;
+    // foreverFogStrength: 1 = the zone look untouched (skipped, so bit-identical), 0 = the neutral row
+    const float strength = std::clamp(CVarFloat(s_foreverFogStrength, 1.0f), 0.0f, 1.0f);
+    in.look = strength >= 1.0f ? s_look : LerpLook(ForeverNeutralLook(), s_look, strength);
 }
 
 // coa engine.cpp BuildFrameInputsUnsafe + ReadLightParamsSelection, the DNInfo half (before the push-out).
@@ -909,6 +913,8 @@ void RegisterCVars() {
     // VFOG section 8 defaults: coa CoAVolFog.ini plus the user's wxl-vfog look.
     s_foreverFog = CVar::Register("foreverFog", "Forever Fog: distant land fades into each zone's own fog colour, warm toward the sun and the zone's hue away from it (BENILLA zone looks; needs vfog): 1 = on (default), 0 = the previous fog", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_foreverSky = CVar::Register("foreverSky", "Forever Sky: the sky dome takes each zone's sky tint and its horizon the zone's fog tint, to meet the Forever Fog haze (BENILLA zone looks; needs vfog and foreverFog): 1 = on (default), 0 = the stock sky", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_foreverFogStrength = CVar::Register("foreverFogStrength", "Forever Fog strength: the zone looks (fog, haze, glow and sky tints, reach, clear range) blended toward the neutral look, 0..1 (1 = full, default; 0 = neutral)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_foreverSkyStrength = CVar::Register("foreverSkyStrength", "Forever Sky strength: the dome's zone sky and horizon tints blended toward none, 0..1 (1 = full, default; 0 = the stock sky)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.enable = CVar::Register("vfog", "Volumetric fog (replaces the stock fog)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.quality = CVar::Register("vfogQuality", "Volumetric fog quality: 1 = quarter res 16 steps, 2 = half res 24 (default), 3 = half res 32", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.temporal = CVar::Register("vfogTemporal", "Volumetric fog temporal blend (0 = off)", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -1472,9 +1478,18 @@ bool ForeverSkyTint(float sky[3], float fog[3]) {
     if (!s_active || !s_in.foreverFog || CVarInt(s_foreverSky, 1) == 0) {
         return false;
     }
+    // foreverSkyStrength: 1 = the look's tints untouched, 0 = the stock sky (no tint at all)
+    const float strength = std::clamp(CVarFloat(s_foreverSkyStrength, 1.0f), 0.0f, 1.0f);
+    if (strength <= 0.0f) {
+        return false;
+    }
     for (int c = 0; c < 3; ++c) {
         sky[c] = s_in.look.skyTint[c];
         fog[c] = s_in.look.fogTint[c];
+        if (strength < 1.0f) {
+            sky[c] = 1.0f + (sky[c] - 1.0f) * strength;
+            fog[c] = 1.0f + (fog[c] - 1.0f) * strength;
+        }
     }
     return true;
 }

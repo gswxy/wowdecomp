@@ -209,13 +209,18 @@ struct DisplayChannel {
         BATTLEGROUND_INDEX = -3,
     };
 
+    enum FLAGS : uint32_t {
+        NO_FLAGS = 0,
+        WORLD_CHANNEL = 1,
+    };
+
     /* 0000 */ int32_t m_channelIndex;
     /* 0004 */ HEADER_INDEX m_headerIndex;
     /* 0008 */ TYPE m_type;
     /* 000C */ int32_t m_collapsed;
     /* 0010 */ int32_t m_enabled;
     /* 0014 */ int32_t m_voiceEnabled;
-    /* 0018 */ uint32_t m_flags;
+    /* 0018 */ FLAGS m_flags;
     /* 001C */ int32_t m_count;
 };
 

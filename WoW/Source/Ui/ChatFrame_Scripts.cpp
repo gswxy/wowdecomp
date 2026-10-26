@@ -1287,7 +1287,7 @@ static int32_t Script_GetChannelDisplayInfo(lua_State* L) {
             lua_pushnil(L);
         }
 
-        lua_pushstring(L, display->m_flags & 1 ? s_channelCategories[DisplayChannel::HEADER_INDEX::WORLD_HEADER] : s_channelCategories[DisplayChannel::HEADER_INDEX::CUSTOM_HEADER]);
+        lua_pushstring(L, display->m_flags & DisplayChannel::FLAGS::WORLD_CHANNEL ? s_channelCategories[DisplayChannel::HEADER_INDEX::WORLD_HEADER] : s_channelCategories[DisplayChannel::HEADER_INDEX::CUSTOM_HEADER]);
     }
 
     if (display->m_voiceEnabled) {

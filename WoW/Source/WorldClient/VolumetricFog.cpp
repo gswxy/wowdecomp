@@ -355,6 +355,7 @@ float SmoothedInteriorBlend() {
 }
 
 CVar* s_foreverFog = nullptr;   // foreverFog
+CVar* s_foreverSky = nullptr;   // foreverSky
 
 // foreverFog: BENILLA look.rs update_look. The player's area walked up its AreaTable parents to the top-level zone,
 // that zone's look at this minute of the day, cross-faded over about 2 s (lerp by dt / 2 a frame).
@@ -907,6 +908,7 @@ void CollectRefraction(int mode) {
 void RegisterCVars() {
     // VFOG section 8 defaults: coa CoAVolFog.ini plus the user's wxl-vfog look.
     s_foreverFog = CVar::Register("foreverFog", "Forever Fog: distant land fades into each zone's own fog colour, warm toward the sun and the zone's hue away from it (BENILLA zone looks; needs vfog): 1 = on (default), 0 = the previous fog", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_foreverSky = CVar::Register("foreverSky", "Forever Sky: the sky dome takes each zone's sky tint and its horizon the zone's fog tint, to meet the Forever Fog haze (BENILLA zone looks; needs vfog and foreverFog): 1 = on (default), 0 = the stock sky", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.enable = CVar::Register("vfog", "Volumetric fog (replaces the stock fog)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.quality = CVar::Register("vfogQuality", "Volumetric fog quality: 1 = quarter res 16 steps, 2 = half res 24 (default), 3 = half res 32", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvars.temporal = CVar::Register("vfogTemporal", "Volumetric fog temporal blend (0 = off)", 1, "0.85", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
@@ -1464,6 +1466,17 @@ bool StockFogReplaced() {
 bool LiquidDepthWrite() {
     // coa LiquidDepth; modern water needs the depth whatever it says (WaterArmed: this frame's liquid pass).
     return s_active && (s_cfg.liquidDepth || WaterArmed());
+}
+
+bool ForeverSkyTint(float sky[3], float fog[3]) {
+    if (!s_active || !s_in.foreverFog || CVarInt(s_foreverSky, 1) == 0) {
+        return false;
+    }
+    for (int c = 0; c < 3; ++c) {
+        sky[c] = s_in.look.skyTint[c];
+        fog[c] = s_in.look.fogTint[c];
+    }
+    return true;
 }
 
 float GlowAmount(float client) {

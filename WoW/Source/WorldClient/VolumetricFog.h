@@ -96,6 +96,7 @@ struct ForeverLook {
     float fogClear;         // planar yd kept clear
     float moonGlow;         // forward share kept while the moon keys
     float moonHue;          // share of the glow hue the moon keeps
+    float skyTint[3];       // foreverSky: gamma multiplier on the sky dome's five authored stops (look.rs sky_tint)
 };
 // The zone look at `minute` of the day (VolumetricFogModel.cpp, look.rs look_for_zone_at); zone = AreaTable top-level id.
 ForeverLook ForeverLookForZone(uint32_t zone, float minute);
@@ -254,6 +255,9 @@ void OnWorldUpscaled();                     // FSR: after g_gxUpscale->EndWorld,
 void OnWorldRendered();                     // CGWorldFrame::RenderWorld, after OnWorldRender (glow done), before names
 bool GlareDrawn();                          // OnLiquidDone drew DayNight::RenderGlares under the fog: skip the stock call
 bool LiquidDepthWrite();                    // force liquid depth writes while Active()
+// foreverSky: BENILLA sky.rs dome_stops' tints from the cross-faded zone look (sky_tint on the dome stops, fog_tint on
+// its horizon fog colour); false (sky untouched) unless vfog draws this frame with foreverFog 1 and foreverSky 1.
+bool ForeverSkyTint(float sky[3], float fog[3]);
 float GlowAmount(float client);             // coa ForeverGlow: the glow amount the FFX glow gets (UpdateScreenEffectParams)
 bool WaterHidesClientRipples();              // CMap::CreateWaterRipple: the modern water's ripples replace the client's sprites
 bool BatchFog(const float modelPos[3], float& start, float& end, float& density, float color[3]);

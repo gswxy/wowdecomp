@@ -29,6 +29,7 @@ local PAGES = {
 	{ name = "Fog", parent = "Advanced", title = "Fog",
 	  { "vfog", "check", "Volumetric fog", "Replaces the stock fog with lit, volumetric fog." },
 	  { "foreverFog", "check", "Forever Fog", "Distant land fades into each zone's own fog colour: warm toward the sun, the zone's hue away from it, far mountains left as tinted silhouettes. Needs volumetric fog." },
+	  { "foreverSky", "check", "Forever Sky", "The sky takes each zone's tint and its horizon the zone's fog colour, so it meets the Forever Fog haze. Needs volumetric fog and Forever Fog." },
 	  { "vfogQuality", "drop", "Fog quality", "Resolution and step count of the fog. Higher looks smoother and costs more.",
 	    { { "1", "Low" }, { "2", "Medium" }, { "3", "High" } } },
 	  { "vfogDensity", "slider", "Density", "How thick all fog is, near and far.", 0, 3, 0.05 },

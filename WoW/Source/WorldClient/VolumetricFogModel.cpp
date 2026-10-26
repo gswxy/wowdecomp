@@ -955,8 +955,12 @@ void IntegrateFogRay(const FogParams& fog, const FogRayLights& lights, const Fog
 // exposure and lamp/bank data we do not port). AreaTable ids checked against our 3.3.5 AreaTable.dbc (same ids;
 // Outland and Northrend have no row and take the default look).
 namespace {
-//                               forward keyScat glow                 hazeTint               reach  fogTint               fall   clear  moonGlow moonHue
-constexpr ForeverLook kNeutral = { 0.72f, 0.7f, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, 0.5f, { 1.0f, 1.0f, 1.0f }, 70.0f, 450.0f, 1.0f, 1.0f };
+//                               forward keyScat glow                 hazeTint               reach  fogTint               fall   clear  moonGlow moonHue skyTint
+constexpr ForeverLook kNeutral = { 0.72f, 0.7f, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, 0.5f, { 1.0f, 1.0f, 1.0f }, 70.0f, 450.0f, 1.0f, 1.0f, { 1.0f, 1.0f, 1.0f } };
+ForeverLook Sky(ForeverLook l, float r, float g, float b) {   // look.rs sky_tint
+    l.skyTint[0] = r; l.skyTint[1] = g; l.skyTint[2] = b;
+    return l;
+}
 ForeverLook With(ForeverLook l, const float* glow, const float* haze, const float* tint) {
     for (int c = 0; c < 3; ++c) {
         if (glow) l.glow[c] = glow[c];
@@ -971,17 +975,17 @@ ForeverLook Noon() {                    // ZoneLook::NOON
 }
 ForeverLook Eerie() {                   // ZoneLook::EERIE
     const float glow[3] = { 0.65f, 1.0f, 0.7f }, haze[3] = { 0.22f, 0.34f, 0.26f }, tint[3] = { 0.8f, 1.0f, 0.8f };
-    return With(kNeutral, glow, haze, tint);
+    return Sky(With(kNeutral, glow, haze, tint), 0.6f, 0.7f, 0.6f);
 }
 ForeverLook Tirisfal() {                // ZoneLook::TIRISFAL
     const float glow[3] = { 0.58f, 1.0f, 0.62f }, haze[3] = { 0.19f, 0.36f, 0.22f }, tint[3] = { 0.7f, 1.05f, 0.7f };
-    return With(kNeutral, glow, haze, tint);
+    return Sky(With(kNeutral, glow, haze, tint), 0.52f, 0.72f, 0.52f);
 }
 ForeverLook Cold() {                    // ZoneLook::COLD
     const float glow[3] = { 0.72f, 0.88f, 1.18f }, haze[3] = { 0.42f, 0.68f, 1.28f }, tint[3] = { 0.58f, 0.82f, 1.32f };
     ForeverLook l = With(kNeutral, glow, haze, tint);
     l.forward = 0.6f; l.keyScatter = 0.6f; l.fogReach = 0.38f; l.fogClear = 250.0f;
-    return l;
+    return Sky(l, 0.6f, 0.84f, 1.32f);
 }
 ForeverLook ColdNight() {               // ZoneLook::COLD_NIGHT
     ForeverLook l = Cold();
@@ -999,11 +1003,11 @@ ForeverLook Darkshore() {               // ZoneLook::DARKSHORE
     ForeverLook l = With(kNeutral, glow, haze, tint);
     l.forward = 0.82f; l.keyScatter = 0.9f; l.fogReach = 0.7f; l.fogFalloff = 100.0f; l.fogClear = 80.0f;
     l.moonGlow = 0.1f; l.moonHue = 0.0f;
-    return l;
+    return Sky(l, 1.15f, 1.0f, 1.0f);
 }
 ForeverLook DarkshoreNoon() {           // ZoneLook::DARKSHORE_NOON
     const float glow[3] = { 1.0f, 0.96f, 0.95f }, haze[3] = { 0.8f, 0.8f, 0.82f }, tint[3] = { 1.9f, 1.9f, 1.93f };
-    return With(Darkshore(), glow, haze, tint);
+    return Sky(With(Darkshore(), glow, haze, tint), 1.0f, 1.0f, 1.04f);
 }
 
 bool In(uint32_t zone, std::initializer_list<uint32_t> ids) {
@@ -1036,6 +1040,7 @@ ForeverLook LerpLook(const ForeverLook& a, const ForeverLook& b, float t) {
         o.glow[c] = m(a.glow[c], b.glow[c]);
         o.hazeTint[c] = m(a.hazeTint[c], b.hazeTint[c]);
         o.fogTint[c] = m(a.fogTint[c], b.fogTint[c]);
+        o.skyTint[c] = m(a.skyTint[c], b.skyTint[c]);
     }
     o.fogReach = m(a.fogReach, b.fogReach);
     o.fogFalloff = m(a.fogFalloff, b.fogFalloff);

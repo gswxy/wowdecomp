@@ -2,6 +2,7 @@
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/SkyClouds.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include <cmath>
 #include <new>
@@ -1732,6 +1733,24 @@ void DayNight::DNSky::SetColors() {
         }
     }
 
+    // not stock: foreverSky = BENILLA sky.rs dome_stops: the five dome stops x the zone look's sky_tint and the horizon
+    // fog colour x its fog_tint, in gamma (quant255, clamped to the byte), for the dome only: the bands are restored at
+    // the end, so the world fog and everything else read the stock colours.
+    CImVector stockSky[6];
+    float skyTint[3], fogTint[3];
+    const bool foreverSky = VolumetricFog::ForeverSkyTint(skyTint, fogTint);
+    if (foreverSky) {
+        auto tint = [](uint8_t v, float t) { return static_cast<uint8_t>(std::fmin(std::floor(v * t + 0.5f), 255.0f)); };
+        for (int32_t i = 0; i < 6; i++) {
+            stockSky[i] = info.m_bands.m_skyColors[i];
+            const float* t = i < 5 ? skyTint : fogTint;
+            CImVector& c = info.m_bands.m_skyColors[i];
+            c.r = tint(c.r, t[0]);
+            c.g = tint(c.g, t[1]);
+            c.b = tint(c.b, t[2]);
+        }
+    }
+
     for (int32_t i = 0; i < 5; i++) {
         CImVector color;
         DayNight::ColorLerpBytes(&color, &info.m_bands.m_skyColors[1 + i], &info.m_bands.m_skyColors[1], highlight);
@@ -1794,6 +1813,12 @@ void DayNight::DNSky::SetColors() {
     }
 
     *colors = fog;
+
+    if (foreverSky) {
+        for (int32_t i = 0; i < 6; i++) {
+            info.m_bands.m_skyColors[i] = stockSky[i];
+        }
+    }
 }
 
 // VERIFY: 3e4634ac manual

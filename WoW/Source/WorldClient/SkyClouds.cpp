@@ -33,6 +33,7 @@
 #include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
 #include "WoW/Source/WorldClient/VolumetricFogWater.h"
 
 namespace SkyClouds {
@@ -172,6 +173,15 @@ void Palette(const Frame& f, float share, float c[5][4]) {
     Rgb(info.m_bands.m_skyColors[1], mid);
     Rgb(info.m_bands.m_skyColors[5], hor);
     Rgb(info.m_bands.m_sunCloudColors[0], sun);
+    // foreverSky: the dome stops this sky paints from take DNSky::SetColors' tints (BENILLA sky.rs dome_stops).
+    float skyTint[3], fogTint[3];
+    if (VolumetricFog::ForeverSkyTint(skyTint, fogTint)) {
+        for (int i = 0; i < 3; ++i) {
+            top[i] = std::fmin(std::floor(top[i] * 255.0f * skyTint[i] + 0.5f), 255.0f) / 255.0f;
+            mid[i] = std::fmin(std::floor(mid[i] * 255.0f * skyTint[i] + 0.5f), 255.0f) / 255.0f;
+            hor[i] = std::fmin(std::floor(hor[i] * 255.0f * fogTint[i] + 0.5f), 255.0f) / 255.0f;
+        }
+    }
     const float storm = std::isfinite(info.m_stormBlend) ? Clamp01(info.m_stormBlend) : 0.0f;
     const float* own[3] = { hor, mid, top };
     float* band[3] = { c[0], c[1], c[4] };

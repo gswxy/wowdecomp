@@ -1,4 +1,5 @@
 #include "WoW/Source/WorldClient/WorldConstants.h"
+#include "WoW/Common/Types.h"
 #include "MinimapFrame.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Services/Texture.h"
@@ -208,12 +209,12 @@ static uint64_t s_hoverRaid;
 const TrackingTypeInfo CGMinimapFrame::s_trackingTypes[15] = {
     { 1, 0x1000, "MINIMAP_TRACKING_REPAIR", "Repair", 0x0 },
     { 1, 0x200, "MINIMAP_TRACKING_VENDOR_FOOD", "Food", 0x0 },
-    { 1, 0x400, "MINIMAP_TRACKING_VENDOR_POISON", "Poisons", 0x10 },
-    { 1, 0x100, "MINIMAP_TRACKING_VENDOR_AMMO", "Ammunition", 0x1A },
+    { 1, 0x400, "MINIMAP_TRACKING_VENDOR_POISON", "Poisons", 1u << CLASS_ROGUE },
+    { 1, 0x100, "MINIMAP_TRACKING_VENDOR_AMMO", "Ammunition", (1u << CLASS_WARRIOR) | (1u << CLASS_HUNTER) | (1u << CLASS_ROGUE) },
     { 1, 0x800, "MINIMAP_TRACKING_VENDOR_REAGENT", "Reagents", 0x0 },
     { 1, 0x10000, "MINIMAP_TRACKING_INNKEEPER", "Innkeeper", 0x0 },
     { 1, 0x2000, "MINIMAP_TRACKING_FLIGHTMASTER", "FlightMaster", 0x0 },
-    { 1, 0x400000, "MINIMAP_TRACKING_STABLEMASTER", "StableMaster", 0x8 },
+    { 1, 0x400000, "MINIMAP_TRACKING_STABLEMASTER", "StableMaster", 1u << CLASS_HUNTER },
     { 1, 0x100000, "MINIMAP_TRACKING_BATTLEMASTER", "BattleMaster", 0x0 },
     { 1, 0x20, "MINIMAP_TRACKING_TRAINER_CLASS", "Class", 0x0 },
     { 1, 0x40, "MINIMAP_TRACKING_TRAINER_PROFESSION", "Profession", 0x0 },

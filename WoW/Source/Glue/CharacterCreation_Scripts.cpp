@@ -1,4 +1,5 @@
 #include "CharacterCreation.h"
+#include "WoW/Common/Types.h"
 #include <cstdint>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Frame/CScriptObject.h"
@@ -392,8 +393,8 @@ static int32_t Script_GetCreateBackgroundModel(lua_State* L) {
         return 1;
     }
 
-    if (CCharacterCreation::m_selectedClassID == 6) {
-        ChrClassesRec* classRec = g_chrClassesDB.GetRecord(6);
+    if (CCharacterCreation::m_selectedClassID == CLASS_DEATH_KNIGHT) {
+        ChrClassesRec* classRec = g_chrClassesDB.GetRecord(CLASS_DEATH_KNIGHT);
 
         if (classRec) {
             lua_pushstring(L, classRec->m_filename);

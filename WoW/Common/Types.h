@@ -5,6 +5,21 @@
 #include <cstdint>
 #include "Engine/Source/Gx/Types.h"
 
+enum CHARACTER_CLASS : uint32_t {
+    CLASS_WARRIOR = 1,
+    CLASS_PALADIN = 2,
+    CLASS_HUNTER = 3,
+    CLASS_ROGUE = 4,
+    CLASS_PRIEST = 5,
+    CLASS_DEATH_KNIGHT = 6,
+    CLASS_SHAMAN = 7,
+    CLASS_MAGE = 8,
+    CLASS_WARLOCK = 9,
+    // Class ID 10 is unused.
+    CLASS_DRUID = 11,
+    NUM_CLASSES = 11, // Number of ID slots, including unused ID 10.
+};
+
 class CAaBspNode {
     public:
     enum : uint16_t {

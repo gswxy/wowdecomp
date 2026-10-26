@@ -1,4 +1,5 @@
 #include "WoW/Source/Magic/Types.h"
+#include "WoW/Common/Types.h"
 #include "Unit_C.h"
 #include <cmath>
 #include <new>
@@ -6666,7 +6667,7 @@ bool CGUnit_C::CanGainXP() const {
     }
 
     CGUnit_C* owner = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(unit->m_unitFieldCreatedby, TYPE_PLAYER, __FILE__, __LINE__));
-    return owner && owner->m_unit->m_unitFieldBytes0[1] == 3;
+    return owner && owner->m_unit->m_unitFieldBytes0[1] == CLASS_HUNTER;
 }
 
 // VERIFY: 6c86f70b manual
@@ -7155,7 +7156,7 @@ PetPersonalityRec* CGUnit_C::GetPetPersonality() const {
 
     CGUnit_C* owner = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(unit->m_unitFieldCreatedby, TYPE_PLAYER, __FILE__, __LINE__));
 
-    if (!owner || owner->m_unit->m_unitFieldBytes0[1] != 3) {
+    if (!owner || owner->m_unit->m_unitFieldBytes0[1] != CLASS_HUNTER) {
         return nullptr;
     }
 
@@ -18019,7 +18020,7 @@ void CGUnit_C::DoPowerRegen(uint32_t elapsed) {
     POWER_TYPE powerType = static_cast<POWER_TYPE>(this->m_unit->m_unitFieldBytes0[3]);
     this->DoPowerRegen(powerType, elapsed);
 
-    if (this->m_unit->m_unitFieldBytes0[1] == 11) {
+    if (this->m_unit->m_unitFieldBytes0[1] == CLASS_DRUID) {
         if (powerType) {
             this->DoPowerRegen(POWER_TYPE_MANA, elapsed);
         }
@@ -19856,7 +19857,7 @@ double CGUnit_C::GetHealthModifier() {
     if (this->m_unit->m_unitFieldPetnumber) {
         CGUnit_C* owner = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(this->m_unit->m_unitFieldCreatedby, TYPE_PLAYER, __FILE__, __LINE__));
 
-        if (owner && owner->m_unit->m_unitFieldBytes0[1] == 3) {
+        if (owner && owner->m_unit->m_unitFieldBytes0[1] == CLASS_HUNTER) {
             return 1.0;
         }
     }
@@ -19877,7 +19878,7 @@ double CGUnit_C::GetPowerModifier() {
     if (this->m_unit->m_unitFieldPetnumber) {
         CGUnit_C* owner = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(this->m_unit->m_unitFieldCreatedby, TYPE_PLAYER, __FILE__, __LINE__));
 
-        if (owner && owner->m_unit->m_unitFieldBytes0[1] == 3) {
+        if (owner && owner->m_unit->m_unitFieldBytes0[1] == CLASS_HUNTER) {
             return 1.0;
         }
     }

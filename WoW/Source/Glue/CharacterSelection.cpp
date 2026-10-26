@@ -1,4 +1,5 @@
 #include "CharacterSelection.h"
+#include "WoW/Common/Types.h"
 #include <cstring>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Event/Event.h"
@@ -89,7 +90,7 @@ void CCharacterSelection::Shutdown() {
             continue;
         }
 
-        if (CCharacterSelection::s_characterList[i].m_characterInfo.m_classID == 3) {
+        if (CCharacterSelection::s_characterList[i].m_characterInfo.m_classID == CLASS_HUNTER) {
             CCharacterComponent::RemoveHandItem(model, INVSLOT_RANGED, SHEATHE_NONE, false);
             CCharacterSelection::s_characterList[i].m_component->RemoveItem(ITEMSLOT_11);
         }
@@ -471,7 +472,7 @@ void CCharacterSelection::ShowCharacter() {
                 continue;
             }
 
-            bool hunter = CCharacterSelection::s_characterList[CCharacterSelection::s_selectionIndex].m_characterInfo.m_classID == 3;
+            bool hunter = CCharacterSelection::s_characterList[CCharacterSelection::s_selectionIndex].m_characterInfo.m_classID == CLASS_HUNTER;
 
             if (hunter) {
                 if (slot == INVSLOT_MAINHAND || slot == INVSLOT_OFFHAND) {

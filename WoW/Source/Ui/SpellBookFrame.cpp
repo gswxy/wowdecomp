@@ -1,4 +1,5 @@
 #include "SpellBookFrame.h"
+#include "WoW/Common/Types.h"
 #include <cstdlib>
 #include <cstring>
 #include "Engine/Source/Base/ConvertUTF.h"
@@ -812,7 +813,7 @@ void CGSpellBook::UpdateSpells(int32_t a1, int32_t a2, int32_t a3) {
 int32_t GetActionBarPageOffset(const CGPlayer_C* player, const SpellRec* spell) {
     uint8_t classId = player->m_unit->m_unitFieldBytes0[1];
 
-    if (classId != 1 && classId != 4 && classId != 11) {
+    if (classId != CLASS_WARRIOR && classId != CLASS_ROGUE && classId != CLASS_DRUID) {
         return 0;
     }
 
@@ -843,7 +844,7 @@ int32_t GetActionBarPageOffset(const CGPlayer_C* player, const SpellRec* spell) 
 
         form = g_spellShapeshiftFormDB.GetRecord(index);
     } else {
-        if (classId != 1) {
+        if (classId != CLASS_WARRIOR) {
             return 0;
         }
 

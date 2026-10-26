@@ -1,4 +1,5 @@
 #include <cstdint>
+#include "WoW/Common/Types.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/FrameScript/FrameScript_Object.h"
@@ -2889,7 +2890,7 @@ static int32_t Script_GetComboPoints(lua_State* L) {
         CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
         uint8_t classId = player ? player->m_unit->m_unitFieldBytes0[1] : 0;
 
-        if (!player || classId == 4 || classId == 11) {
+        if (!player || classId == CLASS_ROGUE || classId == CLASS_DRUID) {
             points = CGGameUI::GetComboPoints(target);
         }
     } else if (unit == CGPetInfo::GetPet(0)) {

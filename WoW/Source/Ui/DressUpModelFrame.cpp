@@ -1,4 +1,5 @@
 #include "DressUpModelFrame.h"
+#include "WoW/Common/Types.h"
 #include <new>
 #include <typeinfo>
 #include "Engine/Source/Frame/CScriptObject.h"
@@ -623,7 +624,7 @@ void CGDressUpModelFrame::SetModel(CM2Model* model) {
     data.m_preferences.m_raceID = extra->m_displayRaceID;
     data.m_flags |= 0x1;
     data.m_preferences.m_skinID = extra->m_skinID;
-    data.m_preferences.m_classId = 1;
+    data.m_preferences.m_classId = CLASS_WARRIOR;
     data.m_preferences.m_hairStyleId = extra->m_hairStyleID;
     data.m_preferences.m_facialHairId = extra->m_facialHairID;
     data.m_model = model;

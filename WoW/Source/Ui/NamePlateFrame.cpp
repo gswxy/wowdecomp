@@ -1,4 +1,5 @@
 #include "NamePlateFrame.h"
+#include "WoW/Common/Types.h"
 #include <new>
 #include <typeinfo>
 #include "Engine/Source/Frame/CSimpleRender.h"
@@ -40,7 +41,7 @@ static CImVector s_hostileColor = CImVector(0x00, 0x00, 0xFF, 0xFF);
 static CImVector s_levelTextColor = CImVector(0xFF, 0xFF, 0xFF, 0xFF);
 
 // STATIC: 0x00B2DA20
-static CImVector s_classColors[12] = {
+static CImVector s_classColors[NUM_CLASSES + 1] = {
     CImVector(0x00, 0x00, 0x00, 0xFF),
     CImVector(0x6D, 0x9B, 0xC6, 0xFF),
     CImVector(0xBA, 0x8C, 0xF4, 0xFF),

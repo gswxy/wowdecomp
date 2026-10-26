@@ -1,4 +1,5 @@
 #include "Tooltip.h"
+#include "WoW/Common/Types.h"
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -1269,7 +1270,7 @@ void CGItemStatsSummary::AccumulateDpsStat(const ItemStats_C* stats) {
     this->m_dps = offAverage / (0.001f * stats->m_delay) + this->m_dps;
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
-    if (player && player->m_unit->m_unitFieldBytes0[1] == 11) {
+    if (player && player->m_unit->m_unitFieldBytes0[1] == CLASS_DRUID) {
         this->m_stats[10] += this->m_stats[8] + GetFeralAttackPower(stats, mainAverage + offAverage);
     }
 }
@@ -1348,7 +1349,7 @@ void CGItemStatsSummary::FillOutScalingItem(const ItemStats_C* stats, int32_t le
         float damage = total * stats->m_delay * 0.00050000002f;
         CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
-        if (player && player->m_unit->m_unitFieldBytes0[1] == 11) {
+        if (player && player->m_unit->m_unitFieldBytes0[1] == CLASS_DRUID) {
             this->m_stats[10] += this->m_stats[8] + GetFeralAttackPower(stats, damage);
         }
     } else {
@@ -5677,7 +5678,7 @@ static void AddItemSpellStatLines(CGTooltip* tooltip, const ItemStats_C* stats, 
     char bonus[4096];
     char text[4096];
 
-    if (player->m_unit->m_unitFieldBytes0[1] == 11) {
+    if (player->m_unit->m_unitFieldBytes0[1] == CLASS_DRUID) {
         int32_t attackPower = GetFeralAttackPower(stats, averageDamage);
 
         if (attackPower > 0) {

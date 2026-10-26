@@ -1,4 +1,5 @@
 #include "LFGInfo.h"
+#include "WoW/Common/Types.h"
 #include "Engine/Source/Base/CDataStore.h"
 #include "Engine/Source/lua-5.1/src/lauxlib.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
@@ -24,7 +25,7 @@
 #include "Engine/Source/FrameXML/LoadXML.h"
 
 // STATIC: 0x00A394B0
-static const ROLE_FLAGS_8 s_classRoles[11] = {
+static const ROLE_FLAGS_8 s_classRoles[NUM_CLASSES] = {
     static_cast<ROLE_FLAGS_8>(LEADER | TANK | DAMAGER),          // CLASS_WARRIOR
     static_cast<ROLE_FLAGS_8>(LEADER | TANK | HEALER | DAMAGER), // CLASS_PALADIN
     static_cast<ROLE_FLAGS_8>(LEADER | DAMAGER),                 // CLASS_HUNTER

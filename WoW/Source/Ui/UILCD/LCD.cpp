@@ -1,4 +1,5 @@
 #include "LCD.h"
+#include "WoW/Common/Types.h"
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -314,9 +315,9 @@ void CGLCD::Login() {
     int32_t soulShard;
 
     switch (player->m_unit->m_unitFieldBytes0[1]) {
-        case 1:
-        case 3:
-        case 4: {
+        case CLASS_WARRIOR:
+        case CLASS_HUNTER:
+        case CLASS_ROGUE: {
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("AMMO"), 1);
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("AMMO_FLD"), 1);
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("SOUL_SHARD"), 0);
@@ -324,7 +325,7 @@ void CGLCD::Login() {
             break;
         }
 
-        case 9: {
+        case CLASS_WARLOCK: {
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("AMMO"), 0);
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("AMMO_FLD"), 0);
             CGLCD::m_lcd->SetVisible(CGLCD::GetHandle("SOUL_SHARD"), 1);
@@ -473,12 +474,12 @@ static const char* GetAmmoToken() {
     }
 
     switch (CGLCD::m_player->m_unit->m_unitFieldBytes0[1]) {
-        case 1:
-        case 3:
-        case 4:
+        case CLASS_WARRIOR:
+        case CLASS_HUNTER:
+        case CLASS_ROGUE:
             return "AMMO";
 
-        case 9:
+        case CLASS_WARLOCK:
             return "SOUL_SHARD";
 
         default:
@@ -670,7 +671,7 @@ static int32_t GetAmmoCount() {
     CGPlayer_C* player = CGLCD::m_player;
     int32_t ammoId = player->m_obj->m_guid == ClntObjMgrGetActivePlayer() ? player->m_player->m_playerAmmoId : 0;
 
-    if (CGLCD::m_player->m_unit->m_unitFieldBytes0[1] == 9) {
+    if (CGLCD::m_player->m_unit->m_unitFieldBytes0[1] == CLASS_WARLOCK) {
         return CGLCD::m_player->m_bag.GetItemTypeCount(6265, 0);
     }
 

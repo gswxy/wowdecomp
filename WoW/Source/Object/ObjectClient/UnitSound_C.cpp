@@ -1,4 +1,5 @@
 #include "UnitSound_C.h"
+#include "WoW/Common/Types.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Services/SysMessage.h"
@@ -661,7 +662,7 @@ void CGUnit_C::PlayEmoteSound(int32_t soundKitId, bool checkCVars, int32_t fileI
         }
     }
 
-    if (soundKitId != 6576 && this->m_unit->m_unitFieldBytes0[1] == 6) {
+    if (soundKitId != 6576 && this->m_unit->m_unitFieldBytes0[1] == CLASS_DEATH_KNIGHT) {
         properties.m_useDspChain = 1;
         SI2::DK_GetPlayerFilterName(this, properties.m_dspChainName, sizeof(properties.m_dspChainName));
     }
@@ -779,7 +780,7 @@ void CGUnit_C::OnAiReaction(int32_t reaction) {
         properties.m_priority = 110;
         CGUnit_C* player = ClntObjMgrGetActivePlayerObj();
 
-        if (player && player->m_unit->m_unitFieldBytes0[1] == 6) {
+        if (player && player->m_unit->m_unitFieldBytes0[1] == CLASS_DEATH_KNIGHT) {
             properties.m_useDspChain = 1;
             SI2::DK_GetPlayerFilterName(player, properties.m_dspChainName, sizeof(properties.m_dspChainName));
         }

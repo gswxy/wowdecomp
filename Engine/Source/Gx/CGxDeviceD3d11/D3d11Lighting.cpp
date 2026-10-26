@@ -34,6 +34,8 @@ struct PostConstants {
     float m_source[4];
     float m_projW[4];
     float m_ssilvb[4];
+    float m_skyRow[4];
+    float m_sky[4];
 };
 
 // the order of Lighting.py's JOBS
@@ -58,6 +60,8 @@ enum EShader {
     Shader_SsilvbBlurPs,
     Shader_SsilvbBlurPsMs,
     Shader_SsilvbCompositePs,
+    Shader_SkyOcclusionPs,
+    Shader_SkyOcclusionPsMs,
     Shaders_Last,
 };
 
@@ -118,6 +122,13 @@ class D3d11Lighting final : public IGxLighting {
     Target m_bloom[s_bloomLevels];
 
     // the auto-exposure: the meter grid, its one readback in flight, the last scene key and the adapted lift
+    // BENILLA sky occlusion: the top-down heights (R32F), uploaded when their serial moves
+    ID3D11Texture2D* m_skyTex = nullptr;
+    ID3D11ShaderResourceView* m_skySrv = nullptr;
+    uint32_t m_skySize = 0;
+    uint32_t m_skySerial = 0;
+    bool ISkyMap();
+
     Target m_meter;
     ID3D11Texture2D* m_meterStaging = nullptr;
     bool m_meterPending = false;
@@ -403,6 +414,8 @@ void D3d11Lighting::IWriteConstants(uint32_t targetWidth, uint32_t targetHeight,
     c.m_ssilvb[1] = p.m_ssgiIntensity;
     c.m_ssilvb[2] = p.m_ssilvbRadius;
     c.m_ssilvb[3] = p.m_ssilvbThickness;
+    memcpy(c.m_skyRow, p.m_skyRow, sizeof(c.m_skyRow));
+    memcpy(c.m_sky, p.m_skyParams, sizeof(c.m_sky));
     UploadConstants(this->m_device->m_d3dContext, this->m_constants, &c, sizeof(c));
 }
 
@@ -525,8 +538,9 @@ void D3d11Lighting::OpaqueDone() {
     const GxLightingParams& p = this->m_params;
     bool ssao = (p.m_features & GxLighting_Ssao) && (p.m_ssaoIntensity > 0.0f || (p.m_ssilvb && p.m_ssgiIntensity > 0.0f));
     bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
+    bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
 
-    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog) || !dev->m_depthSrv) {
+    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !sky) || !dev->m_depthSrv) {
         return;
     }
 
@@ -583,6 +597,14 @@ void D3d11Lighting::OpaqueDone() {
             ID3D11BlendState* blend = p.m_debug == 1 || p.m_debug >= 4 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
             this->IDraw(msaa ? Shader_AoCompositePsMs : Shader_AoCompositePs, frame, vp, blend, composite, 2);
         }
+    }
+
+    // BENILLA sky occlusion: x mix(floor, 1, open sky) into the frame (lightingDebug 6: the factor alone)
+    if (sky && this->ISkyMap()) {
+        this->IWriteConstants(bb.Width, bb.Height, nullptr);
+        ID3D11BlendState* blend = p.m_debug == 6 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
+        ID3D11ShaderResourceView* views[4] = { depth, nullptr, nullptr, this->m_skySrv };
+        this->IDraw(msaa ? Shader_SkyOcclusionPsMs : Shader_SkyOcclusionPs, frame, vp, blend, views, 4);
     }
 
     if (fog) {
@@ -755,6 +777,42 @@ void D3d11Lighting::ISsilvb(ID3D11ShaderResourceView* depth, bool msaa) {
     this->IDraw(Shader_SsilvbCompositePs, dev->m_backBufferRtv, vp, blend, composite, 2);
 }
 
+// BENILLA sky occlusion: (re)create the heights texture at the map's size, upload when the serial moved.
+bool D3d11Lighting::ISkyMap() {
+    const GxLightingParams& p = this->m_params;
+    const uint32_t size = static_cast<uint32_t>(p.m_skyRow[3]);
+    if (!size || !p.m_skyHeights) {
+        return false;
+    }
+    if (this->m_skySize != size) {
+        SafeRelease(this->m_skySrv);
+        SafeRelease(this->m_skyTex);
+        this->m_skySize = 0;
+        D3D11_TEXTURE2D_DESC d;
+        memset(&d, 0, sizeof(d));
+        d.Width = size;
+        d.Height = size;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = DXGI_FORMAT_R32_FLOAT;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init = { p.m_skyHeights, size * 4, 0 };
+        if (FAILED(this->m_device->m_d3dDevice->CreateTexture2D(&d, &init, &this->m_skyTex)) ||
+            FAILED(this->m_device->m_d3dDevice->CreateShaderResourceView(this->m_skyTex, nullptr, &this->m_skySrv))) {
+            SafeRelease(this->m_skyTex);
+            return false;
+        }
+        this->m_skySize = size;
+        this->m_skySerial = p.m_skySerial;
+    } else if (this->m_skySerial != p.m_skySerial) {
+        this->m_device->m_d3dContext->UpdateSubresource(this->m_skyTex, 0, nullptr, p.m_skyHeights, size * 4, 0);
+        this->m_skySerial = p.m_skySerial;
+    }
+    return true;
+}
+
 // BENILLA auto-exposure: read back the last meter grid if it has landed (never waiting), meter this frame's scene when
 // none is in flight, and ease the lift toward what the scene key asks for. Scales m_params.m_exposure.
 void D3d11Lighting::IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height) {
@@ -865,6 +923,9 @@ void D3d11Lighting::ReleaseTargets() {
     }
 
     ReleaseTarget(this->m_meter);
+    SafeRelease(this->m_skySrv);
+    SafeRelease(this->m_skyTex);
+    this->m_skySize = 0;
     SafeRelease(this->m_meterStaging);
     this->m_meterPending = false;
 }

@@ -1,4 +1,5 @@
 #include "WoW/Source/Ui/WorldLighting.h"
+#include "WoW/Source/WorldClient/SkyOcclusion.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
 #include <algorithm>
 #include <cmath>
@@ -135,6 +136,10 @@ uint32_t Features() {
     }
 
     // vfogaudit: the stock fog it tints is pushed out while vfog draws, and the fitted fog would get the sun twice
+    if (SkyOcclusion::Enabled()) {
+        features |= GxLighting_SkyOcclusion;   // BENILLA sky occlusion; dropped at SetupView while its map is not up
+    }
+
     if (Positive(s_cv.fogScattering) > 0.0f && !VolumetricFog::Active()) {
         features |= GxLighting_Scattering;
     }
@@ -842,6 +847,15 @@ void WorldLightingSetupView(const C3Vector& camera) {
     const C3Vector& origin = CWorldScene::s_activeWorldView;
     BuildParams(s_params, s_params.m_features, camera);
     s_params.m_cameraPosition = camera - origin;
+    const float skyCamera[3] = { camera.x, camera.y, camera.z };
+    if ((s_params.m_features & GxLighting_SkyOcclusion) &&
+        SkyOcclusion::Update(skyCamera, s_params.m_skyHeights, s_params.m_skySerial, s_params.m_skyRow, s_params.m_skyParams)) {
+        s_params.m_skyRow[0] -= origin.x;
+        s_params.m_skyRow[1] -= origin.y;
+        s_params.m_skyParams[3] = origin.z;
+    } else {
+        s_params.m_features &= ~GxLighting_SkyOcclusion;
+    }
     g_gxLighting->SetupView(s_params);
 
     // the shader half: the lights in reach (world space), smoothed across frames, moved into the render origin

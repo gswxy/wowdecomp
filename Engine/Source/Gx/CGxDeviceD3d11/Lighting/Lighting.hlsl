@@ -20,6 +20,8 @@ cbuffer GxPost : register(b0) {
     float4 gxSource;               // the texture sampled: xy 1 / size; zw the blur direction
     float4 gxProjW;                // clip w = dot(float4(view position, 1), gxProjW)
     float4 gxSsilvb;               // SSILVB: x AO strength, y indirect strength, z radius (yards), w thickness (yards)
+    float4 gxSkyRow;               // sky occlusion: xy the map's lower corner (render-relative), z 1 / texel yd, w texels a side
+    float4 gxSky;                  // x floor, y lift (yd), z lift per yd off the texel, w render origin z
 };
 
 #ifdef GX_MSAA
@@ -675,4 +677,43 @@ float4 SsilvbCompositePs(GxPostVaryings i) : SV_Target0 {
     float3 bounce = max(indirect.rgb, 0.0) * (gxSsilvb.y * 8.0);
     float3 factor = clamp(occlusion + bounce, 0.0, 4.0);
     return float4(pow(factor, 1.0 / 2.2), 1.0);
+}
+
+// BENILLA sky occlusion (benilla-bourbon sunshadow.wgsl sky_visibility + sky_ambient): the open-sky fraction over the
+// pixel from the top-down map of the world's tops (t3), a 3x3 compare one texel apart (benilla: 4 texels of 0.5 yd),
+// the pixel lifted so its own surface never counts as its roof. The frame x mix(floor, 1, open): benilla scales the
+// exterior ambient in its gamma lanes by that; our post pass scales the gamma frame.
+Texture2D<float> gxSkyMap : register(t3);
+
+float4 SkyOcclusionPs(GxPostVaryings i) : SV_Target0 {
+    float d = GxDepthAt(int2(i.pos.xy));
+
+    if (!GxIsGeometry(d)) {
+        discard;
+    }
+
+    float3 pw = mul(float4(GxViewPos(i.pos.xy, d), 1.0), gxInvView).xyz;
+    float2 t = (pw.xy - gxSkyRow.xy) * gxSkyRow.z;
+    float size = gxSkyRow.w;
+
+    if (any(t < 1.0) || any(t > size - 1.0)) {
+        discard;
+    }
+
+    float z = pw.z + gxSky.w + gxSky.y;
+    float open = 0.0;
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float2 tap = floor(t) + float2(x, y);
+            float off = length(tap + 0.5 - t) / gxSkyRow.z;
+            open += gxSkyMap.Load(int3(tap, 0)) <= z + off * gxSky.z ? 1.0 : 0.0;
+        }
+    }
+
+    // fades out over the map's outer eighth, so its edge never draws a line
+    float2 edge = min(t, size - t) / (size * 0.125);
+    float factor = lerp(gxSky.x, 1.0, open / 9.0);
+    factor = lerp(1.0, factor, saturate(min(edge.x, edge.y)));
+    return float4(factor, factor, factor, 1.0);
 }

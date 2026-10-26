@@ -25,6 +25,7 @@ enum EGxLightingFeature : uint32_t {
     GxLighting_Hdr = 0x80,            // the world into a 16-bit float target, tonemapped
     GxLighting_Bloom = 0x100,         // needs Hdr
     GxLighting_Pbr = 0x200,           // PBR-lite: GGX specular, sky reflection, energy conservation (lightPbr)
+    GxLighting_SkyOcclusion = 0x400,  // BENILLA sky occlusion (D3D11): the frame dimmed under the world's tops (skyOcclusion)
 };
 
 // CUSTOM (PBR-lite): the material category of the next draw, guessed by the engine (assets carry no PBR maps). The
@@ -70,6 +71,11 @@ struct GxLightingParams {
     float m_ssgiIntensity = 0.0f;    // the indirect (colour bounce) half, 0 = the AO-only variant
     float m_ssilvbRadius = 4.0f;     // yards
     float m_ssilvbThickness = 0.6f;  // yards, the depth a sample is taken to have
+    // BENILLA sky occlusion (D3D11): the top-down map of the world's tops, WoW/Source/WorldClient/SkyOcclusion.h
+    const float* m_skyHeights = nullptr;   // m_skyRow.w^2 world z, row-major by world y
+    uint32_t m_skySerial = 0;              // moves when m_skyHeights changed
+    float m_skyRow[4] = {};                // x0, y0 (render-relative), 1 / texel yd, texels a side
+    float m_skyParams[4] = {};             // floor, lift (yd), lift per yd off the texel, render origin z
 
     // the lit shaders (GxLightingGpu)
     float m_lightWrap = 0.25f;

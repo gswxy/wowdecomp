@@ -30,6 +30,8 @@ JOBS = [
     ('SsilvbBlurPs', 'SsilvbBlurPs', 'ps_4_0', {}),
     ('SsilvbBlurPsMs', 'SsilvbBlurPs', 'ps_4_1', {'GX_MSAA': 1}),
     ('SsilvbCompositePs', 'SsilvbCompositePs', 'ps_4_0', {}),
+    ('SkyOcclusionPs', 'SkyOcclusionPs', 'ps_4_0', {}),
+    ('SkyOcclusionPsMs', 'SkyOcclusionPs', 'ps_4_1', {'GX_MSAA': 1}),
 ]
 
 

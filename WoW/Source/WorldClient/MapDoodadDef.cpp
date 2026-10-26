@@ -22,6 +22,7 @@
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "Engine/Source/Tempest/C3Segment.h"
 #include "WoW/Source/WorldClient/LegionLights.h"
+#include "WoW/Source/WorldClient/SkyOcclusion.h"
 
 // VERIFY: 4012bf37 manual
 // OFFSET: 0x007B4FA0
@@ -109,6 +110,7 @@ void CMapDoodadDef::UpdateBounds() {
         this->m_model->m_fFlags &= ~0x40u;
     }
     LegionLights::AddDoodad(this);     // LIGHTBAKE (not in 12340): the static light list
+    SkyOcclusion::AddDoodad(this);     // BENILLA sky occlusion (not in 12340)
 }
 
 // VERIFY: f560b093 manual
@@ -352,4 +354,5 @@ bool CMapDoodadDef::QueryInteriorLighting(CMapObjDef* mapObjDef, int32_t groupNu
 // OFFSET: [0x007C2350, 0x007C2E40]
 CMapDoodadDef::~CMapDoodadDef() {
     LegionLights::RemoveDoodad(this);  // LIGHTBAKE (not in 12340)
+    SkyOcclusion::RemoveDoodad(this);  // BENILLA sky occlusion (not in 12340)
 }

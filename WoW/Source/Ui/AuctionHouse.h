@@ -90,6 +90,7 @@ class CGAuctionHouse {
         NUM_RUN_TIMES = 3,
     };
 
+    static const int32_t MAX_SELL_ITEMS = 200;
     static const int32_t MAX_SORT_CRITERIA = 12;
 
     enum BIDDER_SORT_RANK : int32_t {
@@ -127,7 +128,7 @@ class CGAuctionHouse {
     static uint32_t m_multisellStackSize;
     static uint32_t m_multisellTotal;
     static uint32_t m_numSellItems;
-    static AuctionSellItem m_sellItems[200];
+    static AuctionSellItem m_sellItems[MAX_SELL_ITEMS];
     static int32_t m_havePendingSell;
     static WOWGUID m_sellItemContainer;
     static uint32_t m_lastQueryTime[LIST_TYPE::NUM_LIST_TYPES];

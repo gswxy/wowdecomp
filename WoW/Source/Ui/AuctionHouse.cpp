@@ -54,7 +54,7 @@ uint32_t CGAuctionHouse::m_multisellTotal;
 uint32_t CGAuctionHouse::m_numSellItems;
 
 // STATIC: 0x00C0E768
-AuctionSellItem CGAuctionHouse::m_sellItems[200];
+AuctionSellItem CGAuctionHouse::m_sellItems[CGAuctionHouse::MAX_SELL_ITEMS];
 
 // STATIC: 0x00C0F434
 int32_t CGAuctionHouse::m_havePendingSell;
@@ -1710,7 +1710,7 @@ static int32_t FindSellItemsCallback(const CGItem_C* item, void* param) {
     find->m_total += item->m_item->m_itemFieldStackCount;
 
     if (find->m_collect) {
-        if (CGAuctionHouse::m_numSellItems >= 200) {
+        if (CGAuctionHouse::m_numSellItems >= CGAuctionHouse::MAX_SELL_ITEMS) {
             CGAuctionHouse::m_numSellItems = 0;
             return 1;
         }

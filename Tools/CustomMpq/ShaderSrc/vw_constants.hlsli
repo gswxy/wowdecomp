@@ -40,6 +40,7 @@ float4 cRippleWinW : register(c70);     // the wide level: window origin xy (yd)
 float4 cRippleTexW : register(c71);     // (1/N, 1/N, step fraction, ripple gain; 0 = off) (wxl-water gRipTexW)
 sampler2D sLandShadow : register(s13);   // its lit-height texture
 static float gLandSun = 1;               // VFogWater.hlsl sets it per pixel (LandSunVisibility)
+static float gLandGlint = 1;             // the same land test raw: no shadowWaterStrength, no low-sun fade lift (GlintVisibility)
 
 sampler2D sSceneColour : register(s0);
 sampler2D sSceneDepth : register(s1);
@@ -73,6 +74,14 @@ float SunVisibility()
     return cLight.w * gLandSun;
 }
 
+// The sun glint off the water: a sun behind the land leaves no glitter path (SunVisibility keeps 75 % of it).
+// ponytail: the lit heights are built for the cascades' light (>= 4 deg), so a body lower than that behind a very low
+// ridge can still glint; a second build at the true elevation would close it.
+float GlintVisibility()
+{
+    return cLight.w * gLandGlint;
+}
+
 // The land (near terrain and far WDL) between the water and the sun: vf_shadow.hlsli TerrainSunVisibility's test.
 float LandSunVisibility(float3 world)
 {
@@ -80,6 +89,7 @@ float LandSunVisibility(float3 world)
         return 1;
     float lit = dot(tex2Dlod(sLandShadow, float4(cLandShadow.xy - cLandShadow.z * world.yx, 0, 0)).xy, 1);   // R + G: fp16 + residual
     float sun = saturate(1 - (lit - world.z - 4.0) * cLandShadow.w);   // the mask's 4 yd surface bias (audit L6)
+    gLandGlint = sun;
     sun = lerp(1, sun, cLandShadowFade.y);   // shadowWaterStrength
     return sun + (1 - sun) * cLandShadowFade.x;
 }

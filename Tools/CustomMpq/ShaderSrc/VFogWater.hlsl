@@ -82,8 +82,8 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     float3 reflected = lerp(sky, screenReflection.rgb, screenReflection.a);
     float3 environment = reflected * EnvironmentBrdf(envRoughness, NoV) * ReflectionStrength();
     float3 H = normalize(V + L);
-    float environmentAttenuation = 1 - FresnelSchlick(dot(H, V)) * SunVisibility();
-    float3 sunSpecular = SunVisibility() * SunColour() * SpecularStrength() * SunGlint(sunRoughness, N, V, L);
+    float environmentAttenuation = 1 - FresnelSchlick(dot(H, V)) * GlintVisibility();
+    float3 sunSpecular = GlintVisibility() * SunColour() * SpecularStrength() * SunGlint(sunRoughness, N, V, L);
     colour += sunSpecular + environmentAttenuation * environment;
 
     [branch] if (WaterDebugView() > 0.5)

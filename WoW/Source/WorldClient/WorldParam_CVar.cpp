@@ -713,6 +713,11 @@ void CWorldParam::Initialize() {
         CM2Scene::s_groundDecals = SStrToInt(value) != 0;
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    // BENILLA: not in 12340 (rig_anim/pose.rs animation LOD). Models past 50 / 100 / 200 yd re-posed every 2nd / 3rd / 4th frame.
+    CVar::Register("animLod", "Distant models animate at a lower rate (every 2nd frame past 50 yd, 3rd past 100, 4th past 200); 0 = every frame", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        CM2Scene::s_animLod = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
     // LEGION stream: not in 12340. Disk readers load the queued model/WMO nearest the camera first (Legion worldLoadSort).
     CVar::Register("worldLoadSort", "Load world models nearest the camera first", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
         g_asyncLoadSort = SStrToInt(value) != 0;

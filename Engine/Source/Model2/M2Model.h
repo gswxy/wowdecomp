@@ -222,6 +222,8 @@ class CM2Model {
     /* 02E8 */ uint32_t m_handle;
     /* 02EC */ uint32_t m_pbrArmor;   // CUSTOM (ARMORMETAL, unused in stock): an attached item's GxLightingMaterial
     CTexture* m_pbrMask;             // CUSTOM (ARMORMASK, appended): its metal mask (ArmorMask.h), own handle, or null
+    C44Matrix m_lodMatrixF4;         // CUSTOM (BENILLA animation LOD, appended): m_matrixF4 of the last full pose
+    uint32_t m_lodPosed = 0;         // CUSTOM (BENILLA animation LOD): m_lodMatrixF4 is valid
 
     static void (*s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
     static TSGrowableArray<M2ModelCallback> s_sequenceCallbacks;

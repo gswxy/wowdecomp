@@ -5162,7 +5162,33 @@ void CM2Model::AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C
         this->m_lastAnimTime = time;
     }
 
-    for (uint32_t i = 0; i < data->m_bones.m_count; i++) {
+    // BENILLA animation LOD (rig_anim/pose.rs pose_period, not in 12340): a model 50 / 100 / 200 yd from the camera is
+    // re-posed every 2nd / 3rd / 4th frame on its own staggered slot. A held frame keeps the last pose and moves it
+    // rigidly with the model (bones are model->view: bone x inverse(old m_matrixF4) x new); the next pose samples the
+    // tracks at the scene's own time, so nothing drifts. Not for billboarded bones (they face the view) or frozen
+    // models (m_lastAnimTime: the loop pushes their sequence times by the frame delta).
+    bool lodHold = false;
+
+    if (CM2Scene::s_animLod && this->m_lodPosed && !this->m_lastAnimTime && !this->m_shared->m_billboardBoneCount && data->m_bones.m_count) {
+        const C44Matrix& f4 = this->m_matrixF4;
+        const float distSq = f4.d0 * f4.d0 + f4.d1 * f4.d1 + f4.d2 * f4.d2;   // the model origin in view space
+        const uint32_t period = distSq < 50.0f * 50.0f ? 1u : distSq < 100.0f * 100.0f ? 2u : distSq < 200.0f * 200.0f ? 3u : 4u;
+        const uint32_t slot = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this) >> 4);
+        lodHold = period > 1 && (this->m_scene->m_frameStamp + slot) % period != 0;
+    }
+
+    if (lodHold) {
+        const C44Matrix move = this->m_lodMatrixF4.Inverse() * this->m_matrixF4;
+
+        for (uint32_t i = 0; i < data->m_bones.m_count; i++) {
+            this->m_boneMatrices[i] = this->m_boneMatrices[i] * move;
+        }
+    }
+
+    this->m_lodMatrixF4 = this->m_matrixF4;
+    this->m_lodPosed = 1;
+
+    for (uint32_t i = 0; !lodHold && i < data->m_bones.m_count; i++) {
         M2ModelBone* bone = &this->m_bones[i];
         M2CompBone* boneData = &data->m_bones[i];
 

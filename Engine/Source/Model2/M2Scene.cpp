@@ -33,6 +33,7 @@ const uint32_t s_blendModes[3][M2BLEND_COUNT] = { { 0, 1, 2, 10, 3, 4, 5 }, { 2,
 // STATIC: 0x00AF5898
 uint32_t CM2Scene::s_optFlags = 0xFFFFFFFF;
 int32_t CM2Scene::s_groundDecals = 1;
+int32_t CM2Scene::s_animLod = 1;
 
 // BENILLA: not in 12340 (M2GroundDecal.h). A single-texture, non-env batch of a Spells\ model that is
 // world-planted or on the Base (19) or root attachment, one bone at full weight that is not billboarded,

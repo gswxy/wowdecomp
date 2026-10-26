@@ -22,6 +22,7 @@ JOBS = [
     ('BloomDownPs', 'BloomDownPs', 'ps_4_0', {}),
     ('BloomUpPs', 'BloomUpPs', 'ps_4_0', {}),
     ('TonemapPs', 'TonemapPs', 'ps_4_0', {}),
+    ('MeterPs', 'MeterPs', 'ps_4_0', {}),
 ]
 
 

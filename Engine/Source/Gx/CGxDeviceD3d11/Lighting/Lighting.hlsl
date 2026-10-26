@@ -409,3 +409,26 @@ float4 TonemapPs(GxPostVaryings i) : SV_Target0 {
     return float4(GxEnc(GxTonemap(c, gxTone.y)), s.a);
 }
 
+
+// BENILLA auto-exposure (benilla-bourbon shaders/modern/meter.wgsl): the scene before any exposure, averaged into a
+// 64x36 grid of log2 luminance (one pixel a cell of the R32_FLOAT target); the CPU takes the grid's mean.
+// gxSource.xy 1 / the scene's size. The grid covers the world viewport only (outside it the scene is cleared black).
+float4 MeterPs(GxPostVaryings i) : SV_Target0 {
+    // taps a side in each cell; bilinear, so a cell reads a 2x box around each
+    const uint taps = 4;
+    // the floor under a black pixel: ten stops below the target, so one cannot sink the mean
+    const float lumaFloor = 0.0001;
+    float2 cell = floor(i.pos.xy);
+    float sum = 0.0;
+
+    [unroll] for (uint j = 0; j < taps; j++) {
+        [unroll] for (uint k = 0; k < taps; k++) {
+            float2 tap = (float2(k, j) + 0.5) / taps;
+            float2 uv = (gxViewportPx.xy + (cell + tap) / gxTarget.xy * gxViewportPx.zw) * gxSource.xy;
+            float3 c = GxDec(gxColor.SampleLevel(gxLinear, uv, 0.0).rgb);
+            sum += log2(max(dot(c, float3(0.2126, 0.7152, 0.0722)), lumaFloor));
+        }
+    }
+
+    return float4(sum / (taps * taps), 0.0, 0.0, 1.0);
+}

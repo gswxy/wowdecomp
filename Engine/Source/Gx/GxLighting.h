@@ -57,6 +57,9 @@ struct GxLightingParams {
     uint32_t m_tonemap = 1;          // 0 clamp (stock), 1 neutral (stock below a shoulder), 2 ACES, 3 Reinhard, 4 Hable, 5 AgX, 6 AgX punchy, 7 PBR Neutral, 8 Uchimura, 9 Lottes
     float m_bloomIntensity = 0.0f;
     float m_bloomThreshold = 1.0f;   // linear
+    // BENILLA auto-exposure (D3D11, hdr): the screen metered, a dark picture lifted toward visible, never darkened
+    float m_autoExposureMax = 0.0f;  // the lift's ceiling, 0 = off
+    float m_autoExposureTarget = 0.06f;  // the exposed scene key (log-average linear luminance) below which it lifts
 
     // SSAO
     float m_ssaoIntensity = 0.0f;

@@ -49,6 +49,7 @@ enum EShader {
     Shader_BloomDownPs,
     Shader_BloomUpPs,
     Shader_TonemapPs,
+    Shader_MeterPs,
     Shaders_Last,
 };
 
@@ -63,6 +64,13 @@ struct Target {
 };
 
 const uint32_t s_bloomLevels = 6;
+
+// BENILLA auto-exposure (benilla-bourbon modern/meter.rs + modern/look.rs), constants 1:1
+const uint32_t s_meterWidth = 64;
+const uint32_t s_meterHeight = 36;
+const float s_autoExposureStrength = 0.65f;  // about two thirds of the shortfall, in stops
+const float s_autoExposureSeconds = 1.5f;    // an eye adapting, not a meter snapping
+const float s_meterStaleSeconds = 1.0f;      // no new reading for this long: the lift holds
 
 class D3d11Lighting final : public IGxLighting {
     public:
@@ -99,6 +107,16 @@ class D3d11Lighting final : public IGxLighting {
 
     Target m_ao[2];
     Target m_bloom[s_bloomLevels];
+
+    // the auto-exposure: the meter grid, its one readback in flight, the last scene key and the adapted lift
+    Target m_meter;
+    ID3D11Texture2D* m_meterStaging = nullptr;
+    bool m_meterPending = false;
+    float m_sceneKey = 0.0f;
+    float m_sceneKeyAge = 1e9f;
+    float m_eye = 1.0f;
+    bool m_eyeSet = false;
+    float m_lastTime = -1.0f;
     ID3D11DeviceChild* m_shaders[Shaders_Last] = {};
     ID3D11Buffer* m_constants = nullptr;
 
@@ -116,6 +134,7 @@ class D3d11Lighting final : public IGxLighting {
     void IWriteConstants(uint32_t targetWidth, uint32_t targetHeight, const float* source);
     void IDraw(EShader shader, ID3D11RenderTargetView* target, const D3D11_VIEWPORT& viewport, ID3D11BlendState* blend, ID3D11ShaderResourceView* const* srvs, uint32_t count);
     void IRestoreDevice();
+    void IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height);
 };
 
 D3d11Lighting* s_lighting = nullptr;
@@ -592,6 +611,8 @@ void D3d11Lighting::EndWorld() {
         vp = { 0.0f, 0.0f, static_cast<float>(bb.Width), static_cast<float>(bb.Height), 0.0f, 1.0f };
     }
 
+    // the lift multiplies the exposure the bloom and the tonemap both use
+    this->IAutoExposure(scene, bb.Width, bb.Height);
     ID3D11BlendState* opaque = this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_COLOR_WRITE_ENABLE_ALL);
     uint32_t levels = 0;
 
@@ -660,6 +681,88 @@ void D3d11Lighting::EndWorld() {
     this->IRestoreDevice();
 }
 
+// BENILLA auto-exposure: read back the last meter grid if it has landed (never waiting), meter this frame's scene when
+// none is in flight, and ease the lift toward what the scene key asks for. Scales m_params.m_exposure.
+void D3d11Lighting::IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height) {
+    GxLightingParams& p = this->m_params;
+    ID3D11DeviceContext* ctx = this->m_device->m_d3dContext;
+    float dt = this->m_lastTime < 0.0f ? 0.0f : p.m_time - this->m_lastTime;
+    dt = dt < 0.0f || dt > 0.25f ? 0.0f : dt;   // m_time wraps hourly; a hitch does not snap the eye
+    this->m_lastTime = p.m_time;
+    this->m_sceneKeyAge += dt;
+    bool on = p.m_autoExposureMax > 1.0f;
+
+    if (this->m_meterPending) {
+        D3D11_MAPPED_SUBRESOURCE mapped;
+
+        if (SUCCEEDED(ctx->Map(this->m_meterStaging, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped))) {
+            float sum = 0.0f;
+
+            for (uint32_t y = 0; y < s_meterHeight; y++) {
+                const float* row = reinterpret_cast<const float*>(static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch);
+
+                for (uint32_t x = 0; x < s_meterWidth; x++) {
+                    sum += row[x];
+                }
+            }
+
+            ctx->Unmap(this->m_meterStaging, 0);
+            this->m_meterPending = false;
+            float mean = sum / (s_meterWidth * s_meterHeight);
+
+            if (std::isfinite(mean)) {
+                this->m_sceneKey = exp2f(mean);
+                this->m_sceneKeyAge = 0.0f;
+            }
+        }
+    }
+
+    if (on && !this->m_meterPending && this->m_shaders[Shader_MeterPs] && this->IEnsureTarget(this->m_meter, s_meterWidth, s_meterHeight, DXGI_FORMAT_R32_FLOAT)) {
+        if (!this->m_meterStaging) {
+            D3D11_TEXTURE2D_DESC desc;
+            this->m_meter.m_texture->GetDesc(&desc);
+            desc.Usage = D3D11_USAGE_STAGING;
+            desc.BindFlags = 0;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+            if (FAILED(this->m_device->m_d3dDevice->CreateTexture2D(&desc, nullptr, &this->m_meterStaging))) {
+                this->m_meterStaging = nullptr;
+            }
+        }
+
+        if (this->m_meterStaging) {
+            float source[4] = { 1.0f / width, 1.0f / height, 0.0f, 0.0f };
+            D3D11_VIEWPORT grid = { 0.0f, 0.0f, static_cast<float>(s_meterWidth), static_cast<float>(s_meterHeight), 0.0f, 1.0f };
+            ID3D11ShaderResourceView* views[2] = { nullptr, scene };
+            this->IWriteConstants(s_meterWidth, s_meterHeight, source);
+            this->IDraw(Shader_MeterPs, this->m_meter.m_rtv, grid, this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_COLOR_WRITE_ENABLE_ALL), views, 2);
+            ctx->CopyResource(this->m_meterStaging, this->m_meter.m_texture);
+            this->m_meterPending = true;
+        }
+    }
+
+    // the lift a metered scene asks for under the look's own exposure: 1 at the target and above, rising toward the
+    // ceiling as the picture darkens (benilla screen_lift); off eases back to 1; a stale meter holds the eye
+    float lift = this->m_eye;
+
+    if (!on) {
+        lift = 1.0f;
+    } else if (this->m_sceneKeyAge < s_meterStaleSeconds) {
+        float key = this->m_sceneKey * p.m_exposure;
+        lift = powf(p.m_autoExposureTarget / (key > 1e-5f ? key : 1e-5f), s_autoExposureStrength);
+        lift = lift < 1.0f ? 1.0f : (lift > p.m_autoExposureMax ? p.m_autoExposureMax : lift);
+
+        // the first reading is taken whole: entering the world at night does not open on the eye adjusting
+        if (!this->m_eyeSet) {
+            this->m_eye = lift;
+            this->m_eyeSet = true;
+        }
+    }
+
+    this->m_eye += (lift - this->m_eye) * (1.0f - expf(-dt / s_autoExposureSeconds));
+    p.m_exposure *= this->m_eye;
+}
+
 void D3d11Lighting::ReleaseTargets() {
     // a resize or a lost device in the middle of the world: the back buffer goes back first
     if (this->m_swapped) {
@@ -682,6 +785,10 @@ void D3d11Lighting::ReleaseTargets() {
     for (Target& target : this->m_bloom) {
         ReleaseTarget(target);
     }
+
+    ReleaseTarget(this->m_meter);
+    SafeRelease(this->m_meterStaging);
+    this->m_meterPending = false;
 }
 
 void D3d11Lighting::ReleaseAll() {

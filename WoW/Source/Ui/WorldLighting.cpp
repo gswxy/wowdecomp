@@ -56,6 +56,9 @@ struct LightingCVars {
     CVar* tonemap;
     CVar* bloom;
     CVar* bloomThreshold;
+    CVar* autoExposure;
+    CVar* autoExposureTarget;
+    CVar* autoExposureMax;
     CVar* ssao;
     CVar* ssaoRadius;
     CVar* ssaoDistance;
@@ -165,6 +168,8 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
     p.m_exposure = s_cv.exposure->m_floatValue > 0.0f ? s_cv.exposure->m_floatValue : 1.0f;
     p.m_tonemap = !s_cv.hdr->m_intValue || s_cv.tonemap->m_intValue < 0 ? 0u : static_cast<uint32_t>(std::min(s_cv.tonemap->m_intValue, 9));   // the shader modes 0-9
     p.m_bloomIntensity = Positive(s_cv.bloom);
+    p.m_autoExposureMax = s_cv.autoExposure->m_intValue > 0 ? std::clamp(s_cv.autoExposureMax->m_floatValue, 1.0f, 8.0f) : 0.0f;
+    p.m_autoExposureTarget = std::clamp(s_cv.autoExposureTarget->m_floatValue, 0.001f, 1.0f);
     p.m_bloomThreshold = s_cv.bloomThreshold->m_floatValue > 0.01f ? s_cv.bloomThreshold->m_floatValue : 0.01f;
     p.m_ssaoIntensity = Positive(s_cv.ssao);
     p.m_ssaoRadius = s_cv.ssaoRadius->m_floatValue > 0.1f ? s_cv.ssaoRadius->m_floatValue : 0.1f;
@@ -756,6 +761,9 @@ void WriteGpu(const GxLightingParams& p) {
 void WorldLightingRegisterCVars() {
     s_cv.exposure = Reg("hdrExposure", "HDR exposure (D3D11/Vulkan)", "1");
     s_cv.tonemap = Reg("hdrTonemap", "HDR tonemap: 0 clamp (stock), 1 neutral, 2 ACES, 3 Reinhard, 4 Uncharted 2 (Hable), 5 AgX, 6 AgX punchy, 7 Khronos PBR Neutral, 8 Gran Turismo (Uchimura), 9 Lottes", "1");
+    s_cv.autoExposure = Reg("autoExposure", "Auto-exposure (D3D11, hdr 1): the screen metered, a dark picture (night, a dark zone, deep shade) lifted toward visible over ~1.5 s; never darkens, 0 = fixed exposure", "1");
+    s_cv.autoExposureTarget = Reg("autoExposureTarget", "Auto-exposure: the scene key (log-average linear luminance) below which it lifts", "0.06");
+    s_cv.autoExposureMax = Reg("autoExposureMax", "Auto-exposure: the most it lifts (2.25 = ~1.2 stops)", "2.25");
     s_cv.bloom = Reg("bloom", "Bloom intensity, 0 = off (D3D11/Vulkan)", "0");
     s_cv.bloomThreshold = Reg("bloomThreshold", "Bloom threshold (linear light; the stock shaders never pass 1)", "0.6");
     s_cv.ssao = Reg("lightingSsao", "Post-pass ambient occlusion intensity, 0 = off (D3D11/Vulkan)", "0");

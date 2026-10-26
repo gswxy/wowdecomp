@@ -449,7 +449,7 @@ static int32_t Script_CancelSell(lua_State* L) {
 static int32_t Script_QueryAuctionItems(lua_State* L) {
     WOWGUID auctioneer = CGAuctionHouse::m_auctioneer;
 
-    if (!auctioneer || !CGAuctionHouse::CanSendQuery(0)) {
+    if (!auctioneer || !CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::BROWSE_LIST)) {
         return 0;
     }
 
@@ -524,7 +524,7 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
 
     bool getAll = lua_type(L, 10) == LUA_TBOOLEAN && lua_toboolean(L, 10);
 
-    if (getAll && (CGAuctionHouse::m_queryPending[0] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(0))) {
+    if (getAll && (CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::BROWSE_LIST))) {
         return 0;
     }
 
@@ -560,11 +560,11 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
     msg.Finalize();
     ClientServices::Send2(&msg);
 
-    if (++CGAuctionHouse::m_queryPending[0] < 0) {
-        CGAuctionHouse::m_queryPending[0] = 0;
+    if (++CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[0] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = OsGetAsyncTimeMs();
 
     if (getAll) {
         CGAuctionHouse::m_lastGetAllTime = OsGetAsyncTimeMs();
@@ -617,7 +617,7 @@ static int32_t Script_GetAuctionItemLink(lua_State* L) {
 // VERIFY: d702b148 auto
 // OFFSET: 0x0059C740
 static int32_t Script_CanSendAuctionQuery(lua_State* L) {
-    int32_t type = 0;
+    CGAuctionHouse::LIST_TYPE type = CGAuctionHouse::LIST_TYPE::BROWSE_LIST;
 
     if (lua_isstring(L, 1)) {
         CGAuctionHouse::TableNameToType(lua_tolstring(L, 1, nullptr), &type);
@@ -629,7 +629,7 @@ static int32_t Script_CanSendAuctionQuery(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (type >= 3 || CGAuctionHouse::m_queryPending[type] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(type)) {
+    if (type >= CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES || CGAuctionHouse::m_queryPending[type] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(type)) {
         lua_pushnil(L);
     } else {
         lua_pushnumber(L, 1.0);
@@ -771,7 +771,7 @@ static int32_t Script_ClickAuctionSellItemButton(lua_State* L) {
 // VERIFY: a837f6c9 manual
 // OFFSET: 0x0059D4F0
 static int32_t Script_GetOwnerAuctionItems(lua_State* L) {
-    if (CGAuctionHouse::m_auctioneer && CGAuctionHouse::m_canGetOwnerList && CGAuctionHouse::CanSendQuery(2)) {
+    if (CGAuctionHouse::m_auctioneer && CGAuctionHouse::m_canGetOwnerList && CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::OWNER_LIST)) {
         CGAuctionHouse::GetOwnerList();
     }
 
@@ -781,7 +781,7 @@ static int32_t Script_GetOwnerAuctionItems(lua_State* L) {
 // VERIFY: 34540ddd manual
 // OFFSET: 0x0059D540
 static int32_t Script_GetBidderAuctionItems(lua_State* L) {
-    if (CGAuctionHouse::m_auctioneer && CGAuctionHouse::m_canGetBidderList && CGAuctionHouse::CanSendQuery(1)) {
+    if (CGAuctionHouse::m_auctioneer && CGAuctionHouse::m_canGetBidderList && CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::BIDDER_LIST)) {
         int32_t page = 0;
 
         if (lua_isnumber(L, 1)) {

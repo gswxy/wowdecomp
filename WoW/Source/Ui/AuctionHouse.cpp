@@ -96,10 +96,10 @@ int32_t CGAuctionHouse::m_selectedOwnedItem = -1;
 int32_t CGAuctionHouse::m_selectedBidItem = -1;
 
 // STATIC: 0x00C0E728
-uint32_t CGAuctionHouse::m_lastQueryTime[3];
+uint32_t CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES];
 
 // STATIC: 0x00C0E734
-int32_t CGAuctionHouse::m_queryPending[3];
+int32_t CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES];
 
 // STATIC: 0x00C0F3F4
 uint8_t CGAuctionHouse::m_sellItemSlot;
@@ -196,12 +196,12 @@ void CGAuctionHouse::EnterWorld() {
         FrameScript_SignalEvent(SCRIPT_EVENT_NEW_AUCTION_UPDATE, nullptr);
     }
 
-    CGAuctionHouse::m_lastQueryTime[0] = 0;
-    CGAuctionHouse::m_lastQueryTime[1] = 0;
-    CGAuctionHouse::m_lastQueryTime[2] = 0;
-    CGAuctionHouse::m_queryPending[0] = 0;
-    CGAuctionHouse::m_queryPending[1] = 0;
-    CGAuctionHouse::m_queryPending[2] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     CGAuctionHouse::m_auctioneer = WOWGUID();
     CGAuctionHouse::m_auctionHouseID = 0;
     CGAuctionHouse::m_browseList.m_count = 0;
@@ -240,7 +240,7 @@ void CGAuctionHouse::GetSellItem(WOWGUID* item, WOWGUID* container, uint8_t* slo
 // VERIFY: dc362496 manual
 // OFFSET: 0x0059A2F0
 bool CGAuctionHouse::CanSendQuery(int32_t type) {
-    if (type >= 3 || CGAuctionHouse::m_queryPending[type] > 0) {
+    if (type >= CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES || CGAuctionHouse::m_queryPending[type] > 0) {
         return false;
     }
 
@@ -563,19 +563,19 @@ bool AuctionSortToColumnIndex(const char* name, int32_t* column) {
 
 // VERIFY: f11c9771 auto
 // OFFSET: 0x0059A9D0
-bool CGAuctionHouse::TableNameToType(const char* name, int32_t* type) {
+bool CGAuctionHouse::TableNameToType(const char* name, CGAuctionHouse::LIST_TYPE* type) {
     if (!SStrCmpI(name, "list", STORM_MAX_STR)) {
-        *type = 0;
+        *type = CGAuctionHouse::LIST_TYPE::BROWSE_LIST;
         return true;
     }
 
     if (!SStrCmpI(name, "owner", STORM_MAX_STR)) {
-        *type = 2;
+        *type = CGAuctionHouse::LIST_TYPE::OWNER_LIST;
         return true;
     }
 
     if (!SStrCmpI(name, "bidder", STORM_MAX_STR)) {
-        *type = 1;
+        *type = CGAuctionHouse::LIST_TYPE::BIDDER_LIST;
         return true;
     }
 
@@ -1032,7 +1032,7 @@ void AuctionOwnedItemQueryCallback(int32_t id, const WOWGUID& guid, void* param,
         }
     }
 
-    if (!CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[2] <= 0) {
+    if (!CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] <= 0) {
         qsort(CGAuctionHouse::m_ownerList.m_data, CGAuctionHouse::m_ownerList.Count(), sizeof(AuctionItemInfo), CompareFunction);
         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_OWNED_LIST_UPDATE, nullptr);
     }
@@ -1045,7 +1045,7 @@ void AuctionOwnedSoldItemQueryCallback(int32_t id, const WOWGUID& guid, void* pa
         CGAuctionHouse::m_pendingSoldItems--;
     }
 
-    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[2] <= 0) {
+    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] <= 0) {
         qsort(CGAuctionHouse::m_ownerList.m_data, CGAuctionHouse::m_ownerList.Count(), sizeof(AuctionItemInfo), CompareFunction);
         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_OWNED_LIST_UPDATE, nullptr);
     }
@@ -1068,7 +1068,7 @@ void AuctionBidItemQueryCallback(int32_t id, const WOWGUID& guid, void* param, b
 // VERIFY: 45fce788 manual
 // OFFSET: 0x0059CC50
 void CGAuctionHouse::GetOwnerList() {
-    if (!CGAuctionHouse::m_canGetOwnerList || !CGAuctionHouse::CanSendQuery(2)) {
+    if (!CGAuctionHouse::m_canGetOwnerList || !CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::OWNER_LIST)) {
         return;
     }
 
@@ -1085,20 +1085,20 @@ void CGAuctionHouse::GetOwnerList() {
     salesMsg.Finalize();
     ClientServices::Send2(&salesMsg);
 
-    CGAuctionHouse::m_queryPending[2] += 2;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] += 2;
 
-    if (CGAuctionHouse::m_queryPending[2] < 0) {
-        CGAuctionHouse::m_queryPending[2] = 0;
+    if (CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[2] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = OsGetAsyncTimeMs();
     CGAuctionHouse::m_canGetOwnerList = 0;
 }
 
 // VERIFY: 8157fca2 manual
 // OFFSET: 0x0059CD90
 void RequestListPendingSales() {
-    if (!CGAuctionHouse::CanSendQuery(2)) {
+    if (!CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::OWNER_LIST)) {
         return;
     }
 
@@ -1108,11 +1108,11 @@ void RequestListPendingSales() {
     msg.Finalize();
     ClientServices::Send2(&msg);
 
-    if (++CGAuctionHouse::m_queryPending[2] < 0) {
-        CGAuctionHouse::m_queryPending[2] = 0;
+    if (++CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[2] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = OsGetAsyncTimeMs();
 }
 
 // VERIFY: 07dc7173 manual
@@ -1143,11 +1143,11 @@ void BidderListItems(int32_t page) {
     msg.Finalize();
     ClientServices::Send2(&msg);
 
-    if (++CGAuctionHouse::m_queryPending[1] < 0) {
-        CGAuctionHouse::m_queryPending[1] = 0;
+    if (++CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[1] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = OsGetAsyncTimeMs();
     CGAuctionHouse::m_canGetBidderList = 0;
     CGAuctionHouse::m_lastBidderPage = page;
 }
@@ -1236,11 +1236,11 @@ bool CGAuctionHouse::IsSellItemValid(CGItem_C* item, int32_t showError) {
 // VERIFY: d1664376 manual
 // OFFSET: 0x0059E160
 int32_t Packet_SMSG_AUCTION_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg) {
-    if (--CGAuctionHouse::m_queryPending[0] < 0) {
-        CGAuctionHouse::m_queryPending[0] = 0;
+    if (--CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[0] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = OsGetAsyncTimeMs();
 
     if (CGAuctionHouse::m_pendingBrowseItems) {
         CGAuctionHouse::m_pendingBrowseItems = 0;
@@ -1306,11 +1306,11 @@ int32_t Packet_SMSG_AUCTION_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t 
 // VERIFY: 143f6b55 manual
 // OFFSET: 0x0059E480
 int32_t Packet_SMSG_AUCTION_OWNER_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg) {
-    if (--CGAuctionHouse::m_queryPending[2] < 0) {
-        CGAuctionHouse::m_queryPending[2] = 0;
+    if (--CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[2] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = OsGetAsyncTimeMs();
 
     uint32_t kept = 0;
 
@@ -1385,7 +1385,7 @@ int32_t Packet_SMSG_AUCTION_OWNER_LIST_RESULT(void* param, NETMESSAGE msgId, uin
     msg->Get(CGAuctionHouse::m_numTotalOwned);
     msg->Get(reinterpret_cast<uint32_t&>(CGAuctionHouse::m_desiredDelayTime));
 
-    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[2] <= 0) {
+    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] <= 0) {
         qsort(CGAuctionHouse::m_ownerList.m_data, CGAuctionHouse::m_ownerList.Count(), sizeof(AuctionItemInfo), CompareFunction);
         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_OWNED_LIST_UPDATE, nullptr);
     }
@@ -1396,11 +1396,11 @@ int32_t Packet_SMSG_AUCTION_OWNER_LIST_RESULT(void* param, NETMESSAGE msgId, uin
 // VERIFY: 2b014930 manual
 // OFFSET: 0x0059E880
 int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg) {
-    if (--CGAuctionHouse::m_queryPending[2] < 0) {
-        CGAuctionHouse::m_queryPending[2] = 0;
+    if (--CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[2] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = OsGetAsyncTimeMs();
 
     uint32_t kept = 0;
 
@@ -1497,7 +1497,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
         index++;
     }
 
-    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[2] <= 0) {
+    if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems && CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] <= 0) {
         qsort(CGAuctionHouse::m_ownerList.m_data, CGAuctionHouse::m_ownerList.Count(), sizeof(AuctionItemInfo), CompareFunction);
         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_OWNED_LIST_UPDATE, nullptr);
     }
@@ -1508,11 +1508,11 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
 // VERIFY: 6dc0db61 manual
 // OFFSET: 0x0059ECD0
 int32_t Packet_SMSG_AUCTION_BIDDER_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg) {
-    if (--CGAuctionHouse::m_queryPending[1] < 0) {
-        CGAuctionHouse::m_queryPending[1] = 0;
+    if (--CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] < 0) {
+        CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
     }
 
-    CGAuctionHouse::m_lastQueryTime[1] = OsGetAsyncTimeMs();
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = OsGetAsyncTimeMs();
 
     if (CGAuctionHouse::m_pendingBidItems) {
         CGAuctionHouse::m_pendingBidItems = 0;
@@ -1584,12 +1584,12 @@ int32_t Packet_SMSG_AUCTION_BIDDER_LIST_RESULT(void* param, NETMESSAGE msgId, ui
 void CGAuctionHouse::SetAuctioneer(WOWGUID auctioneer, int32_t auctionHouseID) {
     CGGameUI::SetInteractTarget(auctioneer);
     CGAuctionHouse::m_auctionHouseID = auctionHouseID;
-    CGAuctionHouse::m_lastQueryTime[0] = 0;
-    CGAuctionHouse::m_lastQueryTime[1] = 0;
-    CGAuctionHouse::m_lastQueryTime[2] = 0;
-    CGAuctionHouse::m_queryPending[0] = 0;
-    CGAuctionHouse::m_queryPending[1] = 0;
-    CGAuctionHouse::m_queryPending[2] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     CGAuctionHouse::m_canGetOwnerList = 1;
     CGAuctionHouse::m_canGetBidderList = 1;
     CGAuctionHouse::m_auctioneer = auctioneer;
@@ -2161,12 +2161,12 @@ void CGAuctionHouse::InitializeGame() {
     CGAuctionHouse::m_bidderList.SetCount(0);
     CGAuctionHouse::m_browseList.SetCount(0);
     CGAuctionHouse::m_lastGetAllTime = 0;
-    CGAuctionHouse::m_lastQueryTime[0] = 0;
-    CGAuctionHouse::m_lastQueryTime[1] = 0;
-    CGAuctionHouse::m_lastQueryTime[2] = 0;
-    CGAuctionHouse::m_queryPending[0] = 0;
-    CGAuctionHouse::m_queryPending[1] = 0;
-    CGAuctionHouse::m_queryPending[2] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_lastQueryTime[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BIDDER_LIST] = 0;
+    CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     CGAuctionHouse::m_numOutbidItems = 0;
 
     CGAuctionHouse::m_outbidItems.SetCount(8);

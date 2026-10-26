@@ -69,6 +69,13 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum LIST_TYPE : int32_t {
+        BROWSE_LIST = 0,
+        BIDDER_LIST = 1,
+        OWNER_LIST = 2,
+        NUM_LIST_TYPES = 3,
+    };
+
     static void CloseAuctionHouse();
     static bool IsItemForSell(WOWGUID item);
     static AuctionSortCriteria m_bidSortCriteria[12];
@@ -94,8 +101,8 @@ class CGAuctionHouse {
     static AuctionSellItem m_sellItems[200];
     static int32_t m_havePendingSell;
     static WOWGUID m_sellItemContainer;
-    static uint32_t m_lastQueryTime[3];
-    static int32_t m_queryPending[3];
+    static uint32_t m_lastQueryTime[LIST_TYPE::NUM_LIST_TYPES];
+    static int32_t m_queryPending[LIST_TYPE::NUM_LIST_TYPES];
     static uint32_t m_numTotalOwned;
     static int32_t m_canGetOwnerList;
     static int32_t m_canGetBidderList;
@@ -130,7 +137,7 @@ class CGAuctionHouse {
     static void ClearOwnedSortCriteria();
     static void ClearBidSortCriteria();
     static const char* SortTypeToName(int32_t column);
-    static bool TableNameToType(const char* name, int32_t* type);
+    static bool TableNameToType(const char* name, LIST_TYPE* type);
     static void LockAllSellItems();
     static void UnlockAllSellItems();
     static void OnMultisellFailure(bool silent);

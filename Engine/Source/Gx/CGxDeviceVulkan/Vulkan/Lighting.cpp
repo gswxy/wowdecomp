@@ -56,17 +56,36 @@ namespace
         float m_source[4];
         float m_projW[4];
         float m_pass[4];
+        // BENILLA: as D3d11Lighting.cpp's PostConstants from m_ssilvb on
+        float m_ssilvb[4];
+        float m_skyRow[4];
+        float m_sky[4];
+        float m_wet[4];
+        float m_origin[4];
+        float m_projFwd[16];
+        float m_seam[4];
+        float m_giGrid[12];
+        float m_gi[4];
+        float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
-    constexpr uint32_t kMaxSets     = 32;     ///< dispatches one frame slot may record (a frame uses up to 17)
-    constexpr VkDeviceSize kUboStride = 512;  ///< >= sizeof(PostConstants), a multiple of any minUniformBufferOffsetAlignment (<= 256)
+    constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
+    constexpr VkDeviceSize kUboStride = 768;  ///< >= sizeof(PostConstants), a multiple of any minUniformBufferOffsetAlignment (<= 256)
     constexpr uint32_t kGroup       = 8;      ///< Lighting.glsl local_size_x / _y
     constexpr uint32_t kCopyPasses  = 4;      ///< scene render passes (MSAA, with or without the normal target) one generation may hand out
 
     static_assert(sizeof(PostConstants) <= kUboStride, "PostConstants outgrew its slot");
+
+    /// the set's bindings (Lighting.glsl): 0-2 sampled, 3 the output, 4 the constants, 5-6 the BENILLA data maps
+    constexpr uint32_t kBindings = 7;
+
+    VkDescriptorType BindingType(uint32_t i)
+    {
+        return i == 3 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : (i == 4 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    }
 
     struct Slot
     {
@@ -126,14 +145,18 @@ namespace
         texture::Image m_out;                 ///< RGBA8 at the scene's extent, B, G, R, A: what is copied into the scene
         texture::Image m_ao[2];               ///< RGBA16F at half the world viewport (rg16f would need shaderStorageImageExtendedFormats)
         texture::Image m_bloom[kBloomLevels]; ///< RGBA16F, halved level by level from the scene's extent
+        texture::Image m_giMap;               ///< BENILLA probe GI: the probe field (RGBA32F), uploaded when its serial moves
+        uint32_t m_giSerial = 0;
         uint64_t m_lastUsed = 0;
 
         bool ICreate();
         bool IGate();
         bool IEnsure(texture::Image& img, uint32_t width, uint32_t height, VkFormat format, bool depth);
         void IConstants(PostConstants& c, uint32_t targetWidth, uint32_t targetHeight, const float* source) const;
-        VkDescriptorSet ISet(const PostConstants& c, VkImageView depth, Input color, Input color2, VkImageView out);
-        bool IDispatch(VkCommandBuffer cmd, Prog prog, const PostConstants& c, VkImageView depth, Input color, Input color2, texture::Image& out, uint32_t width, uint32_t height);
+        VkDescriptorSet ISet(const PostConstants& c, VkImageView depth, Input color, Input color2, VkImageView out, Input sky = {}, Input gi = {});
+        bool IDispatch(VkCommandBuffer cmd, Prog prog, const PostConstants& c, VkImageView depth, Input color, Input color2, texture::Image& out, uint32_t width, uint32_t height, Input sky = {}, Input gi = {});
+        bool IUpload(VkCommandBuffer cmd, texture::Image& img, uint32_t& have, uint32_t serial, uint32_t width, uint32_t height, VkFormat format, uint32_t texelBytes, const void* data);
+        bool IMultiply(Prog prog, const VkRect2D& vp, Input sky, Input gi);
         VkPipeline ICopyPipeline();
         bool IIntoScene(VkCommandBuffer cmd, const PostConstants& c, const VkRect2D& vp);
         VkRect2D IViewportRect() const;
@@ -166,17 +189,17 @@ namespace
         this->m_dapi = h->dapi;
         const loader::Device& d = *this->m_dapi;
 
-        VkDescriptorSetLayoutBinding bindings[5] = {};
-        for (uint32_t i = 0; i < 5; i++)
+        VkDescriptorSetLayoutBinding bindings[kBindings] = {};
+        for (uint32_t i = 0; i < kBindings; i++)
         {
             bindings[i].binding         = i;
-            bindings[i].descriptorType  = i < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : (i == 3 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            bindings[i].descriptorType  = BindingType(i);
             bindings[i].descriptorCount = 1;
             bindings[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;   // fragment: LightingCopy.frag
         }
         VkDescriptorSetLayoutCreateInfo setInfo = {};
         setInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        setInfo.bindingCount = 5;
+        setInfo.bindingCount = kBindings;
         setInfo.pBindings    = bindings;
         VkResult r = d.CreateDescriptorSetLayout(this->m_vkDevice, &setInfo, nullptr, &this->m_setLayout);
 
@@ -196,6 +219,7 @@ namespace
             { kLightingApplyComp, sizeof kLightingApplyComp },
             { kLightingBloomComp, sizeof kLightingBloomComp },
             { kLightingTonemapComp, sizeof kLightingTonemapComp },
+            { kLightingGiComp, sizeof kLightingGiComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -246,7 +270,7 @@ namespace
         }
 
         VkDescriptorPoolSize sizes[3] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * kMaxSets },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * kMaxSets },
             { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxSets },
             { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxSets },
         };
@@ -376,6 +400,67 @@ namespace
         c.m_projW[1] = this->m_proj[7];
         c.m_projW[2] = this->m_proj[11];
         c.m_projW[3] = this->m_proj[15];
+
+        // BENILLA (D3d11Lighting.cpp IWriteConstants)
+        c.m_pass[2] = (p.m_features & GxLighting_Hdr) ? 0.0f : 1.0f;
+        c.m_ssilvb[0] = p.m_ssaoIntensity;
+        c.m_ssilvb[1] = p.m_ssgiIntensity;
+        c.m_ssilvb[2] = p.m_ssilvbRadius;
+        c.m_ssilvb[3] = p.m_ssilvbThickness;
+        memcpy(c.m_skyRow, p.m_skyRow, sizeof(c.m_skyRow));
+        memcpy(c.m_sky, p.m_skyParams, sizeof(c.m_sky));
+        c.m_wet[0] = p.m_wetness;
+        c.m_wet[1] = p.m_wetReflections ? 1.0f : 0.0f;
+        memcpy(c.m_origin, p.m_renderOrigin, sizeof(p.m_renderOrigin));
+        memcpy(c.m_projFwd, this->m_proj, sizeof(c.m_projFwd));
+        memcpy(c.m_giGrid, p.m_giGrid, sizeof(c.m_giGrid));
+        memcpy(c.m_gi, p.m_giParams, sizeof(c.m_gi));
+        memcpy(c.m_giAmbient, p.m_giAmbient, sizeof(c.m_giAmbient));
+    }
+
+    // BENILLA data maps (D3d11Lighting.cpp IGiMap / ISkyMap): (re)made at the source's size, uploaded when its serial
+    // moved. False until the image holds a whole upload.
+    bool VulkanLighting::IUpload(VkCommandBuffer cmd, texture::Image& img, uint32_t& have, uint32_t serial, uint32_t width, uint32_t height, VkFormat format, uint32_t texelBytes, const void* data)
+    {
+        if (!data || !width || !height) return false;
+
+        if (img.handle == VK_NULL_HANDLE || img.extent.width != width || img.extent.height != height)
+        {
+            if (img.handle != VK_NULL_HANDLE) frame::RetireImage(img, this->m_lastUsed);
+            img = texture::Image();
+            if (!texture::CreateMipped(width, height, 1, format, img)) { img = texture::Image(); return false; }
+        }
+        else if (have == serial && img.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return true;
+
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * texelBytes;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+        void* mapped = nullptr;
+        if (!frame::Stage(bytes, buffer, offset, mapped)) return img.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        memcpy(mapped, data, bytes);
+
+        texture::RegionCopy region;
+        region.width = width;
+        region.height = height;
+        region.srcOffset = offset;
+        if (texture::RecordRegions(cmd, img, buffer, &region, 1)) have = serial;
+        return img.layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+
+    // A pass over the world viewport that reads the scene (gxColor2) and writes it multiplied (or replaced) into m_out,
+    // then m_out into the scene: the D3D11 DEST_COLOR x SRC blends.
+    bool VulkanLighting::IMultiply(Prog prog, const VkRect2D& vp, Input sky, Input gi)
+    {
+        // a fresh one each time: an MSAA IIntoScene leaves the scene's pass open
+        VkCommandBuffer cmd = frame::Outside();
+        const texture::Image* scene = frame::Scene();
+        if (!cmd || !scene) return false;
+        this->IToGeneral(cmd, this->m_out);
+        PostConstants c;
+        this->IConstants(c, scene->extent.width, scene->extent.height, nullptr);
+        const Input sceneIn = { scene->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        return this->IDispatch(cmd, prog, c, this->m_depth.view, {}, sceneIn, this->m_out, vp.extent.width, vp.extent.height, sky, gi)
+            && this->IIntoScene(cmd, c, vp);
     }
 
     // A storage image made this frame (or retired and remade) holds nothing worth keeping: UNDEFINED to GENERAL,
@@ -395,11 +480,12 @@ namespace
         barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        this->m_dapi->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        // fragment: an MSAA IIntoScene's read of m_out before the next pass writes it
+        this->m_dapi->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
     }
 
-    VkDescriptorSet VulkanLighting::ISet(const PostConstants& c, VkImageView depth, Input color, Input color2, VkImageView out)
+    VkDescriptorSet VulkanLighting::ISet(const PostConstants& c, VkImageView depth, Input color, Input color2, VkImageView out, Input sky, Input gi)
     {
         Slot& slot = this->m_slots[frame::Slot()];
         const uint64_t serial = frame::Serial();
@@ -427,27 +513,29 @@ namespace
         memcpy(static_cast<uint8_t*>(slot.ubo.block.mapped) + offset, &c, sizeof(c));
         memory::FlushHost(slot.ubo.block);
 
-        VkDescriptorImageInfo images[4] = {};
+        VkDescriptorImageInfo images[kBindings] = {};
         images[0] = { this->m_nearest, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
         images[1] = { this->m_linear, color.view, color.layout };
         images[2] = { this->m_linear, color2.view, color2.layout };
         images[3] = { VK_NULL_HANDLE, out, VK_IMAGE_LAYOUT_GENERAL };
+        images[5] = { this->m_nearest, sky.view, sky.layout };
+        images[6] = { this->m_nearest, gi.view, gi.layout };
         VkDescriptorBufferInfo ubo = { slot.ubo.handle, offset, sizeof(PostConstants) };
 
         // only what the pass reads: a binding no code of the pipeline names needs no descriptor
-        VkWriteDescriptorSet writes[5] = {};
+        VkWriteDescriptorSet writes[kBindings] = {};
         uint32_t count = 0;
 
-        for (uint32_t i = 0; i < 5; i++)
+        for (uint32_t i = 0; i < kBindings; i++)
         {
-            if (i < 4 && images[i].imageView == VK_NULL_HANDLE) continue;
+            if (i != 4 && images[i].imageView == VK_NULL_HANDLE) continue;
             VkWriteDescriptorSet& w = writes[count++];
             w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             w.dstSet          = set;
             w.dstBinding      = i;
             w.descriptorCount = 1;
-            w.descriptorType  = i < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : (i == 3 ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-            if (i < 4) w.pImageInfo = &images[i];
+            w.descriptorType  = BindingType(i);
+            if (i != 4) w.pImageInfo = &images[i];
             else w.pBufferInfo = &ubo;
         }
 
@@ -455,9 +543,9 @@ namespace
         return set;
     }
 
-    bool VulkanLighting::IDispatch(VkCommandBuffer cmd, Prog prog, const PostConstants& c, VkImageView depth, Input color, Input color2, texture::Image& out, uint32_t width, uint32_t height)
+    bool VulkanLighting::IDispatch(VkCommandBuffer cmd, Prog prog, const PostConstants& c, VkImageView depth, Input color, Input color2, texture::Image& out, uint32_t width, uint32_t height, Input sky, Input gi)
     {
-        const VkDescriptorSet set = this->ISet(c, depth, color, color2, out.view);
+        const VkDescriptorSet set = this->ISet(c, depth, color, color2, out.view, sky, gi);
         if (set == VK_NULL_HANDLE) return false;
 
         const loader::Device& d = *this->m_dapi;
@@ -633,8 +721,9 @@ namespace
         const GxLightingParams& p = this->m_params;
         const bool ssao = (p.m_features & GxLighting_Ssao) && p.m_ssaoIntensity > 0.0f;
         const bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
+        const bool gi = (p.m_features & GxLighting_ProbeGi) && p.m_giProbes;
 
-        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog) || !this->IGate()) return;
+        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !gi) || !this->IGate()) return;
 
         const texture::Image* scene = frame::Scene();
         const uint32_t width = scene->extent.width;
@@ -677,14 +766,41 @@ namespace
             source[3] = 0.0f;
         }
 
-        // the apply pass names gxColor in code either way: the scene stands in for the occlusion when SSAO is off
-        this->IConstants(c, width, height, source);
-        c.m_pass[0] = ssao ? 1.0f : 0.0f;
-        c.m_pass[1] = fog ? 1.0f : 0.0f;
-        const Input aoIn = ssao ? Input{ this->m_ao[0].view, VK_IMAGE_LAYOUT_GENERAL } : sceneIn;
-        ok = ok && this->IDispatch(cmd, Prog_Apply, c, this->m_depth.view, aoIn, sceneIn, this->m_out, vp.extent.width, vp.extent.height);
+        // the BENILLA passes between the occlusion and the fog (D3d11Lighting.cpp OpaqueDone's order): AO, probe GI,
+        // fog. Without them the AO and the fog stay one pass.
+        const bool between = gi;
+        // the BENILLA data maps, uploaded ahead of every dispatch
+        const bool giOk = gi && this->IUpload(cmd, this->m_giMap, this->m_giSerial, p.m_giSerial, p.m_giSize[0], p.m_giSize[1], VK_FORMAT_R32G32B32A32_SFLOAT, 16, p.m_giProbes);
 
-        if (!ok || !this->IIntoScene(cmd, c, vp))
+        // the apply pass names gxColor in code either way: the scene stands in for the occlusion when SSAO is off
+        if (ssao || !between)
+        {
+            this->IConstants(c, width, height, source);
+            c.m_pass[0] = ssao ? 1.0f : 0.0f;
+            c.m_pass[1] = fog && !between ? 1.0f : 0.0f;
+            const Input aoIn = ssao ? Input{ this->m_ao[0].view, VK_IMAGE_LAYOUT_GENERAL } : sceneIn;
+            ok = ok && this->IDispatch(cmd, Prog_Apply, c, this->m_depth.view, aoIn, sceneIn, this->m_out, vp.extent.width, vp.extent.height);
+            ok = ok && this->IIntoScene(cmd, c, vp);
+        }
+
+        // BENILLA probe GI: x the light with the probes' irradiance in place of the stock ambient (lightingDebug 8: the factor)
+        if (ok && giOk) ok = this->IMultiply(Prog_Gi, vp, {}, { this->m_giMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+
+        if (ok && between && fog)
+        {
+            VkCommandBuffer fogCmd = frame::Outside();
+            ok = fogCmd != nullptr;
+            if (ok)
+            {
+                this->IToGeneral(fogCmd, this->m_out);
+                this->IConstants(c, width, height, source);
+                c.m_pass[1] = 1.0f;
+                ok = this->IDispatch(fogCmd, Prog_Apply, c, this->m_depth.view, sceneIn, sceneIn, this->m_out, vp.extent.width, vp.extent.height)
+                    && this->IIntoScene(fogCmd, c, vp);
+            }
+        }
+
+        if (!ok)
             Write(Warn, "vulkan: lighting: the SSAO / fog passes could not be recorded this frame");
     }
 
@@ -764,7 +880,7 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1] };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_giMap };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 

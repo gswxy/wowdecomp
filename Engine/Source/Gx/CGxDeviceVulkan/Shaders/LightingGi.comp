@@ -1,0 +1,111 @@
+// BENILLA probe GI (Lighting.hlsl GiPs, probegi.wgsl pick / accum / finish, the cascades finest first): the frame
+// x (gi + sun) / (ambient + sun) over the world viewport; lightingDebug 8 the factor / 2. gxColor2 the scene,
+// gxGiProbes the field (5 RGBA32F texels a probe, ProbeGi.h). Written B, G, R, A as LightingApply.comp.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, rgba8) uniform writeonly image2D gxOut;
+
+const ivec3 kGiDims = ivec3(16, 16, 8);
+
+vec4 GiProbeTexel(int c, ivec3 w, int q) {
+    return texelFetch(gxGiProbes, ivec2(w.x * 5 + q, c * kGiDims.y * kGiDims.z + w.z * kGiDims.y + w.y), 0);
+}
+
+// the factor, or w 0: this pixel is left alone (the HLSL's discard)
+vec4 Gi(vec2 pos, float d) {
+    if (!GxIsGeometry(d)) {
+        return vec4(0.0);
+    }
+
+    vec3 pv = GxViewPos(pos, d);
+    vec3 nv = SvNormal(ivec2(pos), pv);
+    vec3 p = (vec4(pv, 1.0) * gxInvView).xyz;
+    vec3 n = normalize((vec4(nv, 0.0) * gxInvView).xyz);
+    vec3 sum = vec3(0.0);
+    float conf = 0.0;
+    float remain = 1.0;
+
+    for (int c = 0; c < 3; c++) {
+        float spacing = gxGiGrid[c].w;
+        vec3 f = (p + n * (spacing * gxGi.y) - gxGiGrid[c].xyz) / spacing;
+        vec3 lo = floor(f);
+        vec3 dims = vec3(kGiDims);
+        float edge = min(min(f.x, f.y), min(f.z, min(min(dims.x - 1.0 - f.x, dims.y - 1.0 - f.y), dims.z - 1.0 - f.z)));
+        float inside = clamp((edge - 0.5) / 3.0, 0.0, 1.0);
+
+        if (inside <= 0.0) {
+            continue;
+        }
+
+        ivec3 base = ivec3(clamp(lo, vec3(0.0), dims - 2.0));
+        vec3 fr = clamp(f - lo, 0.0, 1.0);
+        vec3 acc = vec3(0.0);
+        float weight = 0.0;
+
+        for (int k = 0; k < 8; k++) {
+            ivec3 o = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+            ivec3 w3 = base + o;
+            vec4 dc = GiProbeTexel(c, w3, 0);
+            float w = dc.w;
+
+            if (w <= 0.0) {
+                continue;
+            }
+
+            vec3 tri = mix(1.0 - fr, fr, vec3(o));
+            w *= max(tri.x * tri.y * tri.z, 1e-4);
+            vec3 toProbe = gxGiGrid[c].xyz + vec3(w3) * spacing - p;
+            float facing = dot(normalize(toProbe + n * 1e-3), n) * 0.5 + 0.5;
+            w *= facing * facing + 0.2;
+
+            if (gxGi.z > 0.5) {
+                vec4 m = GiProbeTexel(c, w3, 4);
+                float reach = length(toProbe);
+                if (m.x > 0.0 && reach > m.x) {
+                    float variance = max(m.y - m.x * m.x, 1e-3);
+                    float over = reach - m.x;
+                    w *= clamp(variance / (variance + over * over), 0.0, 1.0);
+                }
+            }
+
+            vec3 e = max(dc.rgb + GiProbeTexel(c, w3, 1).rgb * n.x + GiProbeTexel(c, w3, 2).rgb * n.y + GiProbeTexel(c, w3, 3).rgb * n.z, 0.0);
+            acc += e * w;
+            weight += w;
+        }
+
+        if (weight > 1e-5) {
+            float share = remain * inside * clamp(weight * 3.0, 0.0, 1.0);
+            sum += acc / weight * share;
+            conf += share;
+        }
+
+        remain *= 1.0 - inside;
+    }
+
+    if (conf <= 1e-4) {
+        return vec4(0.0);
+    }
+
+    vec3 ambient = gxGiAmbient.rgb;
+    vec3 sun = gxSunColor.rgb * clamp(dot(n, gxSunDir.xyz), 0.0, 1.0);
+    vec3 gi = mix(ambient, sum / conf, clamp(conf, 0.0, 1.0) * gxGi.x);
+    vec3 factor = clamp((gi + sun) / max(ambient + sun, 1e-3), 0.0, 4.0);
+    return gxTone.z == 8.0 ? vec4(factor * 0.5, 2.0) : vec4(factor, 1.0);
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    if (any(greaterThanEqual(id, ivec2(gxViewportPx.zw)))) {
+        return;
+    }
+
+    ivec2 px = id + ivec2(gxViewportPx.xy);
+    vec2 pos = vec2(px) + 0.5;
+    vec4 s = texelFetch(gxColor2, px, 0);
+    vec4 g = Gi(pos, GxDepthAt(px));
+    vec3 c = g.w > 0.5 ? GxMultiply(s.rgb, g.rgb, g.w > 1.5) : s.rgb;
+    imageStore(gxOut, px, vec4(c, s.a).bgra);
+}

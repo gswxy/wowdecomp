@@ -65,10 +65,10 @@ static char s_rewardItemTexture[260];
 static int32_t Script_GetLFGRoles(lua_State* L) {
     if (s_cvLfgSelectedRoles) {
         int32_t roles = s_cvLfgSelectedRoles->m_intValue;
-        lua_pushboolean(L, roles & 1);
-        lua_pushboolean(L, roles & 2);
-        lua_pushboolean(L, roles & 4);
-        lua_pushboolean(L, roles & 8);
+        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::TANK);
+        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
     } else {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -122,9 +122,9 @@ static int32_t Script_GetLFGDeserterExpiration(lua_State* L) {
 static int32_t Script_GetAvailableRoles(lua_State* L) {
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
     uint8_t roles = CGLookingForGroup::GetClassRoles(rec->m_id);
-    lua_pushboolean(L, roles & 0x2);
-    lua_pushboolean(L, roles & 0x4);
-    lua_pushboolean(L, roles & 0x8);
+    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::TANK);
+    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
+    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
     return 3;
 }
 
@@ -134,15 +134,15 @@ static int32_t Script_SetLFGRoles(lua_State* L) {
     int32_t roles = StringToBOOL(L, 1, 0) != 0;
 
     if (StringToBOOL(L, 2, 0)) {
-        roles |= 0x2;
+        roles |= CGLookingForGroup::ROLE_FLAGS::TANK;
     }
 
     if (StringToBOOL(L, 3, 0)) {
-        roles |= 0x4;
+        roles |= CGLookingForGroup::ROLE_FLAGS::HEALER;
     }
 
     if (StringToBOOL(L, 4, 0)) {
-        roles |= 0x8;
+        roles |= CGLookingForGroup::ROLE_FLAGS::DAMAGER;
     }
 
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
@@ -815,11 +815,11 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
         }
     }
 
-    if (roles & 0x2) {
+    if (roles & CGLookingForGroup::ROLE_FLAGS::TANK) {
         lua_pushstring(L, "TANK");
-    } else if (roles & 0x4) {
+    } else if (roles & CGLookingForGroup::ROLE_FLAGS::HEALER) {
         lua_pushstring(L, "HEALER");
-    } else if (roles & 0x8) {
+    } else if (roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER) {
         lua_pushstring(L, "DAMAGER");
     } else {
         lua_pushstring(L, "UNKNOWN");
@@ -843,7 +843,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     lua_pushnumber(L, total);
     lua_pushnumber(L, completed);
     lua_pushnumber(L, 5.0);
-    lua_pushboolean(L, roles & 0x1);
+    lua_pushboolean(L, roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
     lua_pushboolean(L, (dungeon->m_flags >> 2) & 0x1);
     return 12;
 }
@@ -1403,10 +1403,10 @@ static float s_teleportTime;
 // OFFSET: 0x005529E0
 static int32_t AddLFGPlayerInfo(lua_State* L, LFGListPlayer* player) {
     if (player) {
-        lua_pushboolean(L, player->m_roles & 0x1);
-        lua_pushboolean(L, player->m_roles & 0x2);
-        lua_pushboolean(L, player->m_roles & 0x4);
-        lua_pushboolean(L, player->m_roles & 0x8);
+        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK);
+        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, player->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
         lua_pushnumber(L, player->unk_0064);
         lua_pushnumber(L, player->m_talents[0]);
         lua_pushnumber(L, player->m_talents[1]);
@@ -1565,7 +1565,7 @@ static int32_t Script_CompleteLFGRoleCheck(lua_State* L) {
     if (StringToBOOL(L, 1, 0)) {
         roles = FilterRolesByClass(static_cast<uint8_t>(s_cvLfgSelectedRoles->m_intValue));
 
-        if (!(roles & 0xE)) {
+        if (!(roles & CGLookingForGroup::ROLE_FLAGS::COMBAT_ROLES)) {
             CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
             lua_pushboolean(L, 0);
             return 1;

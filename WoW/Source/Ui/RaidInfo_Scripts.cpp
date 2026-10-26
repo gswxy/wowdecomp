@@ -1,4 +1,5 @@
 #include "RaidInfo.h"
+#include "WoW/Source/Ui/LFGInfo.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
 #include <cstdint>
 #include "Engine/Source/FrameScript/FrameScript.h"
@@ -363,19 +364,19 @@ static int32_t Script_GetRaidRosterInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 2) {
+    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::TANK) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 4) {
+    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::HEALER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 8) {
+    if (member->m_groupRole & CGLookingForGroup::ROLE_FLAGS::DAMAGER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);

@@ -176,7 +176,7 @@ void CGLookingForGroup::JoinLFG() {
     CDataStore msg;
     uint32_t roles = FilterRolesByClass(static_cast<uint8_t>(s_cvLfgSelectedRoles->m_intValue));
 
-    if (!(roles & ~0x1)) {
+    if (!(roles & ~CGLookingForGroup::ROLE_FLAGS::LEADER)) {
         return;
     }
 
@@ -255,13 +255,13 @@ int32_t CGLookingForGroup::GetLFGProposalMember(lua_State* L) {
     }
 
     LFGProposalMember* member = &CGLookingForGroup::m_proposal.m_members[index];
-    lua_pushboolean(L, member->m_roles & 0x1);
+    lua_pushboolean(L, member->m_roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
 
-    if (member->m_roles & 0x2) {
+    if (member->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK) {
         lua_pushstring(L, s_roleTokens[0]);
-    } else if (member->m_roles & 0x4) {
+    } else if (member->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER) {
         lua_pushstring(L, s_roleTokens[1]);
-    } else if (member->m_roles & 0x8) {
+    } else if (member->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER) {
         lua_pushstring(L, s_roleTokens[2]);
     } else {
         lua_pushstring(L, "UNKNOWN");
@@ -363,10 +363,10 @@ int32_t CGLookingForGroup::GetLFGRoleUpdateMember(lua_State* L) {
     }
 
     if (member->m_confirmed) {
-        lua_pushboolean(L, member->m_roles & 0x1);
-        lua_pushboolean(L, member->m_roles & 0x2);
-        lua_pushboolean(L, member->m_roles & 0x4);
-        lua_pushboolean(L, member->m_roles & 0x8);
+        lua_pushboolean(L, member->m_roles & CGLookingForGroup::ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, member->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK);
+        lua_pushboolean(L, member->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, member->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
     } else {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -659,15 +659,15 @@ static int QSortLFGPlayer(const void* a, const void* b) {
             }
 
             case 4:
-                result = (playerB->m_roles & 0x2) - (playerA->m_roles & 0x2);
+                result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::TANK);
                 break;
 
             case 5:
-                result = (playerB->m_roles & 0x4) - (playerA->m_roles & 0x4);
+                result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::HEALER);
                 break;
 
             case 6:
-                result = (playerB->m_roles & 0x8) - (playerA->m_roles & 0x8);
+                result = (playerB->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER) - (playerA->m_roles & CGLookingForGroup::ROLE_FLAGS::DAMAGER);
                 break;
 
             default:

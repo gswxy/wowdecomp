@@ -157,6 +157,14 @@ struct LFGRoleCheckMember {
 class LfgDungeonsRec;
 class CGLookingForGroup {
     public:
+    enum ROLE_FLAGS : int32_t {
+        LEADER = 0x1,
+        TANK = 0x2,
+        HEALER = 0x4,
+        DAMAGER = 0x8,
+        COMBAT_ROLES = 0xE,
+    };
+
     struct LFGEntryInfo {
         /* 0000 */ int32_t m_id;
         /* 0004 */ int32_t m_order;

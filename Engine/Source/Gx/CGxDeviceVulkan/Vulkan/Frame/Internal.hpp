@@ -71,6 +71,7 @@ namespace gxvk::vk::frame::detail
 
     /// The scene's colour format: the engine's Argb8888 (its back buffer's).
     constexpr VkFormat kSceneFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    constexpr VkFormat kHdrSceneFormat = VK_FORMAT_R16G16B16A16_SFLOAT;   ///< V7: the world's scene under hdr 1
     constexpr VkFormat kNormalFormat = VK_FORMAT_R8G8B8A8_UNORM;   ///< GBUFFER: the normal target
 
     /// How long an acquire may block before the frame goes on without an image (a surface in a
@@ -175,6 +176,12 @@ namespace gxvk::vk::frame::detail
         DepthBuffer normal;                              ///< GBUFFER: the scene's normal target (RGBA8; MSAA: msNormal's resolve), none without independentBlend
         DepthBuffer msNormal;                            ///< GBUFFER: sceneSamples > 1: the multisampled normal target
         bool        normalCleared = false;               ///< GBUFFER: zeroed since the last present (BeginPass)
+        /// V7 (hdr 1, D3d11Lighting ISwap): the float scene the world draws into, with its MSAA colour. While
+        /// hdrActive they trade places with scene / msColour, so every pass, copy and framebuffer over "the scene"
+        /// lands on them; the 8-bit scene (the present pass's) waits in hdrScene for the tonemap.
+        texture::Image hdrScene;
+        DepthBuffer hdrMsColour;
+        bool        hdrActive = false;
 
         // --- targets ----------------------------------------------------------------------------------
         VkFormat    depthFormat = VK_FORMAT_UNDEFINED;
@@ -256,6 +263,7 @@ namespace gxvk::vk::frame::detail
     bool PassNormal(const Target& t);   ///< GBUFFER: a pass on this target carries the normal attachment
     bool CreateMsImages(const context::Handles& h);
     void DestroyMsImages();
+    void DropHdrScene();   ///< V7: swapped back and destroyed (device idle); with the scene
     void CreateNormalImages(const context::Handles& h);
     uint32_t FramebufferFor(const Target& t, VkFormat format, VkExtent2D extent);
     bool TargetView(const Target& t, const texture::Image*& image, VkFormat& format, VkExtent2D& extent);

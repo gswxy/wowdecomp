@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 namespace
@@ -69,7 +70,9 @@ namespace
         float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Wet, Prog_Meter, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Wet, Prog_Meter,
+                // V7: the scene passes' float-scene variants (GX_HDR_SCENE: RGBA16F out, in order)
+                Prog_ApplyHdr, Prog_GiHdr, Prog_SkyHdr, Prog_WetHdr, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
     // BENILLA auto-exposure (D3d11Lighting.cpp s_meter* / s_autoExposure*)
@@ -81,7 +84,8 @@ namespace
     constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
     constexpr VkDeviceSize kUboStride = 768;  ///< >= sizeof(PostConstants), a multiple of any minUniformBufferOffsetAlignment (<= 256)
     constexpr uint32_t kGroup       = 8;      ///< Lighting.glsl local_size_x / _y
-    constexpr uint32_t kCopyPasses  = 4;      ///< scene render passes (MSAA, with or without the normal target) one generation may hand out
+    constexpr uint32_t kCopyPasses  = 8;      ///< scene render passes (MSAA, with or without the normal target, 8-bit or V7 float) one generation may hand out
+    constexpr VkFormat kHdrFormat   = VK_FORMAT_R16G16B16A16_SFLOAT;   ///< V7: frame::SetSceneHdr's scene, and m_out while it stands
 
     static_assert(sizeof(PostConstants) <= kUboStride, "PostConstants outgrew its slot");
 
@@ -144,6 +148,7 @@ namespace
         // pass, all dropped with the pass generation (the frame made the device idle before it changed)
         VkShaderModule m_copyVert = VK_NULL_HANDLE;
         VkShaderModule m_copyFrag = VK_NULL_HANDLE;
+        VkShaderModule m_copyFragHdr = VK_NULL_HANDLE;   ///< V7: the copy into a float scene (no swizzle)
         VkShaderModule m_seamFrag = VK_NULL_HANDLE;
         VkRenderPass m_copyPass[2][kCopyPasses] = {};   ///< [0] the MSAA copy, [1] the far seam
         VkPipeline m_copyPipeline[2][kCopyPasses] = {};
@@ -151,7 +156,9 @@ namespace
         uint32_t m_copyGen = 0;
 
         texture::Image m_depth;               ///< the scene depth copy
-        texture::Image m_out;                 ///< RGBA8 at the scene's extent, B, G, R, A: what is copied into the scene
+        texture::Image m_out;                 ///< RGBA8 at the scene's extent, B, G, R, A: what is copied into the scene (V7: RGBA16F in order while m_hdr)
+        texture::Image m_outHdr;              ///< V7: the other of the two (swapped with m_out at BeginWorld / EndWorld)
+        bool m_hdr = false;                   ///< V7: the world is drawing into frame::SetSceneHdr's float scene
         texture::Image m_ao[2];               ///< RGBA16F at half the world viewport (rg16f would need shaderStorageImageExtendedFormats)
         texture::Image m_bloom[kBloomLevels]; ///< RGBA16F, halved level by level from the scene's extent
         texture::Image m_ssilvb[2];           ///< BENILLA SSILVB: RGBA16F at the world viewport's size (gather, then the blur's ping-pong)
@@ -250,6 +257,10 @@ namespace
             { kLightingSsilvbBlurComp, sizeof kLightingSsilvbBlurComp },
             { kLightingWetComp, sizeof kLightingWetComp },
             { kLightingMeterComp, sizeof kLightingMeterComp },
+            { kLightingApplyHdrComp, sizeof kLightingApplyHdrComp },
+            { kLightingGiHdrComp, sizeof kLightingGiHdrComp },
+            { kLightingSkyHdrComp, sizeof kLightingSkyHdrComp },
+            { kLightingWetHdrComp, sizeof kLightingWetHdrComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -283,6 +294,9 @@ namespace
             moduleInfo.codeSize = sizeof kLightingCopyFrag;
             moduleInfo.pCode    = kLightingCopyFrag;
             if (r == VK_SUCCESS) r = d.CreateShaderModule(this->m_vkDevice, &moduleInfo, nullptr, &this->m_copyFrag);
+            moduleInfo.codeSize = sizeof kLightingCopyHdrFrag;
+            moduleInfo.pCode    = kLightingCopyHdrFrag;
+            if (r == VK_SUCCESS) r = d.CreateShaderModule(this->m_vkDevice, &moduleInfo, nullptr, &this->m_copyFragHdr);
             moduleInfo.codeSize = sizeof kLightingSeamFrag;
             moduleInfo.pCode    = kLightingSeamFrag;
             if (r == VK_SUCCESS) r = d.CreateShaderModule(this->m_vkDevice, &moduleInfo, nullptr, &this->m_seamFrag);
@@ -711,6 +725,10 @@ namespace
         const VkDescriptorSet set = this->ISet(c, depth, color, color2, out.view, sky, gi);
         if (set == VK_NULL_HANDLE) return false;
 
+        // V7: a scene pass writing the float m_out takes its RGBA16F variant
+        if (out.format == kHdrFormat && &out == &this->m_out)
+            prog = prog == Prog_Apply ? Prog_ApplyHdr : prog == Prog_Gi ? Prog_GiHdr : prog == Prog_Sky ? Prog_SkyHdr : prog == Prog_Wet ? Prog_WetHdr : prog;
+
         const loader::Device& d = *this->m_dapi;
         this->IBarrier(cmd);
         d.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, this->m_pipelines[prog]);
@@ -754,7 +772,7 @@ namespace
         stages[0].pName  = "main";
         stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = seam ? this->m_seamFrag : this->m_copyFrag;
+        stages[1].module = seam ? this->m_seamFrag : (frame::Scene()->format == kHdrFormat ? this->m_copyFragHdr : this->m_copyFrag);   // V7: a pass implies its format
         stages[1].pName  = "main";
 
         VkPipelineVertexInputStateCreateInfo vertexInput = {};
@@ -872,6 +890,17 @@ namespace
         // the world viewport, as the draws will place it (CGWorldFrame::OnWorldRender has just set it)
         VkRect2D scissor;
         if (!this->m_device->IPlaceD3d(this->m_viewport, scissor)) this->m_viewport = {};
+
+        // V7 (D3d11Lighting BeginWorld): hdr 1 draws the world into a float scene, cleared black so the bloom finds
+        // nothing outside the world viewport; EndWorld's tonemap brings it into the 8-bit one. Without it (no float
+        // target to be had) the world stays 8-bit and the tonemap works on that, as before.
+        if ((params.m_features & GxLighting_Hdr) && this->IGate() && frame::SetSceneHdr(true))
+        {
+            std::swap(this->m_out, this->m_outHdr);
+            this->m_hdr = true;
+            const float black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            frame::Clear(1, black, nullptr);
+        }
     }
 
     void VulkanLighting::SetupView(const GxLightingParams& params)
@@ -914,7 +943,7 @@ namespace
         const bool aoOk = !ssao
             || (ssilvb ? this->IEnsure(this->m_ssilvb[0], vp.extent.width, vp.extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, false) && this->IEnsure(this->m_ssilvb[1], vp.extent.width, vp.extent.height, VK_FORMAT_R16G16B16A16_SFLOAT, false)
                        : this->IEnsure(this->m_ao[0], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false) && this->IEnsure(this->m_ao[1], aoWidth, aoHeight, VK_FORMAT_R16G16B16A16_SFLOAT, false));
-        if (!aoOk || !this->IEnsure(this->m_out, width, height, VK_FORMAT_R8G8B8A8_UNORM, false)) return;
+        if (!aoOk || !this->IEnsure(this->m_out, width, height, scene->format == kHdrFormat ? kHdrFormat : VK_FORMAT_R8G8B8A8_UNORM, false)) return;
 
         VkCommandBuffer cmd = frame::Outside();
         if (!cmd) return;
@@ -1053,10 +1082,26 @@ namespace
         if (!this->m_worldActive) return;
         this->m_worldActive = false;
 
+        // V7: the 8-bit scene is the target again whatever follows; the world waits in the float one
+        const bool hdr = this->m_hdr;
+        if (hdr)
+        {
+            frame::SetSceneHdr(false);
+            std::swap(this->m_out, this->m_outHdr);
+            this->m_hdr = false;
+        }
+
         const GxLightingParams& p = this->m_params;
         if (!(p.m_features & GxLighting_Hdr) || !this->IGate()) return;
 
         const texture::Image* scene = frame::Scene();
+        // what the meter, the bloom and the tonemap read: the float world (V7), else the 8-bit scene itself
+        const texture::Image* world = hdr ? frame::HdrScene() : scene;
+        if (!world || world->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || world->extent.width != scene->extent.width || world->extent.height != scene->extent.height)
+        {
+            Write(Warn, "vulkan: lighting: the float scene is gone; the tonemap is skipped this frame");
+            return;
+        }
         const uint32_t width = scene->extent.width;
         const uint32_t height = scene->extent.height;
         if (!this->IEnsure(this->m_out, width, height, VK_FORMAT_R8G8B8A8_UNORM, false)) return;
@@ -1081,7 +1126,7 @@ namespace
 
         this->m_lastUsed = frame::Serial();
         this->IToGeneral(cmd, this->m_out);
-        const Input sceneIn = { scene->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        const Input sceneIn = { world->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
         PostConstants c;
         bool ok = true;
 
@@ -1127,7 +1172,7 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap, &this->m_wet, &this->m_meter };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_outHdr, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap, &this->m_wet, &this->m_meter };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 
@@ -1149,6 +1194,7 @@ namespace
                     if (pipeline != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, pipeline, nullptr);
             if (this->m_copyVert != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_copyVert, nullptr);
             if (this->m_copyFrag != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_copyFrag, nullptr);
+            if (this->m_copyFragHdr != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_copyFragHdr, nullptr);
             if (this->m_seamFrag != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_seamFrag, nullptr);
             if (this->m_linear != VK_NULL_HANDLE) d.DestroySampler(this->m_vkDevice, this->m_linear, nullptr);
             if (this->m_nearest != VK_NULL_HANDLE) d.DestroySampler(this->m_vkDevice, this->m_nearest, nullptr);

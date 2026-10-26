@@ -11,5 +11,9 @@ layout(set = 0, binding = 1) uniform sampler2D gxColor;
 
 void main()
 {
+#ifdef GX_HDR_SCENE
+    outColor = texelFetch(gxColor, ivec2(gl_FragCoord.xy), 0);   // V7: the float m_out is in order
+#else
     outColor = texelFetch(gxColor, ivec2(gl_FragCoord.xy), 0).bgra;
+#endif
 }

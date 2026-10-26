@@ -5,7 +5,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "Lighting.glsl"
 
-layout(set = 0, binding = 3, rgba8) uniform writeonly image2D gxOut;
+layout(set = 0, binding = 3, GX_SCENE_FORMAT) uniform writeonly image2D gxOut;
 
 const ivec3 kGiDims = ivec3(16, 16, 8);
 
@@ -107,5 +107,5 @@ void main() {
     vec4 s = texelFetch(gxColor2, px, 0);
     vec4 g = Gi(pos, GxDepthAt(px));
     vec3 c = g.w > 0.5 ? GxMultiply(s.rgb, g.rgb, g.w > 1.5) : s.rgb;
-    imageStore(gxOut, px, vec4(c, s.a).bgra);
+    imageStore(gxOut, px, vec4(c, s.a).GX_SCENE_ORDER);
 }

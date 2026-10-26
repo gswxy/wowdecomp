@@ -6,7 +6,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "Lighting.glsl"
 
-layout(set = 0, binding = 3, rgba8) uniform writeonly image2D gxOut;
+layout(set = 0, binding = 3, GX_SCENE_FORMAT) uniform writeonly image2D gxOut;
 
 // the occlusion at this pixel, or (debug 1, 4, 5) the colour that replaces the scene's: w 1 = replace
 vec4 AoComposite(vec2 pos, float d) {
@@ -112,5 +112,5 @@ void main() {
         c = mix(c, fog.rgb, fog.a);
     }
 
-    imageStore(gxOut, px, vec4(c, s.a).bgra);
+    imageStore(gxOut, px, vec4(c, s.a).GX_SCENE_ORDER);
 }

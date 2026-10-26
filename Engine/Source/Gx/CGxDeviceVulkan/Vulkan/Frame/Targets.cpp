@@ -2,6 +2,8 @@
 // framebuffers per target, and the resolution of the current target.
 #include "Engine/Source/Gx/CGxDeviceVulkan/Vulkan/Frame/Internal.hpp"
 
+#include <utility>
+
 namespace gxvk::vk::frame::detail
 {
     /// The depth format every target gets: D24S8 (the depth quantisation D3D's default D24S8 has),
@@ -258,8 +260,10 @@ namespace gxvk::vk::frame::detail
 
     /// A device-local 2D image of one level and its view: a depth buffer (a depth format) or the MSAA
     /// scene's colour. False, with nothing left behind, when it cannot be had.
-    static bool MakeImage(VkFormat format, VkExtent2D extent, uint32_t samples, VkImageUsageFlags usage, DepthBuffer& d)
+    static bool MakeImage(VkFormat format, VkExtent2D extent, uint32_t samples, VkImageUsageFlags usage, DepthBuffer& d, bool fatal = true)
     {
+        // V7: the hdr scene's MSAA colour is optional; its failure leaves the 8-bit scene, not a failed frame
+        auto Fail = [fatal](const char* what, VkResult r) { if (fatal) detail::Fail(what, r); else Write(Warn, "vulkan: frame: %s failed (%s)", what, ResultName(r)); };
         const bool isDepth = format == s.depthFormat;
         VkImageCreateInfo info = {};
         info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -365,6 +369,26 @@ namespace gxvk::vk::frame::detail
     }
 
     bool PassNormal(const Target& t) { return !t.image && s.normal.view != VK_NULL_HANDLE; }
+
+    void DropHdrScene()
+    {
+        if (s.hdrActive)
+        {
+            std::swap(s.scene, s.hdrScene);
+            std::swap(s.msColour, s.hdrMsColour);
+            s.hdrActive = false;
+        }
+        if (s.hdrScene.handle != VK_NULL_HANDLE)
+        {
+            DropFramebuffersOf(s.hdrScene.handle, false);
+            texture::DestroyIdle(s.hdrScene);
+        }
+        s.hdrScene = texture::Image();
+        DepthBuffer& d = s.hdrMsColour;
+        if (d.view != VK_NULL_HANDLE) s.dapi->DestroyImageView(s.device, d.view, nullptr);
+        if (d.image != VK_NULL_HANDLE) { s.dapi->DestroyImage(s.device, d.image, nullptr); memory::Free(d.block); }
+        d = DepthBuffer();
+    }
 
     /// The MSAA and normal images; the caller has made the device idle (they go with the scene).
     void DestroyMsImages()
@@ -604,5 +628,43 @@ namespace gxvk::vk::frame::detail
         }
         s.passCount = 0;
         ++s.passGen;
+    }
+}
+
+namespace gxvk::vk::frame
+{
+    using namespace detail;
+
+    bool SetSceneHdr(bool on)
+    {
+        if (on == s.hdrActive) return true;
+        if (on)
+        {
+            if (s.failed || s.scene.handle == VK_NULL_HANDLE) return false;
+            // made once per scene (DropImageObjects takes them with it: a resize, a gxMultisample change)
+            if (s.hdrScene.handle == VK_NULL_HANDLE && !texture::CreateTarget(s.scene.extent.width, s.scene.extent.height, 1, false, kHdrSceneFormat, s.hdrScene))
+            {
+                s.hdrScene = texture::Image();
+                return false;
+            }
+            if (s.sceneSamples > 1 && s.hdrMsColour.image == VK_NULL_HANDLE)
+            {
+                if (!MakeImage(kHdrSceneFormat, s.scene.extent, s.sceneSamples, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, s.hdrMsColour, false)) return false;
+                s.hdrMsColour.extent = s.scene.extent;
+            }
+        }
+        // as SetTarget: a clear pending on the current target lands before its pass ends
+        if (s.open && (s.clearColourPending || s.clearDepthPending)) BeginPass();
+        if (s.open) EndPass();
+        std::swap(s.scene, s.hdrScene);
+        std::swap(s.msColour, s.hdrMsColour);
+        s.hdrActive = on;
+        return true;
+    }
+
+    const texture::Image* HdrScene()
+    {
+        const texture::Image& hdr = s.hdrActive ? s.scene : s.hdrScene;
+        return hdr.handle != VK_NULL_HANDLE ? &hdr : nullptr;
     }
 }

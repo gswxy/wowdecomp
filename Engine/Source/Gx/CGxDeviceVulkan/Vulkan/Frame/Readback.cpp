@@ -229,7 +229,7 @@ namespace gxvk::vk::frame
 
     bool ReadScene(const VkRect2D& rect, uint8_t* out)
     {
-        if (!out || rect.extent.width == 0 || rect.extent.height == 0 || s.queryActive) return false;   // see CopyFromScene
+        if (!out || rect.extent.width == 0 || rect.extent.height == 0 || s.queryActive || s.hdrActive) return false;   // see CopyFromScene; V7: 4 bytes a pixel
         VkCommandBuffer cmd = OutsideAfterClears();
         if (!cmd || s.scene.handle == VK_NULL_HANDLE || s.scene.layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return false;
         if (rect.offset.x < 0 || rect.offset.y < 0 || rect.offset.x + rect.extent.width > s.scene.extent.width

@@ -538,6 +538,7 @@ namespace gxvk::vk::frame
     bool Present(bool visible)
     {
         if (s.failed) return false;
+        SetSceneHdr(false);   // V7: the lighting's EndWorld has always swapped back by now; the present shows the 8-bit scene
         if (!EnsureFrame()) return false;
 
         if (visible)

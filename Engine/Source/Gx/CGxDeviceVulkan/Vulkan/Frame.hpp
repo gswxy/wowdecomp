@@ -39,9 +39,18 @@ namespace gxvk::vk::frame
      */
     void SetTarget(const texture::Image* image, uint32_t layer, uint32_t level = 0);
 
-    /// The scene image (B8G8R8A8, the swapchain's size), or null before the swapchain exists.
+    /// The scene image (B8G8R8A8, the swapchain's size; V7: R16G16B16A16_SFLOAT while SetSceneHdr is on), or null before the swapchain exists.
     const texture::Image* Scene();
 
+    /**
+     * V7 (hdr 1, as D3d11Lighting's ISwap): with `on`, the scene becomes a float image (R16G16B16A16_SFLOAT; MSAA:
+     * a float multisampled colour) of the same extent sharing the depth buffer, so the world's draws, the lighting
+     * passes and every copy off "the scene" use it; Scene() answers it. Off: the 8-bit scene is back (Present()
+     * turns it off too). Ends the open pass. False (nothing changed) when the float images cannot be had.
+     */
+    bool SetSceneHdr(bool on);
+    /// V7: the float scene (the current scene while SetSceneHdr is on; after it, what the world left there), or null.
+    const texture::Image* HdrScene();
     /// The render-target image the next draws land on, or null for the scene.
     const texture::Image* Target();
 

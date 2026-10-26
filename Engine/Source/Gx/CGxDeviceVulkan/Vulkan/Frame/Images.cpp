@@ -15,6 +15,7 @@ namespace gxvk::vk::frame::detail
         if (!s.dapi || !s.device) return;
         const loader::Device& d = *s.dapi;
         present::Drop();
+        DropHdrScene();   // V7: first, so `scene` is the 8-bit one again
         if (s.scene.handle != VK_NULL_HANDLE)
         {
             DropFramebuffersOf(s.scene.handle, false);

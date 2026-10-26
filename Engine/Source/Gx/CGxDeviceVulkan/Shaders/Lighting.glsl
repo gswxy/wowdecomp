@@ -126,6 +126,16 @@ vec3 SvNormal(ivec2 q, vec3 p) {
 
 // the multiply passes (D3D11: DEST_COLOR x SRC, rgb only): the frame x factor, or (a debug view) the factor alone.
 // gxPass.z: an 8-bit frame's blend clamps the source at 1, as the D3D11 UNORM targets do.
+// V7: the scene the scene passes (Apply, Gi, Sky, Wet) write. 8-bit: an RGBA8 image holding B, G, R, A, copied byte for
+// byte into the B8G8R8A8 scene. GX_HDR_SCENE (Compile.py's *Hdr variants, hdr 1): RGBA16F in order, for the float scene.
+#ifdef GX_HDR_SCENE
+#define GX_SCENE_FORMAT rgba16f
+#define GX_SCENE_ORDER rgba
+#else
+#define GX_SCENE_FORMAT rgba8
+#define GX_SCENE_ORDER bgra
+#endif
+
 vec3 GxMultiply(vec3 frame, vec3 factor, bool replace) {
     factor = gxPass.z > 0.5 ? clamp(factor, 0.0, 1.0) : factor;
     return replace ? factor : frame * factor;

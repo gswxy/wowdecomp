@@ -226,10 +226,10 @@ TSExplicitList<THROTTLEDCHAT, 0> CGChat::s_throttledChat;
 TSExplicitList<PENDINGCHAT, 0> CGChat::s_pendingChat;
 
 // STATIC: 0x00B759D0
-int32_t s_chatLogging[2];
+int32_t s_chatLogging[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
 // STATIC: 0x00B759D8
-HSLOG s_chatLog[2];
+HSLOG s_chatLog[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
 // STATIC: 0x00B75A60
 ChatRecord CGChat::m_chatHistory[60];
@@ -1341,7 +1341,7 @@ emoteDone:
         unit->ChatBubbleShow(type, bubble);
     }
 
-    if (!s_chatLogging[0]) {
+    if (!s_chatLogging[CGChat::LOG_TYPE::CHAT_LOG]) {
         return;
     }
 
@@ -1356,36 +1356,36 @@ emoteDone:
                 channelPrefix[0] = 0;
             }
 
-            SLogWrite(s_chatLog[0], "%s%s", channelPrefix, translated);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], "%s%s", channelPrefix, translated);
             return;
         }
 
         case CHAT_MSG_CHANNEL_NOTICE:
         case CHAT_MSG_CHANNEL_NOTICE_USER: {
             SStrPrintf(token, sizeof(token), "CHAT_%s_NOTICE", translated);
-            SLogWrite(s_chatLog[0], FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), channelString, senderName, targetName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), channelString, senderName, targetName);
             return;
         }
 
         case CHAT_MSG_IGNORED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_IGNORED", -1, GENDER_NOT_APPLICABLE), senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_IGNORED", -1, GENDER_NOT_APPLICABLE), senderName);
             return;
         }
 
         case CHAT_MSG_FILTERED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_FILTERED", -1, GENDER_NOT_APPLICABLE), senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_FILTERED", -1, GENDER_NOT_APPLICABLE), senderName);
             return;
         }
 
         case CHAT_MSG_RESTRICTED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_RESTRICTED", -1, GENDER_NOT_APPLICABLE));
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_RESTRICTED", -1, GENDER_NOT_APPLICABLE));
             return;
         }
 
         case CHAT_MSG_BN_CONVERSATION_NOTICE: {
             char noticeToken[128];
             SStrPrintf(noticeToken, sizeof(noticeToken), "CHAT_CONVERSATION_%s_NOTICE", translated);
-            SLogWrite(s_chatLog[0], FrameScript_GetText(noticeToken, -1, GENDER_NOT_APPLICABLE), channelString, senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText(noticeToken, -1, GENDER_NOT_APPLICABLE), channelString, senderName);
             return;
         }
 
@@ -1474,7 +1474,7 @@ emoteDone:
             }
 
             *dest = 0;
-            SLogWrite(s_chatLog[0], line, senderName ? senderName : "");
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], line, senderName ? senderName : "");
             return;
         }
     }
@@ -3310,8 +3310,8 @@ void CGChat::AddTextEmoteMessage(const WOWGUID& guid, uint32_t emote, const char
 
         FrameScript_SignalEvent(SCRIPT_EVENT_CHAT_MSG_TEXT_EMOTE, "%s%s%s%s%s%s%d%d%s%d%d%s%u", buffer, sender->m_name, languageName, "", "", "", 0, 0, "", 0, 0, guidString, 0);
 
-        if (s_chatLogging[0]) {
-            SLogWrite(s_chatLog[0], "%s", buffer);
+        if (s_chatLogging[CGChat::LOG_TYPE::CHAT_LOG]) {
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], "%s", buffer);
         }
     }
 
@@ -4119,8 +4119,8 @@ void CGChat::AddCombatMessage(const char* text) {
         return;
     }
 
-    if (s_chatLogging[1]) {
-        SLogWrite(s_chatLog[1], "%s", text);
+    if (s_chatLogging[CGChat::LOG_TYPE::COMBAT_LOG]) {
+        SLogWrite(s_chatLog[CGChat::LOG_TYPE::COMBAT_LOG], "%s", text);
     }
 }
 
@@ -5137,7 +5137,7 @@ void CGChat::JoiningParty(bool raid, int32_t pvp) {
 // VERIFY: 9faa2cc3 manual
 // OFFSET: 0x005072B0
 void CGChat::ShutdownGame() {
-    for (uint32_t i = 0; i < 2; i++) {
+    for (uint32_t i = CGChat::LOG_TYPE::CHAT_LOG; i < CGChat::LOG_TYPE::NUM_LOG_TYPES; i++) {
         if (s_chatLog[i]) {
             SLogClose(s_chatLog[i]);
         }

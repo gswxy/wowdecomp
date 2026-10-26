@@ -1467,11 +1467,11 @@ static int32_t Script_GetChannelRosterInfo(lua_State* L) {
 }
 
 // STATIC: 0x00AC7A40
-static const char* s_chatLogNames[2] = { "Logs\\WoWChatLog.txt", "Logs\\WoWCombatLog.txt" };
+static const char* s_chatLogNames[CGChat::LOG_TYPE::NUM_LOG_TYPES] = { "Logs\\WoWChatLog.txt", "Logs\\WoWCombatLog.txt" };
 
 // VERIFY: 2b604692 auto
 // OFFSET: 0x004FBC60
-static int32_t EnableLogging(lua_State* L, int32_t index) {
+static int32_t EnableLogging(lua_State* L, CGChat::LOG_TYPE index) {
     if (lua_gettop(L) > 0) {
         s_chatLogging[index] = StringToBOOL(L, 1, 1);
 
@@ -1496,13 +1496,13 @@ static int32_t EnableLogging(lua_State* L, int32_t index) {
 // VERIFY: feb7e35b auto
 // OFFSET: 0x004FBD00
 static int32_t Script_LoggingChat(lua_State* L) {
-    return EnableLogging(L, 0);
+    return EnableLogging(L, CGChat::LOG_TYPE::CHAT_LOG);
 }
 
 // VERIFY: 70d23c41 auto
 // OFFSET: 0x004FBD20
 static int32_t Script_LoggingCombat(lua_State* L) {
-    return EnableLogging(L, 1);
+    return EnableLogging(L, CGChat::LOG_TYPE::COMBAT_LOG);
 }
 
 // VERIFY: c5c8be87 auto

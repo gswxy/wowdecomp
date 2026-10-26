@@ -313,6 +313,12 @@ int32_t Packet_SMSG_LOG_XPGAIN(void* param, NETMESSAGE msgId, uint32_t time, CDa
 
 class CGChat {
     public:
+    enum LOG_TYPE : int32_t {
+        CHAT_LOG = 0,
+        COMBAT_LOG = 1,
+        NUM_LOG_TYPES = 2,
+    };
+
     enum CHANNEL_NOTIFY : int32_t {
         JOINED = 0,
         LEFT = 1,
@@ -567,9 +573,9 @@ extern ChatColorInfo s_chatColors[CHAT_MSG_MAX];
 
 extern TSGrowableArray<ChatColorInfo> s_channelColors;
 
-extern int32_t s_chatLogging[2];
+extern int32_t s_chatLogging[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
-extern HSLOG s_chatLog[2];
+extern HSLOG s_chatLog[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
 extern const ChatColorInfo s_chatTypeInfo[CHAT_MSG_MAX];
 

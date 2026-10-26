@@ -865,7 +865,7 @@ bool CombatLogEntry::MatchesFilter() {
 // OFFSET: 0x0074F910
 void SendCombatLogEvents() {
     char text[4096];
-    bool logging = CGChat::IsChatLogging(1) != 0;
+    bool logging = CGChat::IsChatLogging(CGChat::LOG_TYPE::COMBAT_LOG) != 0;
     lua_State* L = FrameScript_GetContext();
     lua_pushstring(L, g_scriptEvents[566]);
     CombatLogEntry* entry = s_pendingEntries;

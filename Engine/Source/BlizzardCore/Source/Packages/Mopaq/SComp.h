@@ -1,6 +1,7 @@
 #ifndef ENGINE_SOURCE_BLIZZARDCORE_SOURCE_PACKAGES_MOPAQ_SCOMP_H
 #define ENGINE_SOURCE_BLIZZARDCORE_SOURCE_PACKAGES_MOPAQ_SCOMP_H
 
+#include <atomic>
 #include <cstdint>
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/Types.h"
 #include "Engine/Source/BlizzardCore/Source/System/Thread/ThreadLocalStorage.h"
@@ -41,6 +42,10 @@ struct ZlibAllocBuffer {
 };
 
 extern Blizzard::Thread::LocalObject<ZlibAllocBuffer> s_zlibAllocBuffer;
+
+// Not stock: 1 = inflate zlib sectors with libdeflate first (zlib retries on any libdeflate error), 0 = zlib only.
+// Set by the mpqFastInflate CVar (Client_CVar.cpp).
+extern std::atomic<bool> s_fastInflate;
 
 void* alloc_wrap(uint32_t size);
 void Bzip2Compress(void* dest, uint32_t* destSize, const void* source, uint32_t sourceSize, uint32_t* hint, uint8_t level);

@@ -12,6 +12,7 @@ target_include_directories(BlizzardCore
 target_link_libraries(BlizzardCore
     PUBLIC
         blast
+        libdeflate
         lzma
         zlib
 )

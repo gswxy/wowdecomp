@@ -1,0 +1,11 @@
+zlib 1.3.2 (Jean-loup Gailly, Mark Adler), zlib license (LICENSE).
+Source: https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
+        (same file as https://zlib.net/zlib-1.3.2.tar.gz)
+        sha256 bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+
+Replaces zlib 1.2.2, which was a pristine upstream copy. This tree is the pristine 1.3.2 release, except:
+- contrib/blast is kept as it was (blast 1.1 from the 1.2.2 tree), the PKWare DCL decoder for MPQ
+  sector type 0x08 (target "blast").
+- The "zlib" CMake target no longer builds the gz* file functions (gzio.c is gone in 1.3.x; nothing
+  in the client uses them).
+Now the fallback behind libdeflate (ThirdParty/libdeflate) and the only path with mpqFastInflate 0.

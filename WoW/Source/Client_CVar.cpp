@@ -4,6 +4,7 @@
 #include "Client.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Streaming/Streaming.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/SComp.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/SFile.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -141,6 +142,7 @@ static CVar* s_cvAsyncHandlerTimeout;
 
 // Not stock
 static CVar* s_cvMpqThreads;
+static CVar* s_cvMpqFastInflate;
 
 // STATIC: 0x00C5DE88
 char s_localeCode[5];
@@ -715,11 +717,19 @@ static bool MpqThreadsCallback(CVar* var, const char* oldValue, const char* valu
     return true;
 }
 
+// Not stock: mpqFastInflate 1 = inflate zlib MPQ sectors with libdeflate (zlib retries on any error), 0 = zlib only.
+static bool MpqFastInflateCallback(CVar* var, const char* oldValue, const char* value, void* arg) {
+    System_SComp::s_fastInflate = SStrToInt(value) != 0;
+    return true;
+}
+
 // VERIFY: dd31cf34 auto
 // OFFSET: 0x004026B0
 void AsyncFileReadRegisterCVars() {
     s_cvMpqThreads = CVar::Register("mpqThreads", "Engine option: Decompress MPQ files on several threads", 1, "1", MpqThreadsCallback, CATEGORY_DEBUG, false, nullptr, false);
     Blizzard::Mopaq::SFileSetThreadingMode(s_cvMpqThreads->m_intValue ? 0 : 2);
+    s_cvMpqFastInflate = CVar::Register("mpqFastInflate", "Engine option: Inflate MPQ files with libdeflate (zlib on any error)", 1, "1", MpqFastInflateCallback, CATEGORY_DEBUG, false, nullptr, false);
+    System_SComp::s_fastInflate = s_cvMpqFastInflate->m_intValue != 0;
 
     s_cvAsyncThreadSleep = CVar::Register("asyncThreadSleep", "Engine option: Async read thread sleep", 1, "0", AsyncFileReadThreadSleepCallback, CATEGORY_DEBUG, false, nullptr, false);
     s_cvAsyncHandlerTimeout = CVar::Register("asyncHandlerTimeout", "Engine option: Async read main thread timeout", 1, "100", AsyncFileReadHandlerTimeoutCallback, CATEGORY_DEBUG, false, nullptr, false);

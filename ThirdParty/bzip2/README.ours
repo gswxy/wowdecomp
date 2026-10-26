@@ -1,0 +1,6 @@
+bzip2 1.0.8 (Julian Seward), BSD-style license (LICENSE).
+Source: https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
+        sha256 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
+
+Replaces bzip2 1.0.2, which was a pristine upstream copy. Pristine 1.0.8 release, unmodified; the
+"bzip2" CMake target builds the same seven library files as before.

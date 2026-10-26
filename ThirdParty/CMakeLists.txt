@@ -3,7 +3,6 @@ add_library(zlib STATIC
     zlib/compress.c
     zlib/crc32.c
     zlib/deflate.c
-    zlib/gzio.c
     zlib/infback.c
     zlib/inffast.c
     zlib/inflate.c
@@ -16,6 +15,21 @@ add_library(zlib STATIC
 target_include_directories(zlib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/zlib
+)
+
+# Not stock: libdeflate 1.24 (decompression side only), the fast MPQ sector inflate path in front of zlib
+# (Mopaq/SComp.cpp, CVar mpqFastInflate). Vendored unmodified, see libdeflate/README.ours.
+add_library(libdeflate STATIC
+    libdeflate/lib/adler32.c
+    libdeflate/lib/deflate_decompress.c
+    libdeflate/lib/utils.c
+    libdeflate/lib/zlib_decompress.c
+    libdeflate/lib/x86/cpu_features.c
+)
+
+target_include_directories(libdeflate
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/libdeflate
 )
 
 add_library(blast STATIC

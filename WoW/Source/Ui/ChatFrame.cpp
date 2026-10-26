@@ -5610,57 +5610,57 @@ void CGChat::LeaveWorld() {
 
 // VERIFY: 32bfa443 manual
 // OFFSET: 0x004FB240
-static uint32_t GetComplaintPriority(int32_t type, uint32_t channel) {
+static CGChat::COMPLAINT_PRIORITY GetComplaintPriority(int32_t type, uint32_t channel) {
     switch (type) {
         case CHAT_MSG_WHISPER:
         case CHAT_MSG_BATTLENET:
-            return 0;
+            return CGChat::COMPLAINT_PRIORITY::WHISPER_OR_BATTLENET;
 
         case CHAT_MSG_CHANNEL:
-            return channel ? 1 : 2;
+            return channel ? CGChat::COMPLAINT_PRIORITY::CHANNEL_NONZERO : CGChat::COMPLAINT_PRIORITY::CHANNEL_ZERO;
 
         case CHAT_MSG_BATTLEGROUND_LEADER:
-            return 3;
+            return CGChat::COMPLAINT_PRIORITY::BATTLEGROUND_LEADER;
 
         case CHAT_MSG_BATTLEGROUND:
-            return 4;
+            return CGChat::COMPLAINT_PRIORITY::BATTLEGROUND;
 
         case CHAT_MSG_RAID_LEADER:
-            return 5;
+            return CGChat::COMPLAINT_PRIORITY::RAID_LEADER;
 
         case CHAT_MSG_RAID_WARNING:
-            return 6;
+            return CGChat::COMPLAINT_PRIORITY::RAID_WARNING;
 
         case CHAT_MSG_RAID:
-            return 7;
+            return CGChat::COMPLAINT_PRIORITY::RAID;
 
         case CHAT_MSG_PARTY_LEADER:
-            return 8;
+            return CGChat::COMPLAINT_PRIORITY::PARTY_LEADER;
 
         case CHAT_MSG_PARTY:
-            return 9;
+            return CGChat::COMPLAINT_PRIORITY::PARTY;
 
         case CHAT_MSG_YELL:
-            return 10;
+            return CGChat::COMPLAINT_PRIORITY::YELL;
 
         case CHAT_MSG_SAY:
-            return 11;
+            return CGChat::COMPLAINT_PRIORITY::SAY;
 
         case CHAT_MSG_EMOTE:
-            return 12;
+            return CGChat::COMPLAINT_PRIORITY::EMOTE;
 
         case CHAT_MSG_AFK:
-            return 13;
+            return CGChat::COMPLAINT_PRIORITY::AFK;
     }
 
-    return type != CHAT_MSG_DND ? 0xFFFFFFFF : 14;
+    return type != CHAT_MSG_DND ? CGChat::COMPLAINT_PRIORITY::UNSUPPORTED : CGChat::COMPLAINT_PRIORITY::DND;
 }
 
 // VERIFY: 75e6d3dd auto
 // OFFSET: 0x004FB300
 ChatRecord* GetChatRecordEx(const char* name, const char* text, uint32_t lineID) {
     ChatRecord* best = nullptr;
-    uint32_t bestPriority = 0xFFFFFFFF;
+    CGChat::COMPLAINT_PRIORITY bestPriority = CGChat::COMPLAINT_PRIORITY::UNSUPPORTED;
 
     for (uint32_t i = 0; i < 60; i++) {
         ChatRecord* record = &CGChat::m_chatHistory[(i + CGChat::m_currentChatIndex) % 60];
@@ -5669,7 +5669,7 @@ ChatRecord* GetChatRecordEx(const char* name, const char* text, uint32_t lineID)
             continue;
         }
 
-        uint32_t priority = GetComplaintPriority(record->m_type, record->m_unk17B0);
+        CGChat::COMPLAINT_PRIORITY priority = GetComplaintPriority(record->m_type, record->m_unk17B0);
 
         if (priority < bestPriority && (!name || !SStrCmpI(name, record->m_senderName, STORM_MAX_STR)) && (!text || !SStrCmpI(text, record->m_text, STORM_MAX_STR)) && (!lineID || lineID == record->m_lineID)) {
             best = record;

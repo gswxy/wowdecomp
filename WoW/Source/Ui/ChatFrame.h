@@ -313,6 +313,25 @@ int32_t Packet_SMSG_LOG_XPGAIN(void* param, NETMESSAGE msgId, uint32_t time, CDa
 
 class CGChat {
     public:
+    enum COMPLAINT_PRIORITY : uint32_t {
+        WHISPER_OR_BATTLENET = 0,
+        CHANNEL_NONZERO = 1,
+        CHANNEL_ZERO = 2,
+        BATTLEGROUND_LEADER = 3,
+        BATTLEGROUND = 4,
+        RAID_LEADER = 5,
+        RAID_WARNING = 6,
+        RAID = 7,
+        PARTY_LEADER = 8,
+        PARTY = 9,
+        YELL = 10,
+        SAY = 11,
+        EMOTE = 12,
+        AFK = 13,
+        DND = 14,
+        UNSUPPORTED = 0xFFFFFFFF,
+    };
+
     enum RAID_INSTANCE_MESSAGE : int32_t {
         WARNING_HOURS = 1,
         WARNING_MINUTES = 2,

@@ -69,7 +69,7 @@ namespace
         float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Wet, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
     constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
@@ -150,6 +150,7 @@ namespace
         uint32_t m_giSerial = 0;
         texture::Image m_skyMap;              ///< BENILLA sky occlusion: the tops map (R32F), uploaded when its serial moves
         uint32_t m_skySerial = 0;
+        texture::Image m_wet;                 ///< BENILLA rain: the opaque frame's snapshot (the scene's format, 3 mips when they can be made)
         uint64_t m_lastUsed = 0;
 
         bool ICreate();
@@ -160,6 +161,7 @@ namespace
         bool IDispatch(VkCommandBuffer cmd, Prog prog, const PostConstants& c, VkImageView depth, Input color, Input color2, texture::Image& out, uint32_t width, uint32_t height, Input sky = {}, Input gi = {});
         bool IUpload(VkCommandBuffer cmd, texture::Image& img, uint32_t& have, uint32_t serial, uint32_t width, uint32_t height, VkFormat format, uint32_t texelBytes, const void* data);
         bool IMultiply(Prog prog, const VkRect2D& vp, Input sky, Input gi);
+        bool IWet(const VkRect2D& vp, Input shelter);
         VkPipeline ICopyPipeline();
         bool IIntoScene(VkCommandBuffer cmd, const PostConstants& c, const VkRect2D& vp);
         VkRect2D IViewportRect() const;
@@ -227,6 +229,7 @@ namespace
             { kLightingSsilvbComp, sizeof kLightingSsilvbComp },
             { kLightingSsilvbAoComp, sizeof kLightingSsilvbAoComp },
             { kLightingSsilvbBlurComp, sizeof kLightingSsilvbBlurComp },
+            { kLightingWetComp, sizeof kLightingWetComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -468,6 +471,50 @@ namespace
         const Input sceneIn = { scene->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
         return this->IDispatch(cmd, prog, c, this->m_depth.view, {}, sceneIn, this->m_out, vp.extent.width, vp.extent.height, sky, gi)
             && this->IIntoScene(cmd, c, vp);
+    }
+
+    // BENILLA rain (D3d11Lighting.cpp IWet): a mipped snapshot of the opaque frame, then the darken (x wet / dry, or
+    // the debug 7 terms) and the reflection (scene + it: D3D11's ONE + ONE), each through m_out into the scene.
+    bool VulkanLighting::IWet(const VkRect2D& vp, Input shelter)
+    {
+        const texture::Image* scene = frame::Scene();
+        if (!scene) return false;
+        const uint32_t width = scene->extent.width;
+        const uint32_t height = scene->extent.height;
+        const uint32_t levels = texture::CanGenerateMips(scene->format) ? 3 : 1;
+
+        if (this->m_wet.handle == VK_NULL_HANDLE || this->m_wet.extent.width != width || this->m_wet.extent.height != height || this->m_wet.format != scene->format || this->m_wet.levels != levels)
+        {
+            if (this->m_wet.handle != VK_NULL_HANDLE) frame::RetireImage(this->m_wet, this->m_lastUsed);
+            this->m_wet = texture::Image();
+            if (!texture::CreateMipped(width, height, levels, scene->format, this->m_wet)) { this->m_wet = texture::Image(); return false; }
+        }
+
+        const VkRect2D all = { { 0, 0 }, { width, height } };
+        if (!frame::CopyFromScene(this->m_wet, 0, 0, all, all, false)) return false;
+        VkCommandBuffer cmd = frame::Outside();
+        if (!cmd || (levels > 1 && !texture::RecordGenerateMips(cmd, this->m_wet))) return false;
+
+        const Input sceneIn = { scene->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        const Input snapshot = { this->m_wet.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        // gxSkyMap is named in code either way: the snapshot stands in while there is no shelter map (gxWet.z 0)
+        const Input sky = shelter.view != VK_NULL_HANDLE ? shelter : snapshot;
+        const float source[4] = { 1.0f / width, 1.0f / height, 0.0f, 0.0f };
+        PostConstants c;
+
+        for (int pass = 0; pass < (this->m_params.m_debug == 7 ? 1 : 2); pass++)
+        {
+            if (pass) cmd = frame::Outside();   // a fresh one: an MSAA IIntoScene leaves the scene's pass open
+            if (!cmd) return false;
+            this->IToGeneral(cmd, this->m_out);
+            this->IConstants(c, width, height, source);
+            c.m_wet[2] = shelter.view != VK_NULL_HANDLE ? 1.0f : 0.0f;
+            c.m_pass[0] = static_cast<float>(pass);
+            if (!this->IDispatch(cmd, Prog_Wet, c, this->m_depth.view, sceneIn, snapshot, this->m_out, vp.extent.width, vp.extent.height, sky, {})
+                || !this->IIntoScene(cmd, c, vp)) return false;
+        }
+
+        return true;
     }
 
     // A storage image made this frame (or retired and remade) holds nothing worth keeping: UNDEFINED to GENERAL,
@@ -731,8 +778,9 @@ namespace
         const bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
         const bool gi = (p.m_features & GxLighting_ProbeGi) && p.m_giProbes;
         const bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
+        const bool wet = (p.m_features & GxLighting_Wet) && p.m_wetness > 0.0f;
 
-        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !gi && !sky) || !this->IGate()) return;
+        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !gi && !sky && !wet) || !this->IGate()) return;
 
         const texture::Image* scene = frame::Scene();
         const uint32_t width = scene->extent.width;
@@ -801,11 +849,12 @@ namespace
 
         // the BENILLA passes between the occlusion and the fog (D3d11Lighting.cpp OpaqueDone's order): AO, probe GI,
         // fog. Without them the AO and the fog stay one pass.
-        const bool between = gi || sky;
+        const bool between = gi || sky || wet;
         // the BENILLA data maps, uploaded ahead of every dispatch
         const bool giOk = gi && this->IUpload(cmd, this->m_giMap, this->m_giSerial, p.m_giSerial, p.m_giSize[0], p.m_giSize[1], VK_FORMAT_R32G32B32A32_SFLOAT, 16, p.m_giProbes);
         const uint32_t skySize = static_cast<uint32_t>(p.m_skyRow[3]);
-        const bool skyOk = sky && this->IUpload(cmd, this->m_skyMap, this->m_skySerial, p.m_skySerial, skySize, skySize, VK_FORMAT_R32_SFLOAT, 4, p.m_skyHeights);
+        // uploaded for the rain's shelter too, with sky occlusion off (D3d11Lighting.cpp IWet's ISkyMap)
+        const bool skyOk = (sky || wet) && this->IUpload(cmd, this->m_skyMap, this->m_skySerial, p.m_skySerial, skySize, skySize, VK_FORMAT_R32_SFLOAT, 4, p.m_skyHeights);
 
         // the apply pass names gxColor in code either way: the scene stands in for the occlusion when SSAO is off
         if (ssao || !between)
@@ -822,7 +871,10 @@ namespace
         if (ok && giOk) ok = this->IMultiply(Prog_Gi, vp, {}, { this->m_giMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
 
         // BENILLA sky occlusion: x mix(floor, 1, open sky) into the frame (lightingDebug 6: the factor alone)
-        if (ok && skyOk) ok = this->IMultiply(Prog_Sky, vp, { this->m_skyMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, {});
+        if (ok && sky && skyOk) ok = this->IMultiply(Prog_Sky, vp, { this->m_skyMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, {});
+
+        // BENILLA rain on surfaces: the darken, then the reflection (lightingDebug 7: the wetness terms)
+        if (ok && wet) ok = this->IWet(vp, skyOk ? Input{ this->m_skyMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } : Input{});
 
         if (ok && between && fog)
         {
@@ -918,7 +970,7 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap, &this->m_wet };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 

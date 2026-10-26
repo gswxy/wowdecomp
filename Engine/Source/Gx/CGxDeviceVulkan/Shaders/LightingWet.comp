@@ -1,0 +1,234 @@
+// BENILLA rain on surfaces (Lighting.hlsl WetPoint .. WetReflectPs, wet_hook.wgsl + wet_ssr.wgsl) over the world
+// viewport: gxPass.x 0 the darken (the scene x wet / dry; lightingDebug 7 the terms instead), 1 the reflection added
+// (D3D11's ONE + ONE). gxColor the scene as it stands, gxColor2 the opaque frame's snapshot (3 mips, linear),
+// gxSkyMap the shelter map when gxWet.z is 1. Written B, G, R, A as LightingApply.comp.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, rgba8) uniform writeonly image2D gxOut;
+
+float clamp01(float x) { return clamp(x, 0.0, 1.0); }
+vec3 clamp01(vec3 x) { return clamp(x, 0.0, 1.0); }
+
+struct WetPoint {
+    vec3 p;      // view space
+    vec3 n;      // view space, toward the camera
+    float w;       // wet_amount
+    float boost;   // the gloss weight, > 1 standing water
+    float puddle;
+};
+
+float WetHash(vec2 p) {
+    vec2 q = fract(p * vec2(0.1031, 0.1030));
+    vec2 r = q + dot(q, q.yx + 33.33);
+    return fract((r.x + r.y) * r.x);
+}
+
+float WetNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(WetHash(i), WetHash(i + vec2(1.0, 0.0)), u.x), mix(WetHash(i + vec2(0.0, 1.0)), WetHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+// shelter_amount: bilinear over the four texels around the point, each covered when its top lies 0.5-1.5 yd above
+float WetOpen(vec3 pw) {
+    if (gxWet.z < 0.5) {
+        return 1.0;
+    }
+    vec2 g = (pw.xy - gxSkyRow.xy) * gxSkyRow.z - 0.5;
+    vec2 gf = floor(g);
+    if (any(lessThan(gf, vec2(0.0))) || any(greaterThan(gf + 1.0, vec2(gxSkyRow.w - 1.0)))) {
+        return 1.0;
+    }
+    float z = pw.z + gxSky.w;
+    vec2 f = g - gf;
+    float a = smoothstep(0.5, 1.5, texelFetch(gxSkyMap, ivec2(gf), 0).r - z);
+    float b = smoothstep(0.5, 1.5, texelFetch(gxSkyMap, ivec2(gf + vec2(1.0, 0.0)), 0).r - z);
+    float c = smoothstep(0.5, 1.5, texelFetch(gxSkyMap, ivec2(gf + vec2(0.0, 1.0)), 0).r - z);
+    float d = smoothstep(0.5, 1.5, texelFetch(gxSkyMap, ivec2(gf + vec2(1.0, 1.0)), 0).r - z);
+    return 1.0 - clamp01(mix(mix(a, b, f.x), mix(c, d, f.x), f.y));
+}
+
+bool WetAt(vec2 pixel, out WetPoint o) {
+    o = WetPoint(vec3(0.0), vec3(0.0), 0.0, 0.0, 0.0);
+    float dep = GxDepthAt(ivec2(pixel));
+    if (!GxIsGeometry(dep)) {
+        return false;
+    }
+    o.p = GxViewPos(pixel, dep);
+    vec3 l = GxViewPos(pixel - vec2(1.0, 0.0), GxDepthAt(GxClampPixel(pixel - vec2(1.0, 0.0))));
+    vec3 r = GxViewPos(pixel + vec2(1.0, 0.0), GxDepthAt(GxClampPixel(pixel + vec2(1.0, 0.0))));
+    vec3 u = GxViewPos(pixel - vec2(0.0, 1.0), GxDepthAt(GxClampPixel(pixel - vec2(0.0, 1.0))));
+    vec3 b = GxViewPos(pixel + vec2(0.0, 1.0), GxDepthAt(GxClampPixel(pixel + vec2(0.0, 1.0))));
+    vec3 dx = dot(r - o.p, r - o.p) < dot(o.p - l, o.p - l) ? r - o.p : o.p - l;
+    vec3 dy = dot(b - o.p, b - o.p) < dot(o.p - u, o.p - u) ? b - o.p : o.p - u;
+    o.n = normalize(cross(dy, dx));
+    o.n = dot(o.n, o.p) > 0.0 ? -o.n : o.n;
+
+    vec3 pw = (vec4(o.p, 1.0) * gxInvView).xyz;
+    float ny = (vec4(o.n, 0.0) * gxInvView).z;   // world up is z
+    float exposure = WetOpen(pw);
+    float wetness = clamp01(gxWet.x);
+    if (exposure <= 0.0) {
+        return false;
+    }
+    // wet_amount / wet_surface's gloss
+    o.w = wetness * exposure * smoothstep(-0.2, 0.25, ny) * mix(0.5, 1.0, smoothstep(0.3, 0.8, ny));
+    o.boost = o.w * smoothstep(0.35, 0.9, ny);
+    // wet_puddles (world xy here is benilla's xz)
+    {
+        vec2 xz = pw.xy + gxOrigin.xy;
+        float field = 0.65 * WetNoise(xz * 0.17) + 0.35 * WetNoise(xz * 0.53 + 17.0);
+        float level = smoothstep(0.94, 0.99, ny);
+        float edge = mix(0.8, 0.6, smoothstep(0.4, 1.0, wetness));
+        o.puddle = smoothstep(edge, edge + 0.06, field) * level * smoothstep(0.35, 0.8, wetness) * exposure;
+        o.boost = max(o.boost, 2.0 * o.puddle);
+    }
+    return o.w > 0.0;
+}
+
+// x the frame's ratio wet / dry: saturation x (1 + 0.3 w), x (1 - 0.36 w), puddles x (1 - 0.45 puddle)
+vec4 WetDarken(vec2 ipos) {
+    WetPoint wp;
+    if (!WetAt(ipos, wp)) {
+        return vec4(0.0);
+    }
+    if (gxTone.z == 7.0) {   // lightingDebug 7: r wetness, g puddle, b gloss weight / 2
+        return vec4(wp.w, wp.puddle, wp.boost * 0.5, 2.0);
+    }
+    vec3 c = max(texelFetch(gxColor2, ivec2(ipos), 0).rgb, 1.0 / 255.0);
+    float luma = dot(c, vec3(0.299, 0.587, 0.114));
+    vec3 wet = max(mix(vec3(luma), c, 1.0 + 0.3 * wp.w), 0.0) * (1.0 - 0.36 * wp.w) * (1.0 - 0.45 * wp.puddle);
+    return vec4(clamp01(wet / c), 1.0);
+}
+
+vec2 WetUv(vec3 q, out bool inside) {
+    vec4 clip = (vec4(q, 1.0) * gxProj);
+    inside = false;
+    if (clip.w <= 1e-4) {
+        return vec2(0.0);
+    }
+    vec2 uv = clip.xy / clip.w * vec2(0.5, -0.5) + 0.5;
+    inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+    return uv;
+}
+
+float WetSceneW(vec2 uv) {
+    vec2 pixel = gxViewportPx.xy + uv * gxViewportPx.zw;
+    float d = GxDepthAt(GxClampPixel(pixel));
+    return GxIsGeometry(d) ? GxClipW(GxViewPos(floor(pixel) + 0.5, d)) : 1.0e9;
+}
+
+// fs_reflect: the view ray mirrored about world up, 10 quadratic steps + 3 bisections against the depth, the frame
+// snapshot (gxColor2, mip 2 = benilla's quarter blur off the puddles) where it lands, the fog colour where it leaves
+vec4 WetReflect(vec2 ipos) {
+    WetPoint wp;
+    if (!WetAt(ipos, wp) || wp.boost <= 0.0) {
+        return vec4(0.0);
+    }
+    vec3 v = -normalize(wp.p);
+    float fres = 0.03 + 0.97 * pow(1.0 - clamp01(dot(wp.n, v)), 5.0);
+    float gloss = min(wp.boost, 1.0);
+    float mirror = max(wp.boost - 1.0, 0.0);
+    float tag = 0.55 * (gloss * min(0.25 * fres, 0.2) + mirror * (0.22 + 0.3 * fres));   // WET_REFLECT_GAIN x wet_reflectance
+    if (tag < 1.0 / 256.0) {
+        return vec4(0.0);
+    }
+
+    vec3 up = normalize((gxInvView * vec4(0.0, 0.0, 1.0, 0.0)).xyz);   // world z in view space
+    vec3 r = reflect(-v, up);
+    vec3 fwd = normalize(gxProjW.xyz);
+    float away = smoothstep(0.0, 0.25, dot(r, fwd));
+    vec3 sky = gxFogColor.rgb;
+    if (away <= 0.0 || gxWet.y < 0.5) {
+        return vec4(sky * tag, 1.0);
+    }
+
+    float jitter = fract(52.9829189 * fract(dot(ipos, vec2(0.06711056, 0.00583715))));
+    float d = GxClipW(wp.p);
+    float reach = clamp(d * 2.0, 12.0, 400.0);
+    float prevT = 0.0;
+    float t = 0.0;
+    bool hit = false;
+    bool landed = false;
+    vec2 uv = (ipos - gxViewportPx.xy) / gxViewportPx.zw;
+    float rz = max(abs(dot(r, fwd)), 0.1);
+    for (int s = 0; s < 10; s++) {
+        float k = (float(s) + jitter) / 10.0;
+        t = 0.3 + reach * k * k;
+        vec3 q = wp.p + r * t;
+        bool inside;
+        vec2 suv = WetUv(q, inside);
+        if (!inside) {
+            break;
+        }
+        uv = suv;
+        landed = true;
+        float sd = WetSceneW(uv);
+        float behind = GxClipW(q) - sd;
+        float span = (t - prevT) * rz + 0.5 + 0.01 * sd;
+        if (sd < 1.0e8 && behind > 0.0 && behind < span) {
+            hit = true;
+            break;
+        }
+        prevT = t;
+    }
+    if (hit) {
+        float lo = prevT;
+        float hi = t;
+        for (int k = 0; k < 3; k++) {
+            float mid = 0.5 * (lo + hi);
+            vec3 q = wp.p + r * mid;
+            bool inside;
+            vec2 suv = WetUv(q, inside);
+            if (inside && GxClipW(q) > WetSceneW(suv)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        bool inside;
+        vec2 suv = WetUv(wp.p + r * hi, inside);
+        if (inside) {
+            uv = suv;
+        }
+    }
+
+    vec3 refl = sky;
+    if (landed) {
+        float puddle = smoothstep(0.18, 0.35, tag);
+        vec2 src = (gxViewportPx.xy + uv * gxViewportPx.zw) * gxSource.xy;
+        vec3 fetched = mix(textureLod(gxColor2, src, 2.0).rgb, textureLod(gxColor2, src, 0.0).rgb, puddle);
+        vec2 e = uv * 2.0 - 1.0;
+        vec2 e4 = e * e * e * e;
+        float edge = clamp01(1.0 - e4.x) * clamp01(1.0 - e4.y);
+        refl = mix(sky, max(fetched, 0.0), edge * away);
+    }
+    return vec4(refl * tag, 1.0);
+}
+
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    if (any(greaterThanEqual(id, ivec2(gxViewportPx.zw)))) {
+        return;
+    }
+
+    ivec2 px = id + ivec2(gxViewportPx.xy);
+    vec2 pos = vec2(px) + 0.5;
+    vec4 s = texelFetch(gxColor, px, 0);
+    vec3 c = s.rgb;
+
+    if (gxPass.x < 0.5) {
+        vec4 f = WetDarken(pos);
+        c = f.w > 0.5 ? GxMultiply(c, f.rgb, f.w > 1.5) : c;
+    } else {
+        vec4 f = WetReflect(pos);
+        c = f.w > 0.5 ? c + f.rgb : c;
+    }
+
+    imageStore(gxOut, px, vec4(c, s.a).bgra);
+}

@@ -18,6 +18,9 @@
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gxu/Gxu.h"
+#include "Engine/Source/Tempest/C2Vector.h"
+#include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -38,7 +41,13 @@ namespace {
 using namespace VolumetricFog;
 
 constexpr int kLightsPerPass = 16;          // LegionLights.hlsl kLights
-constexpr int kMaxLights = 128;             // Legion maxLightCount's range
+constexpr int kMaxLights = 256;             // maxLightCount's range (BENILLA light grid: the shared table's 256)
+// BENILLA light grid (light_bin.wgsl, locallight.wgsl): the world viewport in kGridX x kGridY tiles, each light binned
+// into the tiles its sphere's screen box touches; a tile draws only its own lights, at most kPerTile of them (benilla
+// PER_CELL 8 a world cell; ours two of the shader's 16-light passes), the strongest kept when one overflows.
+constexpr int kGridX = 16;
+constexpr int kGridY = 9;
+constexpr int kPerTile = 32;
 constexpr uint32_t kControlRegister = 10;   // c10 control, c11.. three registers a light
 constexpr uint32_t kShadowRegister = 59;    // c59 shadows (LIGHTOCC)
 constexpr float kShadowDarkness = 0.85f;    // a fully blocked lamp keeps 15 % of its light (soft, never black)
@@ -56,6 +65,7 @@ CVar* s_dist;
 CVar* s_intensity;
 CVar* s_normalBuffer;
 CVar* s_shadows;
+CVar* s_grid;
 CGxShader* s_shader;    // ponytail: not destroyed at device shutdown (one shader, the device goes with the process)
 bool s_noShader;        // LegionLights.bls failed to load: the stock per-vertex lights stay
 
@@ -615,6 +625,96 @@ float Radius(float peak, const float att[3]) {
     return static_cast<float>(std::min(r, static_cast<double>(kMaxRadius)));
 }
 
+// DrawQuad's quad over the world viewport, cut to the pixel rect [x0, x1) x [y0, y1) (viewport pixels, top-left
+// origin): same projection, viewport and uv mapping, so the shader sees the full-viewport uv at every pixel.
+void DrawRect(const WorldViewport& vp, float x0, float y0, float x1, float y1) {
+    static uint16_t s_indices[4] = { 0, 3, 1, 2 };
+    static CGxBatch s_batch = { GxPrim_TriangleStrip, 0, 4, 0, 3 };
+    C44Matrix projection;
+    GxuXformCreateOrtho(0.0f, vp.w, 0.0f, vp.h, -1.0f, 1.0f, projection);
+    GxXformSetProjection(projection);
+    GxXformSetViewport(vp.minX, vp.maxX, vp.minY, vp.maxY, 0.0f, 1.0f);
+    const float offset = g_theGxDevicePtr->Caps().m_pixelCenterOnEdge ? 0.0f : 0.5f;
+    C3Vector pos[4];
+    C2Vector tex[4];
+    const float px[4] = { x0, x0, x1, x1 }, py[4] = { y1, y0, y0, y1 };   // DrawQuad's corner order
+    for (int i = 0; i < 4; ++i) {
+        pos[i].x = px[i]; pos[i].y = vp.h - py[i]; pos[i].z = 0.0f;
+        tex[i].x = (px[i] + offset) / vp.w; tex[i].y = (py[i] + offset) / vp.h;
+    }
+    CImVector white(255, 255, 255, 255);
+    GxPrimVertexPtr(4, pos, sizeof(C3Vector), nullptr, 0, &white, 0, tex, sizeof(C2Vector), nullptr, 0);
+    GxPrimIndexPtr(4, s_indices);
+    g_theGxDevicePtr->Draw(&s_batch, 1);
+}
+
+// The tiles a light's sphere can reach on screen: the projected corners of its view-space box (conservative); a
+// sphere through the near plane covers them all.
+void TileSpan(const Light& l, const float* proj, int span[4]) {
+    const float r = l.radius, z0 = l.view[2] - r, z1 = l.view[2] + r;
+    span[0] = 0; span[1] = 0; span[2] = kGridX - 1; span[3] = kGridY - 1;
+    if (z0 < 0.1f) return;
+    float lo[2] = { 1e30f, 1e30f }, hi[2] = { -1e30f, -1e30f };
+    for (int axis = 0; axis < 2; ++axis) {
+        const float a = proj[axis == 0 ? 0 : 5], b = proj[axis == 0 ? 8 : 9];
+        for (float v : { l.view[axis] - r, l.view[axis] + r }) {
+            for (float z : { z0, z1 }) {
+                const float ndc = a * v / z + b;
+                lo[axis] = std::min(lo[axis], ndc);
+                hi[axis] = std::max(hi[axis], ndc);
+            }
+        }
+    }
+    // ndc x -1..1 left to right, ndc y 1..-1 top to bottom (vf_common NdcToPixel)
+    const auto cell = [](float t, int n) { return std::clamp(static_cast<int>(std::floor(t * n)), 0, n - 1); };
+    span[0] = cell(lo[0] * 0.5f + 0.5f, kGridX);
+    span[2] = cell(hi[0] * 0.5f + 0.5f, kGridX);
+    span[1] = cell(0.5f - hi[1] * 0.5f, kGridY);
+    span[3] = cell(0.5f - lo[1] * 0.5f, kGridY);
+}
+
+// BENILLA light grid: bin, rank each tile's list (benilla ranks a cell by what its centre receives; ours by the
+// lights' screen share, the same score the global cap uses), then one draw per tile and pass. A row's neighbouring
+// tiles with the same list are drawn as one rect.
+template <class Upload>
+void DrawGrid(const std::vector<Light>& lights, const WorldViewport& vp, const float* proj, const Upload& upload) {
+    static std::vector<uint16_t> s_tiles[kGridX * kGridY];
+    for (auto& t : s_tiles) t.clear();
+    for (size_t i = 0; i < lights.size(); ++i) {
+        int span[4];
+        TileSpan(lights[i], proj, span);
+        for (int y = span[1]; y <= span[3]; ++y) {
+            for (int x = span[0]; x <= span[2]; ++x) {
+                s_tiles[y * kGridX + x].push_back(static_cast<uint16_t>(i));
+            }
+        }
+    }
+    const auto byScore = [&](uint16_t a, uint16_t b) { return lights[a].score > lights[b].score; };
+    for (auto& t : s_tiles) {
+        if (static_cast<int>(t.size()) > kPerTile) {
+            std::nth_element(t.begin(), t.begin() + kPerTile, t.end(), byScore);
+            t.resize(kPerTile);
+        }
+        std::sort(t.begin(), t.end());   // a canonical order, so equal lists compare equal
+    }
+    for (int y = 0; y < kGridY; ++y) {
+        for (int x = 0; x < kGridX;) {
+            const std::vector<uint16_t>& list = s_tiles[y * kGridX + x];
+            int run = 1;
+            while (x + run < kGridX && s_tiles[y * kGridX + x + run] == list) ++run;
+            if (!list.empty()) {
+                const float x0 = std::floor(vp.w * x / kGridX), x1 = std::floor(vp.w * (x + run) / kGridX);
+                const float y0 = std::floor(vp.h * y / kGridY), y1 = std::floor(vp.h * (y + 1) / kGridY);
+                for (size_t first = 0; first < list.size(); first += kLightsPerPass) {
+                    upload(list.data() + first, std::min(list.size() - first, static_cast<size_t>(kLightsPerPass)));
+                    DrawRect(vp, x0, y0, x1, y1);
+                }
+            }
+            x += run;
+        }
+    }
+}
+
 void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
     CGxDevice* device = g_theGxDevicePtr;
     if (!Shader(s_shader, "LegionLights")) {
@@ -670,12 +770,12 @@ void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
     BindNormalBuffer();
     device->RsSet(GxRs_PixelShader, s_shader);
     device->DeviceSceneDepthBound(false);   // D3D9: s0 is the INTZ depth-stencil the back buffer uses
-    // ponytail: every batch over the whole viewport; scissor each to its lights' screen rect if the cost shows.
-    for (size_t first = 0; first < lights.size(); first += kLightsPerPass) {
+    // one batch of up to kLightsPerPass lights into the shader's registers
+    const auto upload = [&](const uint16_t* index, size_t count) {
         float regs[kLightsPerPass * 3][4] = {};
-        for (size_t i = first; i < std::min(lights.size(), first + kLightsPerPass); ++i) {
-            const Light& l = lights[i];
-            float* r = regs[(i - first) * 3];
+        for (size_t n = 0; n < count; ++n) {
+            const Light& l = lights[index[n]];
+            float* r = regs[n * 3];
             std::memcpy(r, l.view, sizeof(l.view));
             r[3] = 1.0f / (l.radius * l.radius);
             std::memcpy(r + 4, l.colour, sizeof(l.colour));
@@ -684,7 +784,17 @@ void Draw(const std::vector<Light>& lights, float maxDist, float intensity) {
             r[11] = l.slot >= 0 ? static_cast<float>(SlotX(l.slot)) : 0.0f;
         }
         SetPs(kControlRegister + 1, &regs[0][0], kLightsPerPass * 3);
-        DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);
+    };
+    if (!s_grid || s_grid->m_intValue != 0) {
+        DrawGrid(lights, vp, proj, upload);
+    } else {
+        static std::vector<uint16_t> s_all;
+        s_all.resize(lights.size());
+        for (size_t i = 0; i < lights.size(); ++i) s_all[i] = static_cast<uint16_t>(i);
+        for (size_t first = 0; first < lights.size(); first += kLightsPerPass) {
+            upload(s_all.data() + first, std::min(lights.size() - first, static_cast<size_t>(kLightsPerPass)));
+            DrawQuad(static_cast<uint32_t>(vp.w), static_cast<uint32_t>(vp.h), vp.minX, vp.maxX, vp.minY, vp.maxY);
+        }
     }
     device->DeviceSceneDepthBound(true);
     EndPasses(s_saved, vp);
@@ -697,7 +807,8 @@ void RegisterCVars() {
         return CVar::Register(name, help, 1, value, nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     };
     s_mode = reg("lightMode", "Lamps and torches light the world around them per pixel: 0 = off (the stock per-vertex light on ground and buildings), 1 = ground and buildings, 2 = also creatures, characters and grass (default)", "2");
-    s_count = reg("maxLightCount", "Most lamps that light the world at once, biggest on screen first, 1..128 (16 a full-screen pass)", "64");
+    s_count = reg("maxLightCount", "Most lamps that light the world at once, biggest on screen first, 1..256 (lightGrid: each screen tile draws only its own, up to 32)", "128");
+    s_grid = reg("lightGrid", "Lamps are binned into a 16 x 9 grid of screen tiles and each tile lights only from the lamps that reach it (benilla's light grid): 1 = on (default), 0 = every lamp over the whole screen (16 a pass)", "1");
     s_dist = reg("maxLightDist", "Distance in yards out to which lamps light the world (fades out over the last quarter), 20..2048", "200");
     s_normalBuffer = reg("gxNormalBuffer", "The world's models, buildings and ground also write their smooth normals, which the lamps (lightMode), the mountains' shadow (shadowMask) and SSAO light by: 1 = on (default), 0 = rebuild them from the depth (faceted)", "1");
     s_intensity = reg("lightIntensity", "Brightness of the lamp light on the world, 0..4", "1");

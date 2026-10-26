@@ -69,9 +69,15 @@ namespace
         float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Wet, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Ssilvb, Prog_SsilvbAo, Prog_SsilvbBlur, Prog_Wet, Prog_Meter, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
+    // BENILLA auto-exposure (D3d11Lighting.cpp s_meter* / s_autoExposure*)
+    constexpr uint32_t kMeterWidth = 64;
+    constexpr uint32_t kMeterHeight = 36;
+    constexpr float kAutoExposureStrength = 0.65f;  // about two thirds of the shortfall, in stops
+    constexpr float kAutoExposureSeconds = 1.5f;    // an eye adapting, not a meter snapping
+    constexpr float kMeterStaleSeconds = 1.0f;      // no new reading for this long: the lift holds
     constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
     constexpr VkDeviceSize kUboStride = 768;  ///< >= sizeof(PostConstants), a multiple of any minUniformBufferOffsetAlignment (<= 256)
     constexpr uint32_t kGroup       = 8;      ///< Lighting.glsl local_size_x / _y
@@ -150,6 +156,15 @@ namespace
         uint32_t m_giSerial = 0;
         texture::Image m_skyMap;              ///< BENILLA sky occlusion: the tops map (R32F), uploaded when its serial moves
         uint32_t m_skySerial = 0;
+        texture::Image m_meter;               ///< BENILLA auto-exposure: the 64x36 log-luminance grid (R32F)
+        memory::Buffer m_meterBuf;            ///< its host-visible copy, read once the GPU is past m_meterSerial
+        uint64_t m_meterSerial = 0;
+        bool m_meterPending = false;
+        float m_sceneKey = 0.0f;
+        float m_sceneKeyAge = 1e9f;
+        float m_eye = 1.0f;
+        bool m_eyeSet = false;
+        float m_lastTime = -1.0f;
         texture::Image m_wet;                 ///< BENILLA rain: the opaque frame's snapshot (the scene's format, 3 mips when they can be made)
         uint64_t m_lastUsed = 0;
 
@@ -162,6 +177,7 @@ namespace
         bool IUpload(VkCommandBuffer cmd, texture::Image& img, uint32_t& have, uint32_t serial, uint32_t width, uint32_t height, VkFormat format, uint32_t texelBytes, const void* data);
         bool IMultiply(Prog prog, const VkRect2D& vp, Input sky, Input gi);
         bool IWet(const VkRect2D& vp, Input shelter);
+        void IAutoExposure(VkCommandBuffer cmd, Input scene, uint32_t width, uint32_t height);
         VkPipeline ICopyPipeline();
         bool IIntoScene(VkCommandBuffer cmd, const PostConstants& c, const VkRect2D& vp);
         VkRect2D IViewportRect() const;
@@ -230,6 +246,7 @@ namespace
             { kLightingSsilvbAoComp, sizeof kLightingSsilvbAoComp },
             { kLightingSsilvbBlurComp, sizeof kLightingSsilvbBlurComp },
             { kLightingWetComp, sizeof kLightingWetComp },
+            { kLightingMeterComp, sizeof kLightingMeterComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -515,6 +532,91 @@ namespace
         }
 
         return true;
+    }
+
+    // BENILLA auto-exposure (D3d11Lighting.cpp IAutoExposure): read back the last meter grid if the GPU is past it
+    // (never waiting), meter this frame's scene when none is in flight, and ease the lift toward what the scene key
+    // asks for. Scales m_params.m_exposure.
+    void VulkanLighting::IAutoExposure(VkCommandBuffer cmd, Input scene, uint32_t width, uint32_t height)
+    {
+        GxLightingParams& p = this->m_params;
+        float dt = this->m_lastTime < 0.0f ? 0.0f : p.m_time - this->m_lastTime;
+        dt = dt < 0.0f || dt > 0.25f ? 0.0f : dt;   // m_time wraps hourly; a hitch does not snap the eye
+        this->m_lastTime = p.m_time;
+        this->m_sceneKeyAge += dt;
+        const bool on = p.m_autoExposureMax > 1.0f;
+
+        if (this->m_meterPending && frame::Completed() >= this->m_meterSerial)
+        {
+            const float* grid = static_cast<const float*>(this->m_meterBuf.block.mapped);
+            float sum = 0.0f;
+            for (uint32_t i = 0; i < kMeterWidth * kMeterHeight; i++) sum += grid[i];
+            this->m_meterPending = false;
+            const float mean = sum / (kMeterWidth * kMeterHeight);
+
+            if (std::isfinite(mean))
+            {
+                this->m_sceneKey = exp2f(mean);
+                this->m_sceneKeyAge = 0.0f;
+            }
+        }
+
+        if (on && !this->m_meterPending && this->IEnsure(this->m_meter, kMeterWidth, kMeterHeight, VK_FORMAT_R32_SFLOAT, false)
+            && (this->m_meterBuf.handle != VK_NULL_HANDLE || memory::CreateBuffer(kMeterWidth * kMeterHeight * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, memory::Where::HostVisible, this->m_meterBuf))
+            && this->m_meterBuf.block.mapped)
+        {
+            this->IToGeneral(cmd, this->m_meter);
+            PostConstants c;
+            const float source[4] = { 1.0f / width, 1.0f / height, 0.0f, 0.0f };
+            this->IConstants(c, kMeterWidth, kMeterHeight, source);
+
+            if (this->IDispatch(cmd, Prog_Meter, c, VK_NULL_HANDLE, scene, {}, this->m_meter, kMeterWidth, kMeterHeight))
+            {
+                const loader::Device& d = *this->m_dapi;
+                VkMemoryBarrier barrier = {};
+                barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                d.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                VkBufferImageCopy region = {};
+                region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                region.imageSubresource.layerCount = 1;
+                region.imageExtent = { kMeterWidth, kMeterHeight, 1 };
+                d.CmdCopyImageToBuffer(cmd, this->m_meter.handle, VK_IMAGE_LAYOUT_GENERAL, this->m_meterBuf.handle, 1, &region);
+
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+                d.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+                this->m_meterSerial = frame::Serial();
+                this->m_meterPending = true;
+            }
+        }
+
+        // the lift a metered scene asks for under the look's own exposure: 1 at the target and above, rising toward
+        // the ceiling as the picture darkens (benilla screen_lift); off eases back to 1; a stale meter holds the eye
+        float lift = this->m_eye;
+
+        if (!on)
+        {
+            lift = 1.0f;
+        }
+        else if (this->m_sceneKeyAge < kMeterStaleSeconds)
+        {
+            const float key = this->m_sceneKey * p.m_exposure;
+            lift = powf(p.m_autoExposureTarget / (key > 1e-5f ? key : 1e-5f), kAutoExposureStrength);
+            lift = lift < 1.0f ? 1.0f : (lift > p.m_autoExposureMax ? p.m_autoExposureMax : lift);
+
+            // the first reading is taken whole: entering the world at night does not open on the eye adjusting
+            if (!this->m_eyeSet)
+            {
+                this->m_eye = lift;
+                this->m_eyeSet = true;
+            }
+        }
+
+        this->m_eye += (lift - this->m_eye) * (1.0f - expf(-dt / kAutoExposureSeconds));
+        p.m_exposure *= this->m_eye;
     }
 
     // A storage image made this frame (or retired and remade) holds nothing worth keeping: UNDEFINED to GENERAL,
@@ -931,6 +1033,9 @@ namespace
         PostConstants c;
         bool ok = true;
 
+        // the lift multiplies the exposure the bloom and the tonemap both use
+        this->IAutoExposure(cmd, sceneIn, width, height);
+
         for (uint32_t i = 0; ok && i < levels; i++)
         {
             // down: the bright part of the scene to half size, then halved again level by level
@@ -970,13 +1075,15 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap, &this->m_wet };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_ssilvb[0], &this->m_ssilvb[1], &this->m_giMap, &this->m_skyMap, &this->m_wet, &this->m_meter };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 
         if (this->m_dapi)
         {
             const loader::Device& d = *this->m_dapi;
+            if (this->m_meterBuf.handle != VK_NULL_HANDLE) memory::DestroyBuffer(this->m_meterBuf);
+            this->m_meterPending = false;
             for (Slot& slot : this->m_slots)
             {
                 if (slot.ubo.handle != VK_NULL_HANDLE) memory::DestroyBuffer(slot.ubo);

@@ -1474,6 +1474,12 @@ bool LiquidDepthWrite() {
     return s_active && (s_cfg.liquidDepth || WaterArmed());
 }
 
+bool ForeverSilhouette(float rgb[3]) {
+    if (!s_active || !s_in.foreverFog) return false;
+    ForeverSilhouetteColor(s_in, rgb);
+    return true;
+}
+
 bool ForeverSkyTint(float sky[3], float fog[3]) {
     if (!s_active || !s_in.foreverFog || CVarInt(s_foreverSky, 1) == 0) {
         return false;

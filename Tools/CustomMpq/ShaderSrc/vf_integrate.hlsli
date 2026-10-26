@@ -153,13 +153,14 @@ float SkyDensityScale(FogLayer layer, float skyUpward)
 
 float LayerPhase(FogLayer layer, float cosAngle)
 {
-    return lerp(PhaseHG(layer.g, cosAngle), 1, layer.isotropic);
+    return lerp(PhaseHG(layer.g, cosAngle), 1, abs(layer.isotropic));   // < 0 = foreverFog's no-floor flag
 }
 
 float2 LayerRayTerms(FogLayer layer, float cosToLight, float skyUpward)
 {
     return float2(layer.density * SkyDensityScale(layer, skyUpward),
-                  (1 - HorizonShadow(layer)) * max(LayerPhase(layer, cosToLight), cShadowFade.y));   // vfogaudit: a floor, not +0.35 on the sun peak
+                  (1 - HorizonShadow(layer)) * max(LayerPhase(layer, cosToLight),   // vfogaudit: a floor, not +0.35 on the sun peak
+                                                    layer.isotropic < 0 ? 0 : cShadowFade.y));   // foreverFog layers: none
 }
 
 struct MarchRay

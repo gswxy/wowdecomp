@@ -468,6 +468,7 @@ void PassConstants() {
     ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? hazeScale / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
     ps[4][2] = kFogMax;
     ps[4][3] = s_hazeFalloff;
+    if (Silhouette(ps[3], ps[4][0], ps[4][1])) ps[4][2] = 1.0f;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, &ps[0][0], 5);
     // FarLandPS c6: slot texels and 1 / atlas texels per atlas, for its in-slot uv (audit 3/4: LOD capped, inset by
     // half a texel of the mip it reads, so no mip samples the next slot or the flat normal levels past kNormalLevels)
@@ -612,6 +613,14 @@ void UpdateHorizonScale() {
         scale = std::max(stock, s_farView / World::s_farClip);
     }
     World::s_horizonFarClipScale = scale;
+}
+
+bool Silhouette(float rgb[3], float& start, float& invSpan) {
+    const float farClip = World::s_farClip;
+    if (farClip <= 1.0f || !VolumetricFog::ForeverSilhouette(rgb)) return false;
+    start = farClip;
+    invSpan = 1.0f / ((kHazeReach - 1.0f) * farClip);
+    return true;
 }
 
 float FogCap(float farClip) {

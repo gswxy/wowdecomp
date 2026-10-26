@@ -385,6 +385,7 @@ void DrawTrees(bool beyond) {
     Rgb(dn.m_light0.m_ambient, pc[0]);
     Rgb(dn.m_light0.m_diffuse, pc[1]);
     Rgb(dn.m_fog.m_color, pc[2]);
+    if (beyond && FarLand::Silhouette(pc[2], k[8][2], k[8][3])) k[10][1] = 1.0f;   // the far land's silhouette
     pc[3][1] = static_cast<float>(FarTreesBake::kLevels - 1);   // FarTreesPS: the coarsest level that keeps its coverage
     pc[3][2] = beyond ? kBeyondLodBias : 0.0f;
     pc[3][3] = 90.0f / kViewBlend;

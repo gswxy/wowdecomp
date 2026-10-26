@@ -730,7 +730,7 @@ void BuildReflectionFog() {
         out.height = { layer.upperHeight, layer.upperFalloff, layer.lowerHeight, layer.lowerFalloff };
         out.emissive = linearScattered(emissive);
         out.diffuse = linearScattered(diffuse);
-        out.scattering = { layer.g, layer.isotropic, layer.endDistance, layer.skyFalloff };
+        out.scattering = { layer.g, std::fabs(layer.isotropic), layer.endDistance, layer.skyFalloff };   // < 0 = foreverFog flag
     }
     s_pass.reflectionFogRange = { fog.maxDistance, fog.maxDistance, 0.0f, 1.0f };
 }

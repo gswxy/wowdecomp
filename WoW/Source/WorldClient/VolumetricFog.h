@@ -97,6 +97,8 @@ struct ForeverLook {
     float moonGlow;         // forward share kept while the moon keys
     float moonHue;          // share of the glow hue the moon keeps
     float skyTint[3];       // foreverSky: gamma multiplier on the sky dome's five authored stops (look.rs sky_tint)
+    float silhouette;       // far land / far trees' unlit body: this x the subtle fog colour (look.rs silhouette)
+    float noonMix;          // how far the key moves to the golden noon_key (look.rs noon_mix)
 };
 // The zone look at `minute` of the day (VolumetricFogModel.cpp, look.rs look_for_zone_at); zone = AreaTable top-level id.
 ForeverLook ForeverLookForZone(uint32_t zone, float minute);
@@ -216,6 +218,7 @@ struct NoiseAtlas {
 // ===== WP1 model: VolumetricFogModel.cpp / VolumetricFogData.cpp / VolumetricFogNoise.cpp / VolumetricFogFit.cpp
 bool LoadFogData();                                                     // VFog\fogdata.bin through SFile
 FogParams BuildFogParams(const FrameInputs& in, const Config& cfg);     // data resolve + derived + distance layer
+void ForeverSilhouetteColor(const FrameInputs& in, float rgb[3]);         // subtle(DBC fog x fog_tint) x silhouette, gamma
 bool AnyLayerNoise(const FogParams& fog);
 void AdvanceNoise(const FogParams& fog, const float camPos[3], double seconds);
 void NoiseRegisters(const FogParams& fog, LayerNoiseRegisters out[kSceneLayers]);
@@ -259,6 +262,8 @@ bool LiquidDepthWrite();                    // force liquid depth writes while A
 // foreverSky: BENILLA sky.rs dome_stops' tints from the cross-faded zone look (sky_tint on the dome stops, fog_tint on
 // its horizon fog colour); false (sky untouched) unless vfog draws this frame with foreverFog 1 and foreverSky 1.
 bool ForeverSkyTint(float sky[3], float fog[3]);
+// foreverFog (vfog drawing): the far land / far trees' silhouette colour (wdl.wgsl modern), false = not this frame
+bool ForeverSilhouette(float rgb[3]);
 float GlowAmount(float client);             // coa ForeverGlow: the glow amount the FFX glow gets (UpdateScreenEffectParams)
 bool WaterHidesClientRipples();              // CMap::CreateWaterRipple: the modern water's ripples replace the client's sprites
 bool BatchFog(const float modelPos[3], float& start, float& end, float& density, float color[3]);

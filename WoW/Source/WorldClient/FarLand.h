@@ -39,6 +39,10 @@ float HazeFalloff();
 bool HazeReference(float& z);
 // The haze density at the camera as a share of its density at HazeReference (1 = off): FarLandPS and FarTrees' beyond pass.
 float HazeScale();
+// vfog + foreverFog (BENILLA wdl.wgsl modern): the far land and far trees fade from their textures at farclip to an
+// unlit silhouette of the zone's fog colour (VolumetricFog::ForeverSilhouette) by kHazeReach x farclip, under vfog's
+// haze. False = not this frame (the stock constants stay).
+bool Silhouette(float rgb[3], float& start, float& invSpan);
 // BENILLA far view seam: where the detailed world starts dissolving into the far land (0.7 x farclip), 0 = farLandSeam
 // off or no far land. WorldLighting (GxLighting_FarSeam) and HorizonNear.
 float SeamFrom();

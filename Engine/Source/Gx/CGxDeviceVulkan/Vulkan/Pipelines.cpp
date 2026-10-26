@@ -247,9 +247,10 @@ namespace gxvk::vk::pipelines
         k.stencil        = draw.stencil;
         k.stencilMasks   = draw.stencil ? (draw.stencilMasks & 0xFFFFu) : 0u;   // the reference is dynamic
         k.alphaToCoverage = (draw.alphaToCoverage && k.samples > 1) ? 1u : 0u;
-        // GBUFFER: blended draws (particles, glass, water) keep the opaque surface's normal under them.
+        // GBUFFER: blended draws (particles, glass, water) keep the opaque surface's normal under them, unless they write
+        // depth (grass): the normal belongs to the depth's surface (grassshadow).
         const bool writesNormal = draw.normalTarget == 2 && draw.fragment == FragmentProgram::Translated && draw.fragmentRecord
-                                  && draw.fragmentRecord->normalOut && draw.blend <= 1 && (draw.colourMask & 0xFu);
+                                  && draw.fragmentRecord->normalOut && (draw.blend <= 1 || draw.depthWrite) && (draw.colourMask & 0xFu);
         k.normal = draw.normalTarget ? (writesNormal ? 2u : 1u) : 0u;
 
         const Entry* entry = Lookup(k);

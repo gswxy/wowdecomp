@@ -3870,7 +3870,8 @@ void CGxDeviceD3d::INormalSync() {
     }
     const CGxShader* ps = static_cast<const CGxShader*>(this->m_appRenderStates[GxRs_PixelShader].m_value.m_data.p);
     const int32_t blend = this->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0];
-    const bool write = CGxDevice::s_normalBuffer && ps && ps->m_writesNormal && (blend == GxBlend_Opaque || blend == GxBlend_AlphaKey)
+    const bool write = CGxDevice::s_normalBuffer && ps && ps->m_writesNormal
+        && (blend == GxBlend_Opaque || blend == GxBlend_AlphaKey || this->m_appRenderStates[GxRs_DepthWrite].m_value.m_data.i[0])   // grassshadow
         && this->m_appRenderStates[GxRs_ColorWrite].m_value.m_data.i[0] != 0 && !this->m_textureTarget[GxBuffers_Color].m_apiSpecific;
     if (write && !this->m_normalBound) {
         if (!this->m_normalCleared) {

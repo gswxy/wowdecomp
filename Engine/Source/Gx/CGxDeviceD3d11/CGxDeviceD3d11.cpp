@@ -3315,10 +3315,13 @@ void CGxDeviceD3d11::IStateSync() {
         this->m_stateDirty |= Dirty_Blend;
     }
 
-    // GBUFFER: RT1 written by an oC1 pixel shader with an opaque / alpha-key blend only (particles, glass keep the normal under them).
+    // GBUFFER: RT1 written by an oC1 pixel shader with an opaque / alpha-key blend only (particles, glass keep the normal under them),
+    // or a blended draw that writes depth (grass: blend 2, alpha ref 128), so the normal always belongs to the depth's surface
+    // (grassshadow: the shadow mask lit grass by the ground's normal and tag behind it).
     const CGxShader* psh = static_cast<const CGxShader*>(this->m_appRenderStates[GxRs_PixelShader].m_value.m_data.p);
     const UINT8 normalMask = psh && psh->m_writesNormal && this->m_blendDesc.RenderTarget[0].RenderTargetWriteMask
-        && static_cast<uint32_t>(this->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0]) <= GxBlend_AlphaKey ? 0xF : 0;
+        && (static_cast<uint32_t>(this->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0]) <= GxBlend_AlphaKey
+            || this->m_dsDesc.DepthWriteMask != D3D11_DEPTH_WRITE_MASK_ZERO) ? 0xF : 0;
 
     if (this->m_blendDesc.RenderTarget[1].RenderTargetWriteMask != normalMask) {
         this->m_blendDesc.RenderTarget[1].RenderTargetWriteMask = normalMask;

@@ -138,13 +138,13 @@ int32_t CGAuctionHouse::m_lastBidderPage;
 uint32_t CGAuctionHouse::m_lastBidAmount;
 
 // STATIC: 0x00C0E578
-AuctionSortCriteria CGAuctionHouse::m_bidSortCriteria[12];
+AuctionSortCriteria CGAuctionHouse::m_bidSortCriteria[CGAuctionHouse::MAX_SORT_CRITERIA];
 
 // STATIC: 0x00C0E608
-AuctionSortCriteria CGAuctionHouse::m_ownedSortCriteria[12];
+AuctionSortCriteria CGAuctionHouse::m_ownedSortCriteria[CGAuctionHouse::MAX_SORT_CRITERIA];
 
 // STATIC: 0x00C0E698
-AuctionSortCriteria CGAuctionHouse::m_listSortCriteria[12];
+AuctionSortCriteria CGAuctionHouse::m_listSortCriteria[CGAuctionHouse::MAX_SORT_CRITERIA];
 
 // STATIC: 0x00C0F414
 int32_t CGAuctionHouse::m_numOutbidItems;
@@ -250,13 +250,13 @@ bool CGAuctionHouse::CanSendQuery(int32_t type) {
 // VERIFY: 82557b75 manual
 // OFFSET: 0x0059A340
 AuctionSortCriteria* CGAuctionHouse::GetBrowseSortCriteria(uint32_t index) {
-    return index < 12 ? &CGAuctionHouse::m_listSortCriteria[index] : nullptr;
+    return index < CGAuctionHouse::MAX_SORT_CRITERIA ? &CGAuctionHouse::m_listSortCriteria[index] : nullptr;
 }
 
 // VERIFY: 68838e6e manual
 // OFFSET: 0x0059A360
 AuctionSortCriteria* CGAuctionHouse::GetBidSortCriteria(uint32_t index) {
-    return index < 12 ? &CGAuctionHouse::m_bidSortCriteria[index] : nullptr;
+    return index < CGAuctionHouse::MAX_SORT_CRITERIA ? &CGAuctionHouse::m_bidSortCriteria[index] : nullptr;
 }
 
 // VERIFY: 8a8f2619 auto
@@ -371,7 +371,7 @@ void CGAuctionHouse::ClearSellItem() {
 // VERIFY: 1e8210f6 auto
 // OFFSET: 0x0059A5B0
 void CGAuctionHouse::ClearBrowseSortCriteria() {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_listSortCriteria[i].m_valid = 0;
     }
 }
@@ -384,7 +384,7 @@ void CGAuctionHouse::SetBrowseSortCriteria(int32_t column, bool reverse) {
     while (CGAuctionHouse::m_listSortCriteria[index].m_column != column && CGAuctionHouse::m_listSortCriteria[index].m_valid) {
         index++;
 
-        if (index >= 12) {
+        if (index >= CGAuctionHouse::MAX_SORT_CRITERIA) {
             return;
         }
     }
@@ -401,7 +401,7 @@ void CGAuctionHouse::SetBrowseSortCriteria(int32_t column, bool reverse) {
 // VERIFY: c8c4b7b4 auto
 // OFFSET: 0x0059A660
 void CGAuctionHouse::ClearOwnedSortCriteria() {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_ownedSortCriteria[i].m_valid = 0;
     }
 }
@@ -414,7 +414,7 @@ void CGAuctionHouse::SetOwnedSortCriteria(int32_t column, bool reverse) {
     while (CGAuctionHouse::m_ownedSortCriteria[index].m_column != column && CGAuctionHouse::m_ownedSortCriteria[index].m_valid) {
         index++;
 
-        if (index >= 12) {
+        if (index >= CGAuctionHouse::MAX_SORT_CRITERIA) {
             return;
         }
     }
@@ -431,7 +431,7 @@ void CGAuctionHouse::SetOwnedSortCriteria(int32_t column, bool reverse) {
 // VERIFY: 7719865d auto
 // OFFSET: 0x0059A710
 void CGAuctionHouse::ClearBidSortCriteria() {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_bidSortCriteria[i].m_valid = 0;
     }
 }
@@ -444,7 +444,7 @@ void CGAuctionHouse::SetBidSortCriteria(int32_t column, bool reverse) {
     while (CGAuctionHouse::m_bidSortCriteria[index].m_column != column && CGAuctionHouse::m_bidSortCriteria[index].m_valid) {
         index++;
 
-        if (index >= 12) {
+        if (index >= CGAuctionHouse::MAX_SORT_CRITERIA) {
             return;
         }
     }
@@ -883,7 +883,7 @@ static int32_t CheckSortCriteria(int32_t column, const AuctionItemInfo* a, const
 // VERIFY: a6bde7a8 manual
 // OFFSET: 0x0059B890
 int32_t AuctionListComparer(const void* a, const void* b) {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         int32_t result = CheckSortCriteria(CGAuctionHouse::m_listSortCriteria[i].m_column, static_cast<const AuctionItemInfo*>(a), static_cast<const AuctionItemInfo*>(b));
 
         if (result) {
@@ -897,7 +897,7 @@ int32_t AuctionListComparer(const void* a, const void* b) {
 // VERIFY: 8d1b1c27 manual
 // OFFSET: 0x0059B8E0
 int32_t CompareFunction(const void* a, const void* b) {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         int32_t result = CheckSortCriteria(CGAuctionHouse::m_ownedSortCriteria[i].m_column, static_cast<const AuctionItemInfo*>(a), static_cast<const AuctionItemInfo*>(b));
 
         if (result) {
@@ -911,7 +911,7 @@ int32_t CompareFunction(const void* a, const void* b) {
 // VERIFY: 7f1b65b0 manual
 // OFFSET: 0x0059B930
 int32_t AuctionBidderListComparer(const void* a, const void* b) {
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         int32_t result = CheckSortCriteria(CGAuctionHouse::m_bidSortCriteria[i].m_column, static_cast<const AuctionItemInfo*>(a), static_cast<const AuctionItemInfo*>(b));
 
         if (result) {
@@ -2175,7 +2175,7 @@ void CGAuctionHouse::InitializeGame() {
         CGAuctionHouse::m_outbidItems.m_data[i] = static_cast<OutbidItemInfo*>(SMemAlloc(sizeof(OutbidItemInfo), __FILE__, __LINE__, 0));
     }
 
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_listSortCriteria[i].m_valid = 0;
     }
 
@@ -2187,7 +2187,7 @@ void CGAuctionHouse::InitializeGame() {
     CGAuctionHouse::SetBrowseSortCriteria(0, true);
     CGAuctionHouse::SetBrowseSortCriteria(1, false);
 
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_ownedSortCriteria[i].m_valid = 0;
     }
 
@@ -2199,7 +2199,7 @@ void CGAuctionHouse::InitializeGame() {
     CGAuctionHouse::SetOwnedSortCriteria(4, false);
     CGAuctionHouse::SetOwnedSortCriteria(3, false);
 
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
         CGAuctionHouse::m_bidSortCriteria[i].m_valid = 0;
     }
 

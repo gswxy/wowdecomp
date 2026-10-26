@@ -326,8 +326,8 @@ static int32_t Script_IsAuctionSortReversed(lua_State* L) {
         return 2;
     }
 
-    for (uint32_t i = 0; i < 12; i++) {
-        AuctionSortCriteria* entry = i < 12 ? &criteria[i] : nullptr;
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
+        AuctionSortCriteria* entry = i < CGAuctionHouse::MAX_SORT_CRITERIA ? &criteria[i] : nullptr;
 
         if (entry->m_valid && entry->m_column == column) {
             if (entry->m_reverse) {
@@ -359,7 +359,7 @@ static int32_t Script_GetAuctionSort(lua_State* L) {
     AuctionSortCriteria* criteria;
 
     if (!SStrCmpI(type, "owner", STORM_MAX_STR)) {
-        criteria = index < 12 ? &CGAuctionHouse::m_ownedSortCriteria[index] : nullptr;
+        criteria = index < CGAuctionHouse::MAX_SORT_CRITERIA ? &CGAuctionHouse::m_ownedSortCriteria[index] : nullptr;
     } else if (!SStrCmpI(type, "bidder", STORM_MAX_STR)) {
         criteria = CGAuctionHouse::GetBidSortCriteria(index);
     } else if (!SStrCmpI(type, "list", STORM_MAX_STR)) {
@@ -546,8 +546,8 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
     uint32_t countPos = msg.m_size;
     msg.Put(static_cast<uint8_t>(0));
 
-    for (uint32_t i = 0; i < 12; i++) {
-        AuctionSortCriteria* criteria = i < 12 ? &CGAuctionHouse::m_listSortCriteria[i] : nullptr;
+    for (uint32_t i = 0; i < CGAuctionHouse::MAX_SORT_CRITERIA; i++) {
+        AuctionSortCriteria* criteria = i < CGAuctionHouse::MAX_SORT_CRITERIA ? &CGAuctionHouse::m_listSortCriteria[i] : nullptr;
 
         if (criteria && criteria->m_valid) {
             msg.Put(static_cast<uint8_t>(criteria->m_column));

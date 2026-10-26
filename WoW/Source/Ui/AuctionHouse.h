@@ -69,6 +69,8 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    static const int32_t MAX_SORT_CRITERIA = 12;
+
     enum BIDDER_SORT_RANK : int32_t {
         NO_BIDDER = 0,
         OTHER_BIDDER = 1,
@@ -84,9 +86,9 @@ class CGAuctionHouse {
 
     static void CloseAuctionHouse();
     static bool IsItemForSell(WOWGUID item);
-    static AuctionSortCriteria m_bidSortCriteria[12];
-    static AuctionSortCriteria m_ownedSortCriteria[12];
-    static AuctionSortCriteria m_listSortCriteria[12];
+    static AuctionSortCriteria m_bidSortCriteria[MAX_SORT_CRITERIA];
+    static AuctionSortCriteria m_ownedSortCriteria[MAX_SORT_CRITERIA];
+    static AuctionSortCriteria m_listSortCriteria[MAX_SORT_CRITERIA];
     static int32_t m_numOutbidItems;
     static uint32_t m_lastGetAllTime;
     static TSGrowableArray<OutbidItemInfo*> m_outbidItems;

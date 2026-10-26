@@ -1,5 +1,6 @@
 #include "WoW/Source/Ui/WorldLighting.h"
 #include "WoW/Source/WorldClient/SkyOcclusion.h"
+#include "WoW/Source/WorldClient/ProbeGi.h"
 #include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/MapWeather.h"
 #include "WoW/Source/WorldClient/World.h"
@@ -146,6 +147,9 @@ uint32_t Features() {
         features |= GxLighting_Wet;            // BENILLA rain on surfaces; dropped at SetupView while dry
     }
 
+    if (ProbeGi::Enabled()) {
+        features |= GxLighting_ProbeGi;        // BENILLA probe GI; dropped at SetupView while the field is not up
+    }
     if (SkyOcclusion::Enabled()) {
         features |= GxLighting_SkyOcclusion;   // BENILLA sky occlusion; dropped at SetupView while its map is not up
     }
@@ -904,6 +908,18 @@ void WorldLightingSetupView(const C3Vector& camera) {
     s_params.m_renderOrigin[0] = origin.x;
     s_params.m_renderOrigin[1] = origin.y;
     s_params.m_renderOrigin[2] = origin.z;
+    if ((s_params.m_features & GxLighting_ProbeGi) &&
+        ProbeGi::Update(skyCamera, s_params.m_giProbes, s_params.m_giSerial, s_params.m_giGrid, s_params.m_giParams, s_params.m_giAmbient)) {
+        s_params.m_giSize[0] = ProbeGi::kTexW;
+        s_params.m_giSize[1] = ProbeGi::kTexH;
+        for (auto& g : s_params.m_giGrid) {
+            g[0] -= origin.x;
+            g[1] -= origin.y;
+            g[2] -= origin.z;
+        }
+    } else {
+        s_params.m_features &= ~GxLighting_ProbeGi;
+    }
     g_gxLighting->SetupView(s_params);
 
     // the shader half: the lights in reach (world space), smoothed across frames, moved into the render origin

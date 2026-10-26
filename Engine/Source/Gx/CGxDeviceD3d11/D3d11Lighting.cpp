@@ -40,6 +40,9 @@ struct PostConstants {
     float m_origin[4];
     float m_projFwd[16];
     float m_seam[4];
+    float m_giGrid[12];
+    float m_gi[4];
+    float m_giAmbient[4];
 };
 
 // the order of Lighting.py's JOBS
@@ -66,6 +69,8 @@ enum EShader {
     Shader_SsilvbCompositePs,
     Shader_SkyOcclusionPs,
     Shader_SkyOcclusionPsMs,
+    Shader_GiPs,
+    Shader_GiPsMs,
     Shader_WetDarkenPs,
     Shader_WetDarkenPsMs,
     Shader_WetReflectPs,
@@ -140,6 +145,11 @@ class D3d11Lighting final : public IGxLighting {
     uint32_t m_skySize = 0;
     uint32_t m_skySerial = 0;
     bool ISkyMap();
+    // BENILLA probe GI: the probe field (RGBA32F), uploaded when its serial moves
+    ID3D11Texture2D* m_giTex = nullptr;
+    ID3D11ShaderResourceView* m_giSrv = nullptr;
+    uint32_t m_giW = 0, m_giH = 0, m_giSerial = 0;
+    bool IGiMap();
     // BENILLA rain on surfaces: the opaque frame's snapshot (mipped: level 2 is the reflection's blur)
     ID3D11Texture2D* m_wetTex = nullptr;
     ID3D11ShaderResourceView* m_wetSrv = nullptr;
@@ -443,6 +453,9 @@ void D3d11Lighting::IWriteConstants(uint32_t targetWidth, uint32_t targetHeight,
     memcpy(c.m_origin, p.m_renderOrigin, sizeof(p.m_renderOrigin));
     memcpy(c.m_projFwd, this->m_proj, sizeof(c.m_projFwd));
     memcpy(c.m_seam, this->m_seam, sizeof(c.m_seam));
+    memcpy(c.m_giGrid, p.m_giGrid, sizeof(c.m_giGrid));
+    memcpy(c.m_gi, p.m_giParams, sizeof(c.m_gi));
+    memcpy(c.m_giAmbient, p.m_giAmbient, sizeof(c.m_giAmbient));
     UploadConstants(this->m_device->m_d3dContext, this->m_constants, &c, sizeof(c));
 }
 
@@ -567,8 +580,9 @@ void D3d11Lighting::OpaqueDone() {
     bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
     bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
     bool wet = (p.m_features & GxLighting_Wet) && p.m_wetness > 0.0f;
+    bool gi = (p.m_features & GxLighting_ProbeGi) && p.m_giProbes;
 
-    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !sky && !wet) || !dev->m_depthSrv) {
+    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !sky && !wet && !gi) || !dev->m_depthSrv) {
         return;
     }
 
@@ -625,6 +639,14 @@ void D3d11Lighting::OpaqueDone() {
             ID3D11BlendState* blend = p.m_debug == 1 || p.m_debug >= 4 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
             this->IDraw(msaa ? Shader_AoCompositePsMs : Shader_AoCompositePs, frame, vp, blend, composite, 2);
         }
+    }
+
+    // BENILLA probe GI: x the light with the probes' irradiance in place of the stock ambient (lightingDebug 8: the factor)
+    if (gi && this->IGiMap()) {
+        this->IWriteConstants(bb.Width, bb.Height, nullptr);
+        ID3D11BlendState* blend = p.m_debug == 8 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
+        ID3D11ShaderResourceView* views[5] = { depth, nullptr, nullptr, nullptr, this->m_giSrv };
+        this->IDraw(msaa ? Shader_GiPsMs : Shader_GiPs, frame, vp, blend, views, 5);
     }
 
     // BENILLA sky occlusion: x mix(floor, 1, open sky) into the frame (lightingDebug 6: the factor alone)
@@ -877,6 +899,43 @@ void D3d11Lighting::ISsilvb(ID3D11ShaderResourceView* depth, bool msaa) {
     this->IDraw(Shader_SsilvbCompositePs, dev->m_backBufferRtv, vp, blend, composite, 2);
 }
 
+// BENILLA probe GI: (re)create the probe texture at the field's size, upload when the serial moved.
+bool D3d11Lighting::IGiMap() {
+    const GxLightingParams& p = this->m_params;
+    const uint32_t w = p.m_giSize[0], h = p.m_giSize[1];
+    if (!w || !h || !p.m_giProbes) {
+        return false;
+    }
+    if (this->m_giW != w || this->m_giH != h) {
+        SafeRelease(this->m_giSrv);
+        SafeRelease(this->m_giTex);
+        this->m_giW = this->m_giH = 0;
+        D3D11_TEXTURE2D_DESC d;
+        memset(&d, 0, sizeof(d));
+        d.Width = w;
+        d.Height = h;
+        d.MipLevels = 1;
+        d.ArraySize = 1;
+        d.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        d.SampleDesc.Count = 1;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init = { p.m_giProbes, w * 16, 0 };
+        if (FAILED(this->m_device->m_d3dDevice->CreateTexture2D(&d, &init, &this->m_giTex)) ||
+            FAILED(this->m_device->m_d3dDevice->CreateShaderResourceView(this->m_giTex, nullptr, &this->m_giSrv))) {
+            SafeRelease(this->m_giTex);
+            return false;
+        }
+        this->m_giW = w;
+        this->m_giH = h;
+        this->m_giSerial = p.m_giSerial;
+    } else if (this->m_giSerial != p.m_giSerial) {
+        this->m_device->m_d3dContext->UpdateSubresource(this->m_giTex, 0, nullptr, p.m_giProbes, w * 16, 0);
+        this->m_giSerial = p.m_giSerial;
+    }
+    return true;
+}
+
 // BENILLA sky occlusion: (re)create the heights texture at the map's size, upload when the serial moved.
 bool D3d11Lighting::ISkyMap() {
     const GxLightingParams& p = this->m_params;
@@ -1080,6 +1139,9 @@ void D3d11Lighting::ReleaseTargets() {
     SafeRelease(this->m_skySrv);
     SafeRelease(this->m_skyTex);
     this->m_skySize = 0;
+    SafeRelease(this->m_giSrv);
+    SafeRelease(this->m_giTex);
+    this->m_giW = this->m_giH = 0;
     SafeRelease(this->m_wetSrv);
     SafeRelease(this->m_wetTex);
     SafeRelease(this->m_meterStaging);

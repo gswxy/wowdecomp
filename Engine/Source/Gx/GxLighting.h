@@ -27,6 +27,7 @@ enum EGxLightingFeature : uint32_t {
     GxLighting_Pbr = 0x200,           // PBR-lite: GGX specular, sky reflection, energy conservation (lightPbr)
     GxLighting_SkyOcclusion = 0x400,  // BENILLA sky occlusion (D3D11): the frame dimmed under the world's tops (skyOcclusion)
     GxLighting_Wet = 0x800,           // BENILLA rain on surfaces (D3D11): wet darkening, puddles, reflections (rainWetness)
+    GxLighting_ProbeGi = 0x2000,      // BENILLA probe GI (D3D11): the stock ambient swapped for a probe field's irradiance (probeGi)
     GxLighting_FarSeam = 0x1000,      // BENILLA far view seam (D3D11): the detailed world dithers into the far land (farLandSeam)
 };
 
@@ -78,6 +79,13 @@ struct GxLightingParams {
     uint32_t m_skySerial = 0;              // moves when m_skyHeights changed
     float m_skyRow[4] = {};                // x0, y0 (render-relative), 1 / texel yd, texels a side
     float m_skyParams[4] = {};             // floor, lift (yd), lift per yd off the texel, render origin z
+    // BENILLA probe GI (D3D11): WoW/Source/WorldClient/ProbeGi.h
+    const float* m_giProbes = nullptr;     // m_giSize float4 texels
+    uint32_t m_giSerial = 0;
+    uint32_t m_giSize[2] = {};             // texels wide, high
+    float m_giGrid[3][4] = {};             // per cascade: probe 0,0,0 (render-relative), spacing
+    float m_giParams[4] = {};              // strength, normal bias (spacings), chebyshev, 0
+    float m_giAmbient[4] = {};             // the stock ambient rgb the probes replace
     // BENILLA rain on surfaces (D3D11; weather/wetness.rs): m_skyHeights doubles as the shelter map when set
     float m_wetness = 0.0f;                // 0 dry .. 1 soaked
     bool m_wetReflections = true;          // the screen-space reflection (else the fog colour)

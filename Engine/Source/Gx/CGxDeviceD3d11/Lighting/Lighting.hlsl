@@ -26,6 +26,9 @@ cbuffer GxPost : register(b0) {
     float4 gxOrigin;               // xyz the render origin (world)
     row_major float4x4 gxProj;     // view to clip
     float4 gxSeam;                 // far view seam: x from (view depth), y to (farclip), z the depth a dissolved pixel takes
+    float4 gxGiGrid[3];            // probe GI: per cascade xyz probe 0,0,0 (render-relative world), w spacing (yd)
+    float4 gxGi;                   // probe GI: x strength, y normal bias (spacings), z 1 = chebyshev
+    float4 gxGiAmbient;            // probe GI: rgb the stock ambient the probes replace
 };
 
 #ifdef GX_MSAA
@@ -720,6 +723,107 @@ float4 SkyOcclusionPs(GxPostVaryings i) : SV_Target0 {
     float factor = lerp(gxSky.x, 1.0, open / 9.0);
     factor = lerp(1.0, factor, saturate(min(edge.x, edge.y)));
     return float4(factor, factor, factor, 1.0);
+}
+
+// BENILLA probe GI (probegi.wgsl pick / accum / finish, the cascades finest first): the eight probes around the
+// pixel per cascade (t4: 5 float4 texels a probe, ProbeGi.h), weighted by validity, trilinear, facing and Chebyshev
+// visibility, each cascade fading out over its outer CASCADE_FADE 3 cells into the next. benilla swaps the ambient row
+// for the result in its lanes; our post pass multiplies the frame by (gi + sun) / (ambient + sun), the sun term
+// unshadowed n.l (the stock frame is albedo x light in the same raw values).
+Texture2D<float4> gxGiProbes : register(t4);
+
+static const int3 kGiDims = int3(16, 16, 8);
+
+float4 GiProbeTexel(int c, int3 w, int q) {
+    return gxGiProbes.Load(int3(w.x * 5 + q, c * kGiDims.y * kGiDims.z + w.z * kGiDims.y + w.y, 0));
+}
+
+float4 GiPs(GxPostVaryings i) : SV_Target0 {
+    float d = GxDepthAt(int2(i.pos.xy));
+
+    if (!GxIsGeometry(d)) {
+        discard;
+    }
+
+    float3 pv = GxViewPos(i.pos.xy, d);
+    float3 nv = SvNormal(int2(i.pos.xy), pv);
+    float3 p = mul(float4(pv, 1.0), gxInvView).xyz;
+    float3 n = normalize(mul(float4(nv, 0.0), gxInvView).xyz);
+    float3 sum = 0.0;
+    float conf = 0.0;
+    float remain = 1.0;
+
+    [unroll] for (int c = 0; c < 3; c++) {
+        float spacing = gxGiGrid[c].w;
+        float3 f = (p + n * (spacing * gxGi.y) - gxGiGrid[c].xyz) / spacing;
+        float3 lo = floor(f);
+        float3 dims = float3(kGiDims);
+        float edge = min(min(f.x, f.y), min(f.z, min(min(dims.x - 1.0 - f.x, dims.y - 1.0 - f.y), dims.z - 1.0 - f.z)));
+        float inside = saturate((edge - 0.5) / 3.0);
+
+        if (inside <= 0.0) {
+            continue;
+        }
+
+        int3 base = int3(clamp(lo, 0.0, dims - 2.0));
+        float3 fr = saturate(f - lo);
+        float3 acc = 0.0;
+        float weight = 0.0;
+
+        [unroll] for (int k = 0; k < 8; k++) {
+            int3 o = int3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+            int3 w3 = base + o;
+            float4 dc = GiProbeTexel(c, w3, 0);
+            float w = dc.w;
+
+            if (w <= 0.0) {
+                continue;
+            }
+
+            float3 tri = lerp(1.0 - fr, fr, float3(o));
+            w *= max(tri.x * tri.y * tri.z, 1e-4);
+            float3 toProbe = gxGiGrid[c].xyz + float3(w3) * spacing - p;
+            float facing = dot(normalize(toProbe + n * 1e-3), n) * 0.5 + 0.5;
+            w *= facing * facing + 0.2;
+
+            if (gxGi.z > 0.5) {
+                float4 m = GiProbeTexel(c, w3, 4);
+                float reach = length(toProbe);
+                if (m.x > 0.0 && reach > m.x) {
+                    float variance = max(m.y - m.x * m.x, 1e-3);
+                    float over = reach - m.x;
+                    w *= saturate(variance / (variance + over * over));
+                }
+            }
+
+            float3 e = max(dc.rgb + GiProbeTexel(c, w3, 1).rgb * n.x + GiProbeTexel(c, w3, 2).rgb * n.y + GiProbeTexel(c, w3, 3).rgb * n.z, 0.0);
+            acc += e * w;
+            weight += w;
+        }
+
+        if (weight > 1e-5) {
+            float share = remain * inside * saturate(weight * 3.0);
+            sum += acc / weight * share;
+            conf += share;
+        }
+
+        remain *= 1.0 - inside;
+    }
+
+    if (conf <= 1e-4) {
+        discard;
+    }
+
+    float3 ambient = gxGiAmbient.rgb;
+    float3 sun = gxSunColor.rgb * saturate(dot(n, gxSunDir.xyz));
+    float3 gi = lerp(ambient, sum / conf, saturate(conf) * gxGi.x);
+    float3 factor = clamp((gi + sun) / max(ambient + sun, 1e-3), 0.0, 4.0);
+
+    if (gxTone.z == 8.0) {   // lightingDebug 8: the factor / 2 (grey = unchanged)
+        return float4(factor * 0.5, 1.0);
+    }
+
+    return float4(factor, 1.0);
 }
 
 // BENILLA rain on surfaces (wet_hook.wgsl + wet_ssr.wgsl, weather/wetness.rs). benilla runs the hook in the receivers'

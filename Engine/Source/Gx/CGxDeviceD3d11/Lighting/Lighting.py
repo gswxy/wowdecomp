@@ -32,6 +32,8 @@ JOBS = [
     ('SsilvbCompositePs', 'SsilvbCompositePs', 'ps_4_0', {}),
     ('SkyOcclusionPs', 'SkyOcclusionPs', 'ps_4_0', {}),
     ('SkyOcclusionPsMs', 'SkyOcclusionPs', 'ps_4_1', {'GX_MSAA': 1}),
+    ('GiPs', 'GiPs', 'ps_4_0', {}),
+    ('GiPsMs', 'GiPs', 'ps_4_1', {'GX_MSAA': 1}),
     ('WetDarkenPs', 'WetDarkenPs', 'ps_4_0', {}),
     ('WetDarkenPsMs', 'WetDarkenPs', 'ps_4_1', {'GX_MSAA': 1}),
     ('WetReflectPs', 'WetReflectPs', 'ps_4_0', {}),

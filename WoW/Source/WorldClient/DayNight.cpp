@@ -3003,7 +3003,10 @@ static void PickLightBody() {
 
     const float w[2] = { BodyWeight(elev[0]), BodyWeight(elev[1]) };
 
-    if (w[1 - body] > w[body] + 0.02f) {
+    // The setting body stays the light until it is well under the horizon (-7.3 degrees: the moon until 07:00, the
+    // sun until 21:09 on the arc tables), then hands over to the other if that one is up at all (BodyWeight > 0, over
+    // -1 degree). The new body is high by then, so it cannot hand back; with neither up the body stays.
+    if (elev[body] < -7.3f && w[1 - body] > 0.0f) {
         body = 1 - body;
     }
 

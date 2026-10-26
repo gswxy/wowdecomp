@@ -316,7 +316,7 @@ void Draw() {
     DayNight::DNClouds& clouds = DayNight::g_clouds;
     CGxTex* stock = clouds.m_enabled ? TextureGetGxTex(clouds.m_textures[clouds.m_texIndex & 1], 0, nullptr) : nullptr;
     // The disc is the stock sprite of the body that lights the world (sunCenter.blp / moon.blp), its stock size and
-    // colour (DNPlanet::Render: a 1 x m_scale quad 12 yd out, texture x m_color, alpha-blended), at our arc's place.
+    // colour (DNPlanet::Render: a 1 x m_scale quad 12 yd out; we take m_baseScale, texture x m_color, alpha-blended), at our arc's place.
     const DayNight::DNPlanet& planet = moon ? DayNight::g_planets.m_moon : DayNight::g_planets.m_sun;
     CGxTex* bodyTex = arc ? TextureGetGxTex(planet.m_texture, 0, nullptr) : nullptr;
     // The world view's disc is its own pass (DrawDisc): right after this quad, or with vfog after its composite (the
@@ -379,7 +379,7 @@ void Draw() {
     if (arc && bodyTex) {
         const CImVector& col = planet.m_color;
         c[7][0] = col.r / 255.0f; c[7][1] = col.g / 255.0f; c[7][2] = col.b / 255.0f; c[7][3] = col.a / 255.0f;
-        c[6][3] = std::atan(0.5f * planet.m_scale / 12.0f);
+        c[6][3] = std::atan(0.5f * planet.m_baseScale / 12.0f);   // the base size: the stock m_scale grows it x2/x1.5 near the horizon
     }
 
     VolumetricFog::SavedPassState saved;

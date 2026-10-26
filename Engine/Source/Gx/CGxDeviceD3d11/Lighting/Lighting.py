@@ -23,6 +23,13 @@ JOBS = [
     ('BloomUpPs', 'BloomUpPs', 'ps_4_0', {}),
     ('TonemapPs', 'TonemapPs', 'ps_4_0', {}),
     ('MeterPs', 'MeterPs', 'ps_4_0', {}),
+    ('SsilvbPs', 'SsilvbPs', 'ps_4_0', {}),
+    ('SsilvbPsMs', 'SsilvbPs', 'ps_4_1', {'GX_MSAA': 1}),
+    ('SsilvbAoPs', 'SsilvbPs', 'ps_4_0', {'SSILVB_AO_ONLY': 1}),
+    ('SsilvbAoPsMs', 'SsilvbPs', 'ps_4_1', {'GX_MSAA': 1, 'SSILVB_AO_ONLY': 1}),
+    ('SsilvbBlurPs', 'SsilvbBlurPs', 'ps_4_0', {}),
+    ('SsilvbBlurPsMs', 'SsilvbBlurPs', 'ps_4_1', {'GX_MSAA': 1}),
+    ('SsilvbCompositePs', 'SsilvbCompositePs', 'ps_4_0', {}),
 ]
 
 

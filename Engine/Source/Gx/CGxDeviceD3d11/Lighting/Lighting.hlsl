@@ -19,6 +19,7 @@ cbuffer GxPost : register(b0) {
     float4 gxTone;                 // x exposure, y mode (0 clamp, 1 neutral, 2 ACES, 3 Reinhard, 4 Hable, 5 AgX, 6 AgX punchy, 7 PBR Neutral, 8 Uchimura, 9 Lottes)
     float4 gxSource;               // the texture sampled: xy 1 / size; zw the blur direction
     float4 gxProjW;                // clip w = dot(float4(view position, 1), gxProjW)
+    float4 gxSsilvb;               // SSILVB: x AO strength, y indirect strength, z radius (yards), w thickness (yards)
 };
 
 #ifdef GX_MSAA
@@ -431,4 +432,247 @@ float4 MeterPs(GxPostVaryings i) : SV_Target0 {
     }
 
     return float4(sum / (taps * taps), 0.0, 0.0, 1.0);
+}
+
+// BENILLA SSILVB (benilla-bourbon shaders/ssilvb.wgsl): screen-space indirect lighting with a visibility bitmask.
+// While a slice is swept, each sample's angular span (front face to a back face one thickness deeper) is OR-ed into a
+// 32-sector mask of the hemisphere around the normal: AO = 1 - popcount(mask) / 32, and the bounce is what shut the
+// NEWLY set sectors, in its colour. Full resolution over the world viewport, then a separable depth-aware 5-tap blur
+// and a multiply into the frame. Our frame holds gamma values (benilla's "classic" frame), so the composite factor is
+// raised to 1/2.2. Convention-free in view space: distances are clip w, the slice direction is measured, not assumed.
+// SSILVB_AO_ONLY: the variant while the indirect strength is zero (2 slices x 4 steps, no colour path).
+#ifdef SSILVB_AO_ONLY
+#define SV_SLICES 2
+#define SV_STEPS 4
+#else
+#define SV_SLICES 3
+#define SV_STEPS 8
+#endif
+
+float SvFastAcos(float x) {
+    // Eberly, max error ~1e-3 rad
+    float a = abs(x);
+    float r = (-0.156583 * a + 1.5707963) * sqrt(max(0.0, 1.0 - a));
+    return x >= 0.0 ? r : 3.14159265 - r;
+}
+
+// countbits is SM5; the passes are ps_4_x
+uint SvPopcount(uint x) {
+    x = x - ((x >> 1) & 0x55555555u);
+    x = (x & 0x33333333u) + ((x >> 2) & 0x33333333u);
+    x = (x + (x >> 4)) & 0x0F0F0F0Fu;
+    return (x * 0x01010101u) >> 24;
+}
+
+bool SvInView(int2 q) {
+    return all(q >= int2(gxViewportPx.xy)) && all(q < int2(gxViewportPx.xy + gxViewportPx.zw));
+}
+
+float3 SvPos(int2 q) {
+    return GxViewPos(float2(q) + 0.5, GxDepthAt(q));
+}
+
+// one axis of the depth gradient: the neighbour nearer in depth wins, a sky neighbour is not one
+float3 SvAxisDelta(float3 p, float wp, int2 lo, int2 hi) {
+    bool loOk = GxIsGeometry(GxDepthAt(lo));
+    bool hiOk = GxIsGeometry(GxDepthAt(hi));
+
+    if (!loOk && !hiOk) {
+        return 0.0;
+    }
+
+    if (!loOk) {
+        return SvPos(hi) - p;
+    }
+
+    if (!hiOk) {
+        return p - SvPos(lo);
+    }
+
+    float3 a = SvPos(lo);
+    float3 b = SvPos(hi);
+    return abs(GxClipW(a) - wp) < abs(GxClipW(b) - wp) ? p - a : b - p;
+}
+
+float3 SvNormal(int2 q, float3 p) {
+    float wp = GxClipW(p);
+    float3 du = SvAxisDelta(p, wp, GxClampPixel(q - int2(1, 0)), GxClampPixel(q + int2(1, 0)));
+    float3 dv = SvAxisDelta(p, wp, GxClampPixel(q - int2(0, 1)), GxClampPixel(q + int2(0, 1)));
+    float3 n = cross(dv, du);
+
+    if (dot(n, n) < 1e-12) {
+        return normalize(-p);   // degenerate: face the camera and shut nothing
+    }
+
+    n = normalize(n);
+    return dot(n, -p) < 0.0 ? -n : n;
+}
+
+// every sector between two normalised horizon angles; spans under 1/64 of a sector are dropped, not rounded up
+uint SvSectorBits(float lo, float hi) {
+    int span = int(ceil((hi - lo) * 32.0 - 1.0 / 64.0));
+
+    if (span <= 0) {
+        return 0u;
+    }
+
+    uint width = min(uint(span), 32u);
+    uint start = min(uint(lo * 32.0), 31u);
+    return (0xFFFFFFFFu >> (32u - width)) << start;
+}
+
+float3 SvSceneLinear(int2 q) {
+    return GxDec(saturate(gxColor.Load(int3(q, 0)).rgb));
+}
+
+// the gather: rgb the bounce as a ratio to the receiver's brightness, a the visibility. gxColor the frame (indirect only)
+float4 SsilvbPs(GxPostVaryings i) : SV_Target0 {
+    const float pi = 3.14159265;
+    float2 pixel = gxViewportPx.xy + floor(i.pos.xy) + 0.5;
+    int2 px = int2(pixel);
+    float d = GxDepthAt(px);
+
+    if (!GxIsGeometry(d)) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    float3 p = GxViewPos(pixel, d);
+    float3 n = SvNormal(px, p);
+    float3 v = normalize(-p);
+    float wp = GxClipW(p);
+    float radius = gxSsilvb.z;
+    float thickness = gxSsilvb.w;
+    float range = radius * 1.5;     // RANGE_SCALE
+    float rangeSq = range * range;
+
+    // the world radius projected; faded out below ~24 px (a far hillside's own triangles otherwise draw in AO)
+    float radiusPxRaw = gxAoProj.x * radius / max(wp, 1e-3);
+    float fade = smoothstep(3.0, 24.0, radiusPxRaw);
+
+    if (fade <= 0.0) {
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    float radiusPx = clamp(radiusPxRaw, 3.0, 192.0);
+    // interleaved gradient noise of the pixel alone, and its golden-ratio turn for the step offset
+    float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));
+    float noiseStep = frac(noise + 0.6180339887);
+    float visibility = 0.0;
+    float3 radiance = 0.0;
+
+    [loop] for (int slice = 0; slice < SV_SLICES; slice++) {
+        float phi = (slice + noise) * pi / SV_SLICES;
+        float2 omega = float2(cos(phi), sin(phi));
+        // the slice plane holds the view ray and the screen step: measured, so no axis convention is assumed
+        float3 dir = normalize(GxViewPos(pixel + omega, d) - p);
+        float3 axis = normalize(cross(dir, v));
+        float3 tangent = cross(axis, n);
+
+        if (dot(tangent, tangent) < 1e-10) {
+            visibility += 1.0;  // the slice sees the surface edge on
+            continue;
+        }
+
+        uint mask = 0u;
+
+        [unroll] for (int side = 0; side < 2; side++) {
+            float s = side == 1 ? -1.0 : 1.0;
+
+            [loop] for (int tap = 0; tap < SV_STEPS; tap++) {
+                float t = (tap + noiseStep) / SV_STEPS;
+                float reach = max(1.5, radiusPx * t * t);
+                int2 spx = int2(floor(pixel + s * omega * reach));
+
+                if (!SvInView(spx)) {
+                    continue;
+                }
+
+                float sd = GxDepthAt(spx);
+
+                if (!GxIsGeometry(sd)) {
+                    continue;   // the sky shuts nothing
+                }
+
+                float3 sp = GxViewPos(float2(spx) + 0.5, sd);
+                float3 delta = sp - p;
+                float distSq = dot(delta, delta);
+
+                if (distSq < 1e-8 || distSq > rangeSq) {
+                    continue;
+                }
+
+                float3 toSample = delta * rsqrt(distSq);
+                float3 back = normalize(delta - v * thickness);
+                float sideSign = dot(toSample, tangent) >= 0.0 ? 1.0 : -1.0;
+                float2 horizon = float2(SvFastAcos(clamp(dot(toSample, n), -1.0, 1.0)), SvFastAcos(clamp(dot(back, n), -1.0, 1.0)));
+                horizon = saturate(0.5 + sideSign * horizon / pi);
+                uint bits = SvSectorBits(min(horizon.x, horizon.y), max(horizon.x, horizon.y));
+                uint fresh = bits & ~mask;
+                mask |= bits;
+
+#ifndef SSILVB_AO_ONLY
+                // only what this sample shut first lights us, and only a face the receiver is not behind
+                bool behindSlab = wp - GxClipW(sp) > thickness;
+
+                if (gxSsilvb.y > 0.0 && fresh != 0u && !behindSlab) {
+                    float nDotL = saturate(dot(n, toSample));
+
+                    if (nDotL > 0.0 && dot(SvNormal(spx, sp), -toSample) > 0.0) {
+                        radiance += SvSceneLinear(spx) * (SvPopcount(fresh) / 32.0 * nDotL);
+                    }
+                }
+#endif
+            }
+        }
+
+        visibility += 1.0 - SvPopcount(mask) / 32.0;
+    }
+
+    float3 recv = SvSceneLinear(px);
+    float peak = max(max(recv.r, max(recv.g, recv.b)), 0.005);   // RECEIVER_FLOOR
+    return float4(radiance / SV_SLICES * fade / peak, lerp(1.0, visibility / SV_SLICES, fade));
+}
+
+// separable depth-aware 5-tap along gxSource.zw; the target is the viewport's size, depth is the frame's
+float4 SsilvbBlurPs(GxPostVaryings i) : SV_Target0 {
+    int2 t = int2(i.pos.xy);
+    int2 last = int2(gxTarget.xy) - 1;
+    int2 origin = int2(gxViewportPx.xy);
+    float4 c = gxColor.Load(int3(t, 0));
+    float d = GxDepthAt(origin + t);
+
+    if (!GxIsGeometry(d)) {
+        return c;
+    }
+
+    float z0 = GxClipW(GxViewPos(float2(origin + t) + 0.5, d));
+    float tolerance = max(0.03 * z0, 0.02);
+    int2 dir = int2(gxSource.zw);
+    float4 sum = 0.0;
+    float weight = 0.0;
+
+    [unroll] for (int k = -2; k <= 2; k++) {
+        int2 q = clamp(t + dir * k, int2(0, 0), last);
+        float qd = GxDepthAt(origin + q);
+
+        if (!GxIsGeometry(qd)) {
+            continue;
+        }
+
+        float w = exp(-0.5 * k * k) * exp(-abs(GxClipW(GxViewPos(float2(origin + q) + 0.5, qd)) - z0) / tolerance);
+        sum += gxColor.Load(int3(q, 0)) * w;
+        weight += w;
+    }
+
+    return weight > 0.0 ? sum / weight : c;
+}
+
+// the factor multiplied into the frame (Dst x Src): occlusion + bounce, AO_GAIN 2, GI_GAIN 8, MAX_GAIN 4, ^(1/2.2) for
+// the gamma frame. Above 1 (the bounce) only reaches a float frame (hdr 1); an 8-bit one clamps the factor at 1.
+float4 SsilvbCompositePs(GxPostVaryings i) : SV_Target0 {
+    float4 indirect = gxColor.Load(int3(int2(i.pos.xy - gxViewportPx.xy), 0));
+    float occlusion = saturate(lerp(1.0, saturate(indirect.a), gxSsilvb.x * 2.0));
+    float3 bounce = max(indirect.rgb, 0.0) * (gxSsilvb.y * 8.0);
+    float3 factor = clamp(occlusion + bounce, 0.0, 4.0);
+    return float4(pow(factor, 1.0 / 2.2), 1.0);
 }

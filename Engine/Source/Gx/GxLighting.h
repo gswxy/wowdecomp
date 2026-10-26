@@ -65,6 +65,11 @@ struct GxLightingParams {
     float m_ssaoIntensity = 0.0f;
     float m_ssaoRadius = 1.5f;       // yards
     float m_ssaoDistance = 200.0f;   // fades out to here
+    // BENILLA SSILVB (D3D11): replaces the SSAO pass; AO strength is m_ssaoIntensity
+    bool m_ssilvb = false;
+    float m_ssgiIntensity = 0.0f;    // the indirect (colour bounce) half, 0 = the AO-only variant
+    float m_ssilvbRadius = 4.0f;     // yards
+    float m_ssilvbThickness = 0.6f;  // yards, the depth a sample is taken to have
 
     // the lit shaders (GxLightingGpu)
     float m_lightWrap = 0.25f;

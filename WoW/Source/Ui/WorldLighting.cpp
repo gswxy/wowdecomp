@@ -62,6 +62,10 @@ struct LightingCVars {
     CVar* ssao;
     CVar* ssaoRadius;
     CVar* ssaoDistance;
+    CVar* ssilvb;
+    CVar* ssgi;
+    CVar* ssilvbRadius;
+    CVar* ssilvbThickness;
     CVar* fogScattering;
     CVar* debug;
     // the shader half
@@ -126,7 +130,7 @@ uint32_t Features() {
         features |= GxLighting_Bloom;
     }
 
-    if (Positive(s_cv.ssao) > 0.0f) {
+    if (Positive(s_cv.ssao) > 0.0f || (s_cv.ssilvb->m_intValue > 0 && Positive(s_cv.ssgi) > 0.0f)) {
         features |= GxLighting_Ssao;
     }
 
@@ -174,6 +178,10 @@ void BuildParams(GxLightingParams& p, uint32_t features, const C3Vector& camera)
     p.m_ssaoIntensity = Positive(s_cv.ssao);
     p.m_ssaoRadius = s_cv.ssaoRadius->m_floatValue > 0.1f ? s_cv.ssaoRadius->m_floatValue : 0.1f;
     p.m_ssaoDistance = s_cv.ssaoDistance->m_floatValue > 10.0f ? s_cv.ssaoDistance->m_floatValue : 10.0f;
+    p.m_ssilvb = s_cv.ssilvb->m_intValue > 0;
+    p.m_ssgiIntensity = p.m_ssilvb ? std::min(Positive(s_cv.ssgi), 2.0f) : 0.0f;
+    p.m_ssilvbRadius = std::clamp(s_cv.ssilvbRadius->m_floatValue, 0.25f, 64.0f);
+    p.m_ssilvbThickness = std::clamp(s_cv.ssilvbThickness->m_floatValue, 0.01f, 16.0f);
     p.m_scattering = Positive(s_cv.fogScattering);
     p.m_lightWrap = std::min(Positive(s_cv.wrap), 1.0f);
     p.m_dynamicIntensity = std::min(Positive(s_cv.dynamicIntensity), 8.0f);
@@ -769,6 +777,10 @@ void WorldLightingRegisterCVars() {
     s_cv.ssao = Reg("lightingSsao", "Post-pass ambient occlusion intensity, 0 = off (D3D11/Vulkan)", "0");
     s_cv.ssaoRadius = Reg("lightingSsaoRadius", "Post-pass SSAO radius in yards", "1.5");
     s_cv.ssaoDistance = Reg("lightingSsaoDistance", "Post-pass SSAO fades out by this distance in yards", "200");
+    s_cv.ssilvb = Reg("lightingSsilvb", "1 = lightingSsao is SSILVB (visibility-bitmask AO + optional bounce, full resolution, D3D11); 0 = the old half-resolution SSAO", "1");
+    s_cv.ssgi = Reg("lightingSsgi", "SSILVB indirect light (colour bounce) strength, 0 = off (0-2; brightens only with hdr 1; costly)", "0");
+    s_cv.ssilvbRadius = Reg("lightingSsilvbRadius", "SSILVB sweep radius in yards", "4");
+    s_cv.ssilvbThickness = Reg("lightingSsilvbThickness", "SSILVB assumed occluder thickness in yards", "0.6");
     s_cv.fogScattering = Reg("fogScattering", "Fog tinted toward the sun's colour around the sun, 0 = off", "0");
     s_cv.debug = Reg("lightingDebug", "1 shows the SSAO term alone; 2 lit surfaces by kind, 3 dynamic light alone; 4, 5 the SSAO inputs", "0");
     // the shader half (lit shader pack in custom.MPQ; D3D11 and Vulkan)

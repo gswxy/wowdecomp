@@ -33,6 +33,7 @@ struct PostConstants {
     float m_tone[4];
     float m_source[4];
     float m_projW[4];
+    float m_ssilvb[4];
 };
 
 // the order of Lighting.py's JOBS
@@ -50,6 +51,13 @@ enum EShader {
     Shader_BloomUpPs,
     Shader_TonemapPs,
     Shader_MeterPs,
+    Shader_SsilvbPs,
+    Shader_SsilvbPsMs,
+    Shader_SsilvbAoPs,
+    Shader_SsilvbAoPsMs,
+    Shader_SsilvbBlurPs,
+    Shader_SsilvbBlurPsMs,
+    Shader_SsilvbCompositePs,
     Shaders_Last,
 };
 
@@ -106,6 +114,7 @@ class D3d11Lighting final : public IGxLighting {
     uint32_t m_sceneSamples = 0;
 
     Target m_ao[2];
+    Target m_ssilvb[2];
     Target m_bloom[s_bloomLevels];
 
     // the auto-exposure: the meter grid, its one readback in flight, the last scene key and the adapted lift
@@ -134,6 +143,7 @@ class D3d11Lighting final : public IGxLighting {
     void IWriteConstants(uint32_t targetWidth, uint32_t targetHeight, const float* source);
     void IDraw(EShader shader, ID3D11RenderTargetView* target, const D3D11_VIEWPORT& viewport, ID3D11BlendState* blend, ID3D11ShaderResourceView* const* srvs, uint32_t count);
     void IRestoreDevice();
+    void ISsilvb(ID3D11ShaderResourceView* depth, bool msaa);
     void IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height);
 };
 
@@ -166,7 +176,7 @@ bool D3d11Lighting::ICreate() {
     bool ps41 = this->m_device->m_featureLevel >= D3D_FEATURE_LEVEL_10_1;
 
     for (uint32_t i = 1; ok && i < Shaders_Last; i++) {
-        bool msaa = i == Shader_AoPsMs || i == Shader_AoCompositePsMs || i == Shader_FogPsMs;
+        bool msaa = i == Shader_AoPsMs || i == Shader_AoCompositePsMs || i == Shader_FogPsMs || i == Shader_SsilvbPsMs || i == Shader_SsilvbAoPsMs || i == Shader_SsilvbBlurPsMs;
 
         if (msaa && !ps41) {
             continue;
@@ -389,6 +399,10 @@ void D3d11Lighting::IWriteConstants(uint32_t targetWidth, uint32_t targetHeight,
     c.m_projW[1] = this->m_proj[7];
     c.m_projW[2] = this->m_proj[11];
     c.m_projW[3] = this->m_proj[15];
+    c.m_ssilvb[0] = p.m_ssaoIntensity;
+    c.m_ssilvb[1] = p.m_ssgiIntensity;
+    c.m_ssilvb[2] = p.m_ssilvbRadius;
+    c.m_ssilvb[3] = p.m_ssilvbThickness;
     UploadConstants(this->m_device->m_d3dContext, this->m_constants, &c, sizeof(c));
 }
 
@@ -509,7 +523,7 @@ void D3d11Lighting::SetupView(const GxLightingParams& params) {
 void D3d11Lighting::OpaqueDone() {
     CGxDeviceD3d11* dev = this->m_device;
     const GxLightingParams& p = this->m_params;
-    bool ssao = (p.m_features & GxLighting_Ssao) && p.m_ssaoIntensity > 0.0f;
+    bool ssao = (p.m_features & GxLighting_Ssao) && (p.m_ssaoIntensity > 0.0f || (p.m_ssilvb && p.m_ssgiIntensity > 0.0f));
     bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
 
     if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog) || !dev->m_depthSrv) {
@@ -537,7 +551,9 @@ void D3d11Lighting::OpaqueDone() {
     // colour only: the frame's alpha is FFX glow's mask
     const uint8_t rgb = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
 
-    if (ssao) {
+    if (ssao && p.m_ssilvb) {
+        this->ISsilvb(depth, msaa);
+    } else if (ssao) {
         uint32_t width = static_cast<uint32_t>(vp.Width + 1.0f) / 2;
         uint32_t height = static_cast<uint32_t>(vp.Height + 1.0f) / 2;
 
@@ -681,6 +697,64 @@ void D3d11Lighting::EndWorld() {
     this->IRestoreDevice();
 }
 
+// BENILLA SSILVB (benilla-bourbon ssilvb.rs): gather at full resolution over the world viewport, blur H then V,
+// multiply into the frame. The indirect half reads the frame's colour (resolved when multisampled).
+void D3d11Lighting::ISsilvb(ID3D11ShaderResourceView* depth, bool msaa) {
+    CGxDeviceD3d11* dev = this->m_device;
+    const GxLightingParams& p = this->m_params;
+    const D3D11_VIEWPORT& vp = this->m_viewport;
+    uint32_t width = static_cast<uint32_t>(vp.Width);
+    uint32_t height = static_cast<uint32_t>(vp.Height);
+
+    if (!this->IEnsureTarget(this->m_ssilvb[0], width, height, DXGI_FORMAT_R16G16B16A16_FLOAT) || !this->IEnsureTarget(this->m_ssilvb[1], width, height, DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+        return;
+    }
+
+    ID3D11ShaderResourceView* color = nullptr;
+    bool gi = p.m_ssgiIntensity > 0.0f;
+
+    if (gi) {
+        ID3D11Texture2D* source = dev->IResolvedBackBuffer();
+
+        if (source && !dev->m_backBufferSrv && FAILED(dev->m_d3dDevice->CreateShaderResourceView(source, nullptr, &dev->m_backBufferSrv))) {
+            dev->m_backBufferSrv = nullptr;
+        }
+
+        color = source ? dev->m_backBufferSrv : nullptr;
+        gi = color != nullptr;
+    }
+
+    EShader gather = gi ? (msaa ? Shader_SsilvbPsMs : Shader_SsilvbPs) : (msaa ? Shader_SsilvbAoPsMs : Shader_SsilvbAoPs);
+    EShader blur = msaa ? Shader_SsilvbBlurPsMs : Shader_SsilvbBlurPs;
+    D3D11_VIEWPORT full = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f };
+    float source[4] = { 1.0f / width, 1.0f / height, 0.0f, 0.0f };
+    ID3D11BlendState* opaque = this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_COLOR_WRITE_ENABLE_ALL);
+    D3D11_TEXTURE2D_DESC bb;
+    dev->m_backBuffer->GetDesc(&bb);
+
+    this->IWriteConstants(width, height, source);
+    ID3D11ShaderResourceView* gatherViews[2] = { depth, color };
+    this->IDraw(gather, this->m_ssilvb[0].m_rtv, full, opaque, gatherViews, 2);
+
+    source[2] = 1.0f;
+    this->IWriteConstants(width, height, source);
+    ID3D11ShaderResourceView* blurH[2] = { depth, this->m_ssilvb[0].m_srv };
+    this->IDraw(blur, this->m_ssilvb[1].m_rtv, full, opaque, blurH, 2);
+
+    source[2] = 0.0f;
+    source[3] = 1.0f;
+    this->IWriteConstants(width, height, source);
+    ID3D11ShaderResourceView* blurV[2] = { depth, this->m_ssilvb[1].m_srv };
+    this->IDraw(blur, this->m_ssilvb[0].m_rtv, full, opaque, blurV, 2);
+
+    // lightingDebug 1, 4, 5: the factor instead of the scene
+    const uint8_t rgb = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
+    ID3D11BlendState* blend = p.m_debug == 1 || p.m_debug >= 4 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
+    this->IWriteConstants(bb.Width, bb.Height, nullptr);
+    ID3D11ShaderResourceView* composite[2] = { nullptr, this->m_ssilvb[0].m_srv };
+    this->IDraw(Shader_SsilvbCompositePs, dev->m_backBufferRtv, vp, blend, composite, 2);
+}
+
 // BENILLA auto-exposure: read back the last meter grid if it has landed (never waiting), meter this frame's scene when
 // none is in flight, and ease the lift toward what the scene key asks for. Scales m_params.m_exposure.
 void D3d11Lighting::IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height) {
@@ -783,6 +857,10 @@ void D3d11Lighting::ReleaseTargets() {
     }
 
     for (Target& target : this->m_bloom) {
+        ReleaseTarget(target);
+    }
+
+    for (Target& target : this->m_ssilvb) {
         ReleaseTarget(target);
     }
 

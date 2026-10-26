@@ -115,6 +115,7 @@ namespace
         void SetupView(const GxLightingParams& params) override;
         void OpaqueDone() override;
         void EndWorld() override;
+        void FarSeam(float from, float to) override;
         void Release();
 
         CGxDeviceVulkan* m_device = nullptr;
@@ -143,8 +144,10 @@ namespace
         // pass, all dropped with the pass generation (the frame made the device idle before it changed)
         VkShaderModule m_copyVert = VK_NULL_HANDLE;
         VkShaderModule m_copyFrag = VK_NULL_HANDLE;
-        VkRenderPass m_copyPass[kCopyPasses] = {};
-        VkPipeline m_copyPipeline[kCopyPasses] = {};
+        VkShaderModule m_seamFrag = VK_NULL_HANDLE;
+        VkRenderPass m_copyPass[2][kCopyPasses] = {};   ///< [0] the MSAA copy, [1] the far seam
+        VkPipeline m_copyPipeline[2][kCopyPasses] = {};
+        float m_seam[4] = {};                 ///< BENILLA far seam: from, to, the depth a dissolved pixel takes (set in FarSeam)
         uint32_t m_copyGen = 0;
 
         texture::Image m_depth;               ///< the scene depth copy
@@ -178,7 +181,7 @@ namespace
         bool IMultiply(Prog prog, const VkRect2D& vp, Input sky, Input gi);
         bool IWet(const VkRect2D& vp, Input shelter);
         void IAutoExposure(VkCommandBuffer cmd, Input scene, uint32_t width, uint32_t height);
-        VkPipeline ICopyPipeline();
+        VkPipeline ICopyPipeline(bool seam = false);
         bool IIntoScene(VkCommandBuffer cmd, const PostConstants& c, const VkRect2D& vp);
         VkRect2D IViewportRect() const;
         void IToGeneral(VkCommandBuffer cmd, texture::Image& img);
@@ -280,6 +283,9 @@ namespace
             moduleInfo.codeSize = sizeof kLightingCopyFrag;
             moduleInfo.pCode    = kLightingCopyFrag;
             if (r == VK_SUCCESS) r = d.CreateShaderModule(this->m_vkDevice, &moduleInfo, nullptr, &this->m_copyFrag);
+            moduleInfo.codeSize = sizeof kLightingSeamFrag;
+            moduleInfo.pCode    = kLightingSeamFrag;
+            if (r == VK_SUCCESS) r = d.CreateShaderModule(this->m_vkDevice, &moduleInfo, nullptr, &this->m_seamFrag);
         }
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < 2; i++)
@@ -443,6 +449,7 @@ namespace
         memcpy(c.m_giGrid, p.m_giGrid, sizeof(c.m_giGrid));
         memcpy(c.m_gi, p.m_giParams, sizeof(c.m_gi));
         memcpy(c.m_giAmbient, p.m_giAmbient, sizeof(c.m_giAmbient));
+        memcpy(c.m_seam, this->m_seam, sizeof(c.m_seam));
     }
 
     // BENILLA data maps (D3d11Lighting.cpp IGiMap / ISkyMap): (re)made at the source's size, uploaded when its serial
@@ -713,7 +720,8 @@ namespace
     }
 
     // The pipeline that draws m_out into the current (scene) pass, built on first use against that pass.
-    VkPipeline VulkanLighting::ICopyPipeline()
+    // seam: the far seam's depth-only pipeline (LightingSeam.frag) instead of the MSAA copy
+    VkPipeline VulkanLighting::ICopyPipeline(bool seam)
     {
         const loader::Device& d = *this->m_dapi;
         const VkRenderPass pass = frame::RenderPass();
@@ -722,18 +730,21 @@ namespace
         if (this->m_copyGen != frame::PassGeneration())
         {
             // the passes these were built against are gone, and the device was idle when they went
-            for (uint32_t i = 0; i < kCopyPasses; i++)
-            {
-                if (this->m_copyPipeline[i] != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, this->m_copyPipeline[i], nullptr);
-                this->m_copyPipeline[i] = VK_NULL_HANDLE;
-                this->m_copyPass[i] = VK_NULL_HANDLE;
-            }
+            for (uint32_t k = 0; k < 2; k++)
+                for (uint32_t i = 0; i < kCopyPasses; i++)
+                {
+                    if (this->m_copyPipeline[k][i] != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, this->m_copyPipeline[k][i], nullptr);
+                    this->m_copyPipeline[k][i] = VK_NULL_HANDLE;
+                    this->m_copyPass[k][i] = VK_NULL_HANDLE;
+                }
             this->m_copyGen = frame::PassGeneration();
         }
 
         uint32_t i = 0;
-        for (; i < kCopyPasses && this->m_copyPass[i] != VK_NULL_HANDLE; i++)
-            if (this->m_copyPass[i] == pass) return this->m_copyPipeline[i];
+        VkRenderPass* passes = this->m_copyPass[seam ? 1 : 0];
+        VkPipeline* built = this->m_copyPipeline[seam ? 1 : 0];
+        for (; i < kCopyPasses && passes[i] != VK_NULL_HANDLE; i++)
+            if (passes[i] == pass) return built[i];
         if (i == kCopyPasses) return VK_NULL_HANDLE;
 
         VkPipelineShaderStageCreateInfo stages[2] = {};
@@ -743,7 +754,7 @@ namespace
         stages[0].pName  = "main";
         stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = this->m_copyFrag;
+        stages[1].module = seam ? this->m_seamFrag : this->m_copyFrag;
         stages[1].pName  = "main";
 
         VkPipelineVertexInputStateCreateInfo vertexInput = {};
@@ -766,9 +777,16 @@ namespace
         VkPipelineDepthStencilStateCreateInfo depth = {};   // no test, no write
         depth.sType          = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         depth.maxDepthBounds = 1.0f;
+        if (seam)
+        {
+            // D3d11Lighting.cpp FarSeam's depth state: ALWAYS, written; no colour
+            depth.depthTestEnable  = VK_TRUE;
+            depth.depthWriteEnable = VK_TRUE;
+            depth.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+        }
         // the scene colour whole (as the single-sample copy writes it); GBUFFER's normal target untouched
         VkPipelineColorBlendAttachmentState attachments[2] = {};
-        attachments[0].colorWriteMask = 0xFu;
+        attachments[0].colorWriteMask = seam ? 0u : 0xFu;
         VkPipelineColorBlendStateCreateInfo blending = {};
         blending.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blending.attachmentCount = frame::PassHasNormal() ? 2u : 1u;
@@ -798,13 +816,13 @@ namespace
         const VkResult r = d.CreateGraphicsPipelines(this->m_vkDevice, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
         if (r != VK_SUCCESS)
         {
-            if (!this->m_loggedCopy) Write(Error, "vulkan: lighting: the MSAA copy pipeline could not be made: %s (logged once)", gxvk::vk::ResultName(r));
+            if (!this->m_loggedCopy) Write(Error, "vulkan: lighting: the %s pipeline could not be made: %s (logged once)", seam ? "far seam" : "MSAA copy", gxvk::vk::ResultName(r));
             this->m_loggedCopy = true;
             return VK_NULL_HANDLE;
         }
 
-        this->m_copyPass[i] = pass;
-        this->m_copyPipeline[i] = pipeline;
+        passes[i] = pass;
+        built[i] = pipeline;
         return pipeline;
     }
 
@@ -996,6 +1014,40 @@ namespace
             Write(Warn, "vulkan: lighting: the SSAO / fog passes could not be recorded this frame");
     }
 
+    // BENILLA far view seam (D3d11Lighting.cpp FarSeam): the scene depth copied, then a depth-only full-screen draw in
+    // the scene's pass that moves the dithered share of the pixels in [from, to] behind the horizon band.
+    void VulkanLighting::FarSeam(float from, float to)
+    {
+        if (!this->m_worldActive || !this->m_viewSet || to <= from || !this->IGate()) return;
+
+        const texture::Image* scene = frame::Scene();
+        if (!this->IEnsure(this->m_depth, scene->extent.width, scene->extent.height, frame::DepthFormat(), true) || !frame::CopyDepthFromScene(this->m_depth)) return;
+
+        // just in front of the sky's band (DayNight s_skyMinZ 0.9990234375), behind every far land depth but its last ~3 %
+        this->m_seam[0] = from;
+        this->m_seam[1] = to;
+        this->m_seam[2] = 0.99902f;
+        this->m_lastUsed = frame::Serial();
+        PostConstants c;
+        this->IConstants(c, scene->extent.width, scene->extent.height, nullptr);
+        const VkPipeline pipeline = this->ICopyPipeline(true);
+        const VkDescriptorSet set = pipeline != VK_NULL_HANDLE ? this->ISet(c, this->m_depth.view, {}, {}, VK_NULL_HANDLE) : VK_NULL_HANDLE;
+        VkCommandBuffer pass = set != VK_NULL_HANDLE ? frame::Pass() : nullptr;
+        if (!pass) return;
+
+        // gl_FragDepth is clamped to the viewport's range: the full one
+        const loader::Device& d = *this->m_dapi;
+        const VkRect2D vp = this->IViewportRect();
+        const VkViewport viewport = { 0.0f, 0.0f, static_cast<float>(scene->extent.width), static_cast<float>(scene->extent.height), 0.0f, 1.0f };
+        d.CmdBindPipeline(pass, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        d.CmdBindDescriptorSets(pass, VK_PIPELINE_BIND_POINT_GRAPHICS, this->m_layout, 0, 1, &set, 0, nullptr);
+        d.CmdSetViewport(pass, 0, 1, &viewport);
+        d.CmdSetScissor(pass, 0, 1, &vp);
+        d.CmdDraw(pass, 3, 1, 0, 0);
+        pipelines::Unbind();   // the draw path's binding cache no longer says what is bound
+        frame::DepthWritten();
+    }
+
     void VulkanLighting::EndWorld()
     {
         if (!this->m_worldActive) return;
@@ -1092,10 +1144,12 @@ namespace
             }
             for (VkPipeline& pipeline : this->m_pipelines)
                 if (pipeline != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, pipeline, nullptr);
-            for (VkPipeline& pipeline : this->m_copyPipeline)
-                if (pipeline != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, pipeline, nullptr);
+            for (auto& kind : this->m_copyPipeline)
+                for (VkPipeline& pipeline : kind)
+                    if (pipeline != VK_NULL_HANDLE) d.DestroyPipeline(this->m_vkDevice, pipeline, nullptr);
             if (this->m_copyVert != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_copyVert, nullptr);
             if (this->m_copyFrag != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_copyFrag, nullptr);
+            if (this->m_seamFrag != VK_NULL_HANDLE) d.DestroyShaderModule(this->m_vkDevice, this->m_seamFrag, nullptr);
             if (this->m_linear != VK_NULL_HANDLE) d.DestroySampler(this->m_vkDevice, this->m_linear, nullptr);
             if (this->m_nearest != VK_NULL_HANDLE) d.DestroySampler(this->m_vkDevice, this->m_nearest, nullptr);
             if (this->m_layout != VK_NULL_HANDLE) d.DestroyPipelineLayout(this->m_vkDevice, this->m_layout, nullptr);

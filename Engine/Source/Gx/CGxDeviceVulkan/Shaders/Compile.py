@@ -52,6 +52,7 @@ OUTPUTS = [
         ("LightingSsilvbBlur.comp", "kLightingSsilvbBlurComp"),
         ("LightingWet.comp", "kLightingWetComp"),
         ("LightingMeter.comp", "kLightingMeterComp"),
+        ("LightingSeam.frag", "kLightingSeamFrag"),
     ]),
     # FSR: the world upscaler's input and output passes (Vulkan/Upscale.cpp)
     ("UpscaleSpirv.inc", [

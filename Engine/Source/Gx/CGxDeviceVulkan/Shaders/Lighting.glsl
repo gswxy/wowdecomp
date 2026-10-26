@@ -5,7 +5,9 @@
 // for the passes that run over the world viewport). Matrices are the engine's row-major, row-vector ones:
 // HLSL mul(v, M) is v * M with row_major.
 
+#ifndef GX_FRAGMENT
 layout(local_size_x = 8, local_size_y = 8) in;
+#endif
 
 layout(set = 0, binding = 0) uniform sampler2D gxDepth;
 layout(set = 0, binding = 1) uniform sampler2D gxColor;

@@ -385,6 +385,29 @@ float4 IntegrateFogAtDepth(float2 pixel, float depth, float jitter)
             transmittance *= 1 - stepOpacity;
         }
     }
+    // foreverFog (benilla fog_composite.wgsl pixel_point): a sky pixel is fogged along its ray out to SKY_FOG_DISTANCE
+    // (16000 yd), thinned overhead by the medium's own height falloff alone (its skyFalloff is 0), so the horizon sky
+    // takes the in-scatter the far land under it does. The march stops at the layer's limit; the rest of the Forever
+    // layer (isotropic < 0) is the closed-form height integral from there, sun unshadowed. Keyed on skyUpward (> 0 only
+    // on sky, = its rise) and the ray's own fields, already live through the loop: ps_3_0's lit march has no temps
+    // to spare (an exactly level sky ray skips the tail, a one-pixel line at most).
+    [branch] if (skyUpward > 0)
+    {
+        FogLayer tail = LoadConstantFogLayer(kFogLayers - 1);
+        [branch] if (tail.isotropic < 0 && tail.density > 0)
+        {
+            float from = max(tail.limit, tail.start);
+            float len = max(16000 - from, 0);
+            float rise = skyUpward * tail.upperFalloff;
+            float a0 = (tail.upperHeight - ray.cameraHeight - skyUpward * from) * tail.upperFalloff;
+            float ea = exp(min(a0, 0));
+            float column = rise * len < 1e-3 ? ea * len : min((ea - exp(min(a0 - rise * len, 0))) / rise, len);
+            float tailOpacity = 1 - exp(-tail.density * column);
+            inScatteredRadiance += transmittance * tailOpacity *
+                (tail.diffuse * LayerRayTerms(tail, cosToLight, 0).y + tail.emissive);
+            transmittance *= 1 - tailOpacity;
+        }
+    }
     return float4(clamp(inScatteredRadiance, 0, 65504), 1 - transmittance);
 }
 

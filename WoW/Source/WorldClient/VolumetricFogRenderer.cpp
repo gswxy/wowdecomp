@@ -143,6 +143,8 @@ bool s_callbackAdded;
 bool s_depthUnsupported;        // DeviceCopySceneDepth gave nullptr; cleared on device restore
 bool s_shaderMissing;           // a needed VFog shader is not in the MPQ
 bool s_overSceneCopy;           // the last composite blended in linear light over a scene copy
+CGxTex* s_skyDepth;             // SkyDepth: this frame's composite depth (null until RenderFog takes one)
+float s_skyDepthFrom;           // ... and its sky band (vf_common IsSky: depth > this)
 GodRays s_godRays;
 
 // vfogFadeStencil (wxl-vfog 0.6.3 KeepDepthBehind / DrawOverMarked): R32F copies of the depth behind the fading models
@@ -1053,6 +1055,7 @@ void StoreHistory(const FogFrame& f) {
 
 bool RenderFog(const FogParams& fogIn, const FrameInputs& in, const Config& cfg, uint32_t frame, double seconds) {
     CGxDevice* device = g_theGxDevicePtr;
+    s_skyDepth = nullptr;
     if (!device || s_depthUnsupported || s_shaderMissing) {
         return false;
     }
@@ -1294,6 +1297,8 @@ bool RenderFog(const FogParams& fogIn, const FrameInputs& in, const Config& cfg,
     f.temporal = temporal;
     f.depth = depth;
     f.fadeDepth = fadeDepth;
+    s_skyDepth = depth;
+    s_skyDepthFrom = in.horizonBand[1];
     f.proj = proj;
     std::memcpy(f.toLightInView, toLightInView, sizeof(toLightInView));
     std::memcpy(f.viewport, viewport, sizeof(viewport));
@@ -1859,6 +1864,12 @@ void RendererShutdown() {
     s_callbackAdded = false;
     s_depthUnsupported = false;
     s_shaderMissing = false;
+}
+
+bool SkyDepth(CGxTex*& depth, float& skyFrom) {
+    depth = s_skyDepth;
+    skyFrom = s_skyDepthFrom;
+    return depth != nullptr;
 }
 
 }  // namespace VolumetricFog

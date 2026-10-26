@@ -9,6 +9,7 @@
 sampler2D sNoise : register(s0);
 sampler2D sMoon  : register(s3);
 sampler2D sStock : register(s4);
+sampler2D sDepth : register(s1);   // the disc alone: vfog's composite depth (VolumetricFog::SkyDepth)
 float4 gR   : register(c0);    // the view rays: dir = right * ndc.x + up * ndc.y + forward; w = 1: the disc alone
 float4 gU   : register(c1);    // w = 1: sStock is live, the game's pattern says where the cloud is
 float4 gF   : register(c2);    // w = 1: sMoon (the body's stock sprite, sunCenter.blp / moon.blp) is drawn
@@ -22,6 +23,8 @@ float4 gAtT : register(c9);    // rgb = the band of sky over eye level (linear)
 float4 gAtG : register(c10);   // rgb = the light's glow (linear); w, gAtS.w, gAtZ.w = the twilight band opposite the light
 float4 gAtS : register(c11);   // xyz = toward the sun or moon
 float4 gAtZ : register(c12);   // rgb = the sky straight up (linear)
+float4 gDep : register(c13);   // the disc alone: xy = the viewport's origin in the depth's pixels, zw = 1 / its size
+float4 gSky : register(c14);   // the disc alone: x = the sky's depth (vf_common IsSky: above it), y = 1: sDepth is live
 
 // ---- Atmosphere.hpp
 float3 SkyAt(float3 d, float kb, float kg)
@@ -134,6 +137,9 @@ float4 main(float2 uv : TEXCOORD0) : COLOR0
     // The disc alone (SkyClouds::DrawOverFog, over vfog's composite): nothing outside the sprite's quad.
     bool only = gR.w > 0.5;
     [branch] if (only && (dir.z <= 0.0 || dot(dir, gSun.xyz) < cos(1.5 * gSun.w)))
+        return float4(0.0, 0.0, 0.0, 0.0);
+    // Only where vfog fogged sky (its own depth, not the bound depth-stencil's state after the composite).
+    [branch] if (only && gSky.y > 0.5 && tex2Dlod(sDepth, float4((gDep.xy + uv * gDr.zw) * gDep.zw, 0.0, 0.0)).r <= gSky.x)
         return float4(0.0, 0.0, 0.0, 0.0);
     float3 ours = ToDisplay(SkyAt(dir, 1.0, 1.0));
     float2 px = uv * gDr.zw;

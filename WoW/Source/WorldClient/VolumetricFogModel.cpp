@@ -346,7 +346,7 @@ void ForeverDistanceLayer(const FrameInputs& in, const Config& cfg, const FogPar
     out.isotropic = -std::max(isotropic, 1e-6f);   // < 0: no shaft floor (LayerPhase takes |isotropic|)
     out.strength = 0.0f;
     out.exponent = 1.0f;
-    out.skyFalloff = kFarSkyFalloff;
+    out.skyFalloff = 0.0f;   // benilla: no sky thinning, the height falloff alone (the sky tail, vf_integrate)
     out.endDistance = std::max(std::max(in.fogCap, in.farClip), p.farLimit);
     out.upperHeight = in.hazeReferenceValid ? in.hazeReferenceZ : p.referenceZ;
     out.upperFalloff = 1.0f / std::max(look.fogFalloff, 1.0f);

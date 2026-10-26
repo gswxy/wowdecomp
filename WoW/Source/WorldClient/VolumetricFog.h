@@ -246,6 +246,7 @@ void RendererShutdown();
 // ===== WP7 driver: VolumetricFog.cpp
 void RegisterCVars();                       // from CWorldParam::Initialize
 bool Active();                              // fog will draw (or drew) this frame; stock fog is pushed out
+bool SkyDepth(CGxTex*& depth, float& skyFrom);   // the depth the last RenderFog fogged by, its sky band (SkyClouds::DrawOverFog)
 void OnWorldUpdate();                       // CWorld::Update, after CWorld::farFog is taken
 void OnViewerLiquid();                      // CWorldScene::Render, right after UpdateViewerLiquid
 void OnOpaqueDone();                        // after scene->Draw(M2PASS_0)

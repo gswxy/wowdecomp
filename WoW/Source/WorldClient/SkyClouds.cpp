@@ -415,18 +415,37 @@ void DrawOverFog() {
         return;
     }
     s_over.c[5][2] = vp.w; s_over.c[5][3] = vp.h;
+    // The sky test reads the depth vfog fogged by (IsSky), so the disc does not hang on what the depth-stencil holds
+    // or how it is bound after the composite; without it (no copy this frame) the hardware test, LEQUAL at depth 1.
+    float c[15][4] = {};
+    std::memcpy(c, s_over.c, sizeof(s_over.c));
+    CGxTex* depth = nullptr;
+    float skyFrom = 1.0f;
+    const bool sampled = VolumetricFog::SkyDepth(depth, skyFrom) && depth->m_width > 0 && depth->m_height > 0;
+    if (sampled) {
+        c[13][0] = vp.x; c[13][1] = vp.y; c[13][2] = 1.0f / depth->m_width; c[13][3] = 1.0f / depth->m_height;
+        c[14][0] = skyFrom; c[14][1] = 1.0f;
+    }
+    CGxDevice* device = g_theGxDevicePtr;
     VolumetricFog::SavedPassState saved;
     VolumetricFog::BeginPasses(saved);
-    GxRsSet(GxRs_DepthTest, 1);
+    GxRsSet(GxRs_DepthTest, sampled ? 0 : 1);
     GxRsSet(GxRs_DepthFunc, 0);       // LEQUAL
     GxRsSet(GxRs_ColorWrite, 7);
     GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Shader());
-    VolumetricFog::SetPs(0, &s_over.c[0][0], 13);
+    device->RsSet(GxRs_PixelShader, Shader());
+    VolumetricFog::SetPs(0, &c[0][0], 15);
     VolumetricFog::Bind(0, s_over.noise);
+    VolumetricFog::Bind(1, sampled ? depth : nullptr);
     VolumetricFog::Bind(3, s_over.tex);
     VolumetricFog::Bind(4, s_over.stock);
+    if (sampled) {
+        device->DeviceSceneDepthBound(false);   // D3D9: the depth may be the INTZ depth-stencil the back buffer uses
+    }
     DrawFarQuad(vp);
+    if (sampled) {
+        device->DeviceSceneDepthBound(true);
+    }
     VolumetricFog::EndPasses(saved, vp);
 }
 

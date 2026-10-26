@@ -25,6 +25,7 @@ cbuffer GxPost : register(b0) {
     float4 gxWet;                  // rain on surfaces: x wetness 0..1, y 1 = screen-space reflections (0: the fog colour), z 1 = gxSkyMap is the shelter map
     float4 gxOrigin;               // xyz the render origin (world)
     row_major float4x4 gxProj;     // view to clip
+    float4 gxSeam;                 // far view seam: x from (view depth), y to (farclip), z the depth a dissolved pixel takes
 };
 
 #ifdef GX_MSAA
@@ -922,4 +923,36 @@ float4 WetReflectPs(GxPostVaryings i) : SV_Target0 {
         refl = lerp(sky, max(fetched, 0.0), edge * away);
     }
     return float4(refl * tag, 1.0);
+}
+
+// BENILLA far view seam (fog_composite.wgsl fs_composite, SEAM_FROM 0.7): over the last stretch before the view distance
+// the detailed world dissolves into the band behind it. benilla blends toward a flat silhouette colour; here the share
+// k = smoothstep(from, farclip, view depth) of the pixels (IGN dither, fixed per pixel) is pushed behind the horizon
+// band, so FarLand's real ground (and the far trees) draw there instead. Pass 1: the mask from the depth.
+float4 SeamMaskPs(GxPostVaryings i) : SV_Target0 {
+    float d = GxDepthAt(int2(i.pos.xy));
+
+    if (!GxIsGeometry(d)) {
+        return 0.0;
+    }
+
+    float w = GxClipW(GxViewPos(i.pos.xy, d));
+
+    if (w > gxSeam.y) {
+        return 0.0;
+    }
+
+    float k = smoothstep(gxSeam.x, gxSeam.y, w);
+    float noise = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));
+    return k > noise ? 1.0 : 0.0;
+}
+
+// pass 2 (the frame's depth bound, colour writes off): a masked pixel takes the depth behind the horizon band's far
+// land and in front of the sky's band
+float SeamDepthPs(GxPostVaryings i) : SV_Depth {
+    if (gxColor.Load(int3(i.pos.xy, 0)).r < 0.5) {
+        discard;
+    }
+
+    return gxSeam.z;
 }

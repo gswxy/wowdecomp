@@ -1,5 +1,6 @@
 #include "WoW/Source/Ui/WorldLighting.h"
 #include "WoW/Source/WorldClient/SkyOcclusion.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 #include "WoW/Source/WorldClient/MapWeather.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
@@ -147,6 +148,10 @@ uint32_t Features() {
 
     if (SkyOcclusion::Enabled()) {
         features |= GxLighting_SkyOcclusion;   // BENILLA sky occlusion; dropped at SetupView while its map is not up
+    }
+
+    if (FarLand::SeamFrom() > 0.0f) {
+        features |= GxLighting_FarSeam;        // BENILLA far view seam (farLandSeam)
     }
 
     if (Positive(s_cv.fogScattering) > 0.0f && !VolumetricFog::Active()) {
@@ -937,6 +942,14 @@ void WorldLightingSetupView(const C3Vector& camera) {
 void WorldLightingOpaqueDone() {
     if (s_inWorld && g_gxLighting) {
         g_gxLighting->OpaqueDone();
+    }
+}
+
+void WorldLightingFarSeam() {
+    const float from = FarLand::SeamFrom();
+
+    if (s_inWorld && g_gxLighting && (s_params.m_features & GxLighting_FarSeam) && from > 0.0f) {
+        g_gxLighting->FarSeam(from, World::s_farClip);
     }
 }
 

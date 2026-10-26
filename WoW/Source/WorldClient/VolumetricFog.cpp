@@ -372,6 +372,7 @@ void ReadDayNightInputs(FrameInputs& in) {
     in.farClip = World::s_farClip;
     in.fogCap = FarLand::FogCap(in.farClip);
     in.hazeFalloff = FarLand::HazeFalloff();
+    in.hazeReferenceValid = FarLand::HazeReference(in.hazeReferenceZ);
     in.inLiquid = false;
     in.clientGlowAmount = GlowScreenEffectRuns() ? Clamp01(info.m_bands.m_glow) : 0.0f;
     in.interiorBlend = SmoothedInteriorBlend();

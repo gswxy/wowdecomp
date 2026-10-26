@@ -27,6 +27,7 @@ enum EGxLightingFeature : uint32_t {
     GxLighting_Pbr = 0x200,           // PBR-lite: GGX specular, sky reflection, energy conservation (lightPbr)
     GxLighting_SkyOcclusion = 0x400,  // BENILLA sky occlusion (D3D11): the frame dimmed under the world's tops (skyOcclusion)
     GxLighting_Wet = 0x800,           // BENILLA rain on surfaces (D3D11): wet darkening, puddles, reflections (rainWetness)
+    GxLighting_FarSeam = 0x1000,      // BENILLA far view seam (D3D11): the detailed world dithers into the far land (farLandSeam)
 };
 
 // CUSTOM (PBR-lite): the material category of the next draw, guessed by the engine (assets carry no PBR maps). The
@@ -170,6 +171,13 @@ class IGxLighting {
     virtual void SetupView(const GxLightingParams& params) = 0;
     virtual void OpaqueDone() = 0;
     virtual void EndWorld() = 0;
+    // BENILLA far view seam: after the terrain and WMO groups, before the far trees and the horizon. Pixels whose view
+    // depth lies in [from, to] are pushed behind the horizon band by a dithered share smoothstep(from, to, depth), so
+    // the far land draws there. Default: nothing (Vulkan).
+    virtual void FarSeam(float from, float to) {
+        (void)from;
+        (void)to;
+    }
 };
 
 extern IGxLighting* g_gxLighting;

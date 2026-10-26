@@ -1,6 +1,7 @@
 #include "WoW/Source/WorldClient/FarLand.h"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -76,6 +77,21 @@ constexpr float kHorizonNear = 600.0f;
 int32_t s_uploads = 4;
 float s_hazeFalloff = 1.0f / 300.0f;   // farLandHazeHeight
 float s_farView = 10000.0f;     // farViewDistance (BENILLA far view)
+int32_t s_seam = 1;             // farLandSeam (BENILLA far view seam)
+int32_t s_hazeGround = 1;       // farLandHazeGround (BENILLA long-range height fog reference)
+// BENILLA fog_composite.wgsl SEAM_FROM: where, as a share of the view distance, the detailed world starts dissolving
+constexpr float kSeamFrom = 0.7f;
+// BENILLA volumetrics/mod.rs: the regional ground, 5 x 5 WDL heights GROUND_SAMPLE_YD apart, the mean of the lower two
+// thirds, never more than LOCAL_FLOOR_YD below the ground under the camera nor above the camera, eased over 2 s
+// (a jump of 400 yd or more snaps)
+constexpr float kGroundSampleYd = 300.0f;
+constexpr float kLocalFloorYd = 60.0f;
+constexpr float kReferenceEaseSeconds = 2.0f;
+constexpr float kReferenceSnapYd = 400.0f;
+float s_refZ = 0.0f;
+bool s_refValid = false;
+int32_t s_refFrame = -1;
+float s_refMs = 0.0f;
 
 CGxShader* s_vs = nullptr;
 CGxShader* s_ps = nullptr;
@@ -445,8 +461,11 @@ void PassConstants() {
     // The world's fog as the terrain gets it; vfog pushes it out of range, so its composite does the fogging.
     const DayNight::DNInfo& dn = DayNight::g_dnInfo;
     ps[3][0] = dn.m_fog.m_color.r / 255.0f; ps[3][1] = dn.m_fog.m_color.g / 255.0f; ps[3][2] = dn.m_fog.m_color.b / 255.0f;
-    ps[4][0] = dn.m_fog.m_start;
-    ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? 1.0f / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
+    // farLandHazeGround: the haze's density is its regional ground's, the camera's share of it HazeScale (folded into
+    // the ramp: (s d - start) k = (d - start / s) (s k), so FarLandPS is unchanged)
+    const float hazeScale = HazeScale();
+    ps[4][0] = dn.m_fog.m_start / hazeScale;
+    ps[4][1] = dn.m_fog.m_end > dn.m_fog.m_start + 0.01f ? hazeScale / (dn.m_fog.m_end - dn.m_fog.m_start) : 0.0f;
     ps[4][2] = kFogMax;
     ps[4][3] = s_hazeFalloff;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Pixel, 0, &ps[0][0], 5);
@@ -489,6 +508,14 @@ void RegisterCVars() {
         s_farView = std::min(std::max(SStrToFloat(value), 0.0f), 20000.0f);
         return true;
     }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farLandSeam", "farLand (D3D11): over the last 30 % of the view distance the detailed world dithers into the far land behind it, so there is no line where the near terrain ends (benilla's seam dissolve; 1 = on, default; 0 = off)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        s_seam = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
+    CVar::Register("farLandHazeGround", "farLand: the far haze's height falloff starts at the regional ground (the WDL heights round the camera, eased) instead of the camera, so the haze lies in the valleys and flying up does not drag it along (benilla's long-range height fog; 1 = on, default; 0 = from the camera)", 1, "1", [](CVar*, const char*, const char* value, void*) -> bool {
+        s_hazeGround = SStrToInt(value) != 0;
+        return true;
+    }, CATEGORY_GRAPHICS, false, nullptr, false);
     CVar::Register("farLandUploads", "farLand: most baked tiles copied into the atlases per frame (1..32, default 4)", 1, "4", [](CVar*, const char*, const char* value, void*) -> bool {
         s_uploads = std::min(std::max(SStrToInt(value), 1), 32);
         return true;
@@ -497,6 +524,84 @@ void RegisterCVars() {
 
 bool Drawing() {
     return s_enabled && !s_shaderFailed;
+}
+
+namespace {
+
+// The WDL height at a world point (the outer 17 x 17 grid of its block, bilinear); false = no block there.
+bool WdlHeight(float x, float y, float& h) {
+    const CMapLowDetail& wdl = CMap::s_lowDetail;
+    if (!wdl.m_data) return false;
+    const float fr = (17066.666f - x) / (1600.0f / 3.0f), fc = (17066.666f - y) / (1600.0f / 3.0f);
+    if (!(fr >= 0.0f && fc >= 0.0f && fr < 64.0f && fc < 64.0f)) return false;
+    const int32_t r = int32_t(fr), c = int32_t(fc);
+    const CMapAreaLow* area = wdl.m_areas[r * 64 + c];
+    if (!area || !area->m_heights) return false;
+    const float u = (fr - r) * 16.0f, v = (fc - c) * 16.0f;
+    const int32_t i = std::min(int32_t(u), 15), j = std::min(int32_t(v), 15);
+    const float tu = u - i, tv = v - j;
+    const int16_t* g = area->m_heights;
+    const float h0 = g[i * 17 + j] + (g[i * 17 + j + 1] - g[i * 17 + j]) * tv;
+    const float h1 = g[(i + 1) * 17 + j] + (g[(i + 1) * 17 + j + 1] - g[(i + 1) * 17 + j]) * tv;
+    h = h0 + (h1 - h0) * tu;
+    return true;
+}
+
+// BENILLA regional_ground + held_to_local_ground (volumetrics/mod.rs), eased once a frame.
+void UpdateReference() {
+    if (s_refFrame == CWorld::frameCnt) return;
+    s_refFrame = CWorld::frameCnt;
+    const C3Vector& cam = CWorldScene::s_activeWorldView;
+    float samples[25];
+    bool any = false;
+    for (int32_t j = -2, n = 0; j <= 2; j++) {
+        for (int32_t i = -2; i <= 2; i++, n++) {
+            float h = 0.0f;
+            const bool authored = WdlHeight(cam.x + i * kGroundSampleYd, cam.y + j * kGroundSampleYd, h);
+            any |= authored;
+            samples[n] = authored ? h : 0.0f;   // open sea: sea level
+        }
+    }
+    if (!any) {
+        s_refValid = false;
+        return;
+    }
+    std::sort(samples, samples + 25);
+    float regional = 0.0f;
+    for (int32_t n = 0; n < 16; n++) regional += samples[n];
+    regional /= 16.0f;
+    float here;
+    if (WdlHeight(cam.x, cam.y, here)) regional = std::max(regional, here - kLocalFloorYd);
+    const float ground = std::min(regional, cam.z);
+    const float now = NowMs();
+    const float dt = std::max(now - s_refMs, 0.0f) * 0.001f;
+    s_refMs = now;
+    if (s_refValid && std::fabs(s_refZ - ground) < kReferenceSnapYd) {
+        s_refZ += (ground - s_refZ) * std::min(dt / kReferenceEaseSeconds, 1.0f);
+    } else {
+        s_refZ = ground;
+    }
+    s_refValid = true;
+}
+
+} // namespace
+
+bool HazeReference(float& z) {
+    if (!s_hazeGround || !Drawing()) return false;
+    UpdateReference();
+    z = s_refZ;
+    return s_refValid;
+}
+
+float HazeScale() {
+    float ref;
+    const float falloff = HazeFalloff();
+    if (falloff <= 0.0f || !HazeReference(ref)) return 1.0f;
+    return std::exp(-std::max(CWorldScene::s_activeWorldView.z - ref, 0.0f) * falloff);
+}
+
+float SeamFrom() {
+    return s_seam && Drawing() && CMap::s_lowDetail.m_data && World::s_farClip > 1.0f ? kSeamFrom * World::s_farClip : 0.0f;
 }
 
 void UpdateHorizonScale() {
@@ -515,7 +620,9 @@ float FogCap(float farClip) {
 }
 
 float HorizonNear(float farZ) {
-    return Drawing() ? std::min(farZ - 50.0f, kHorizonNear) : farZ - 50.0f;
+    if (!Drawing()) return farZ - 50.0f;
+    const float seam = SeamFrom();   // the far land must lie behind the whole seam band
+    return std::min(farZ - 50.0f, seam > 0.0f ? std::min(kHorizonNear, seam) : kHorizonNear);
 }
 
 float HazeFalloff() {

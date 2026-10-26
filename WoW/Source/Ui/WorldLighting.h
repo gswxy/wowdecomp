@@ -11,6 +11,8 @@ void WorldLightingRegisterCVars();
 void WorldLightingBeginWorld();
 void WorldLightingSetupView(const C3Vector& camera);
 void WorldLightingOpaqueDone();
+// BENILLA far view seam: after the terrain and WMO groups, before FarTrees::Draw and the horizon (CWorldScene::Render)
+void WorldLightingFarSeam();
 void WorldLightingEndWorld();
 
 #endif

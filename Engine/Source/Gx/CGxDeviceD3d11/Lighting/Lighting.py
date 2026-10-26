@@ -36,6 +36,9 @@ JOBS = [
     ('WetDarkenPsMs', 'WetDarkenPs', 'ps_4_1', {'GX_MSAA': 1}),
     ('WetReflectPs', 'WetReflectPs', 'ps_4_0', {}),
     ('WetReflectPsMs', 'WetReflectPs', 'ps_4_1', {'GX_MSAA': 1}),
+    ('SeamMaskPs', 'SeamMaskPs', 'ps_4_0', {}),
+    ('SeamMaskPsMs', 'SeamMaskPs', 'ps_4_1', {'GX_MSAA': 1}),
+    ('SeamDepthPs', 'SeamDepthPs', 'ps_4_0', {}),
 ]
 
 

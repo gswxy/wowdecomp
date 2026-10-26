@@ -222,7 +222,8 @@ void DistanceLayer(const FrameInputs& in, const Config& cfg, const FogParams& p,
     out.endDistance = p.farLimit;
     // farlandv2: thinner with height above the reference (farLandHazeHeight), so low far land goes into the haze first
     // and high ridges keep a silhouette; the normalisation above stays the level ray's.
-    out.upperHeight = p.referenceZ;
+    // farLandHazeGround: BENILLA's long-range height fog lies on the regional ground, not the camera
+    out.upperHeight = in.hazeReferenceValid ? in.hazeReferenceZ : p.referenceZ;
     out.upperFalloff = in.hazeFalloff;
     Scale(fogColor, kFarAmbient * cfg.ambient, out.emissive);
     Scale(p.lightColor, kFarSun * sunScatter, out.diffuse);

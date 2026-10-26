@@ -34,6 +34,14 @@ bool Drawing();
 float HorizonNear(float farZ);
 // farLandHazeHeight as 1 / yd (0 = off or far land not drawing): the far haze thins with height above the camera.
 float HazeFalloff();
+// BENILLA long-range height fog (volumetrics/mod.rs regional_ground): farLandHazeGround's reference height (world z),
+// the regional WDL ground round the camera, eased; false = off, far land not drawing or no WDL. vfog's distance layer.
+bool HazeReference(float& z);
+// The haze density at the camera as a share of its density at HazeReference (1 = off): FarLandPS and FarTrees' beyond pass.
+float HazeScale();
+// BENILLA far view seam: where the detailed world starts dissolving into the far land (0.7 x farclip), 0 = farLandSeam
+// off or no far land. WorldLighting (GxLighting_FarSeam) and HorizonNear.
+float SeamFrom();
 
 // Start of CWorldScene::RenderHorizon: new map check, finished tiles into the atlases (capped), and the next Apply
 // uploads this pass's view, sun and fog constants.

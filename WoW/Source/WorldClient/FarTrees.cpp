@@ -370,8 +370,9 @@ void DrawTrees(bool beyond) {
     k[8][0] = std::fabs(g_theGxDevicePtr->m_projNative.b1) * screenH * 0.5f;
     k[8][1] = kMinPixels;
     const float fogStart = dn.m_fog.m_start, fogEnd = dn.m_fog.m_end;
-    k[8][2] = fogStart;
-    k[8][3] = fogEnd > fogStart + 0.01f ? 1.0f / (fogEnd - fogStart) : 0.0f;
+    const float hazeScale = beyond ? FarLand::HazeScale() : 1.0f;   // farLandHazeGround, as FarLand's PassConstants
+    k[8][2] = fogStart / hazeScale;
+    k[8][3] = fogEnd > fogStart + 0.01f ? hazeScale / (fogEnd - fogStart) : 0.0f;
     k[9][0] = -dn.m_light0.m_dir.x; k[9][1] = -dn.m_light0.m_dir.y; k[9][2] = -dn.m_light0.m_dir.z;
     if (beyond) {
         k[10][0] = FarLand::HazeFalloff(); k[10][1] = FarLand::kFogMax; k[10][2] = s_split; k[10][3] = -1.0f;

@@ -231,6 +231,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     CWorldScene::RenderMapObjDefGroups();
     // OCCLUSION: depth now holds terrain and WMO groups; test this frame's candidates against it.
     OcclusionCull::IssueQueries();
+    WorldLightingFarSeam();   // BENILLA far view seam: not in 12340 (the detailed world dithers into the far land)
     FarTrees::Draw();   // FARTREES: not in 12340 (far tree impostors, before every M2 pass)
     FrameProfileSwitch(FRAMEPROFILE_TERRAIN);
     CWorldScene::RenderHorizon();

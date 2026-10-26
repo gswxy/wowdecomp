@@ -39,6 +39,7 @@ struct PostConstants {
     float m_wet[4];
     float m_origin[4];
     float m_projFwd[16];
+    float m_seam[4];
 };
 
 // the order of Lighting.py's JOBS
@@ -69,6 +70,9 @@ enum EShader {
     Shader_WetDarkenPsMs,
     Shader_WetReflectPs,
     Shader_WetReflectPsMs,
+    Shader_SeamMaskPs,
+    Shader_SeamMaskPsMs,
+    Shader_SeamDepthPs,
     Shaders_Last,
 };
 
@@ -100,6 +104,7 @@ class D3d11Lighting final : public IGxLighting {
     void SetupView(const GxLightingParams& params) override;
     void OpaqueDone() override;
     void EndWorld() override;
+    void FarSeam(float from, float to) override;
     void ReleaseTargets();
     void ReleaseAll();
     ID3D11DeviceContext* Context() const {
@@ -140,6 +145,10 @@ class D3d11Lighting final : public IGxLighting {
     ID3D11ShaderResourceView* m_wetSrv = nullptr;
     bool m_wetShelter = false;
     void IWet(ID3D11ShaderResourceView* depth, bool msaa, bool shelter);
+
+    // BENILLA far view seam: the dissolve mask (R8), and the from / to of the pass being drawn
+    Target m_seamMask;
+    float m_seam[4] = {};
 
     Target m_meter;
     ID3D11Texture2D* m_meterStaging = nullptr;
@@ -199,7 +208,7 @@ bool D3d11Lighting::ICreate() {
     bool ps41 = this->m_device->m_featureLevel >= D3D_FEATURE_LEVEL_10_1;
 
     for (uint32_t i = 1; ok && i < Shaders_Last; i++) {
-        bool msaa = i == Shader_AoPsMs || i == Shader_AoCompositePsMs || i == Shader_FogPsMs || i == Shader_SsilvbPsMs || i == Shader_SsilvbAoPsMs || i == Shader_SsilvbBlurPsMs;
+        bool msaa = i == Shader_AoPsMs || i == Shader_AoCompositePsMs || i == Shader_FogPsMs || i == Shader_SsilvbPsMs || i == Shader_SsilvbAoPsMs || i == Shader_SsilvbBlurPsMs || i == Shader_SeamMaskPsMs;
 
         if (msaa && !ps41) {
             continue;
@@ -433,6 +442,7 @@ void D3d11Lighting::IWriteConstants(uint32_t targetWidth, uint32_t targetHeight,
     c.m_wet[2] = this->m_wetShelter ? 1.0f : 0.0f;
     memcpy(c.m_origin, p.m_renderOrigin, sizeof(p.m_renderOrigin));
     memcpy(c.m_projFwd, this->m_proj, sizeof(c.m_projFwd));
+    memcpy(c.m_seam, this->m_seam, sizeof(c.m_seam));
     UploadConstants(this->m_device->m_d3dContext, this->m_constants, &c, sizeof(c));
 }
 
@@ -635,6 +645,74 @@ void D3d11Lighting::OpaqueDone() {
     }
 
     dev->m_resolveValid = false;
+    this->IRestoreDevice();
+}
+
+// BENILLA far view seam (fog_composite.wgsl SEAM_FROM): the mask from the frame's depth (IDraw, no depth bound), then
+// a depth-only draw on the frame's own depth that moves the masked pixels behind the horizon band.
+void D3d11Lighting::FarSeam(float from, float to) {
+    CGxDeviceD3d11* dev = this->m_device;
+
+    if (!this->m_worldActive || !this->m_viewSet || !dev->m_depthSrv || to <= from || !this->m_shaders[Shader_SeamDepthPs]) {
+        return;
+    }
+
+    // the main view only (not a reflection or a texture target)
+    if (!dev->m_backBufferRtv || dev->m_curRtv != dev->m_backBufferRtv || dev->m_curDsv != dev->m_depthDsv) {
+        return;
+    }
+
+    D3D11_TEXTURE2D_DESC depthDesc;
+    dev->m_depthTexture->GetDesc(&depthDesc);
+    bool msaa = depthDesc.SampleDesc.Count > 1;
+
+    if ((msaa && !this->m_shaders[Shader_SeamMaskPsMs]) || !this->IEnsureTarget(this->m_seamMask, depthDesc.Width, depthDesc.Height, DXGI_FORMAT_R8_UNORM)) {
+        return;
+    }
+
+    ID3D11DeviceContext* ctx = dev->m_d3dContext;
+    const D3D11_VIEWPORT& vp = this->m_viewport;
+    float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    ctx->ClearRenderTargetView(this->m_seamMask.m_rtv, clear);
+    // just in front of the sky's band (DayNight s_skyMinZ 0.9990234375), behind every far land depth but its last ~3 %
+    this->m_seam[0] = from;
+    this->m_seam[1] = to;
+    this->m_seam[2] = 0.99902f;
+    this->IWriteConstants(depthDesc.Width, depthDesc.Height, nullptr);
+    ID3D11ShaderResourceView* depth = dev->m_depthSrv;
+    this->IDraw(msaa ? Shader_SeamMaskPsMs : Shader_SeamMaskPs, this->m_seamMask.m_rtv, vp, this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_COLOR_WRITE_ENABLE_ALL), &depth, 1);
+
+    D3D11_DEPTH_STENCIL_DESC ds;
+    memset(&ds, 0, sizeof(ds));
+    ds.DepthEnable = TRUE;
+    ds.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+    ds.DepthFunc = D3D11_COMPARISON_ALWAYS;
+    D3D11_RASTERIZER_DESC rs;
+    memset(&rs, 0, sizeof(rs));
+    rs.FillMode = D3D11_FILL_SOLID;
+    rs.CullMode = D3D11_CULL_NONE;
+    rs.DepthClipEnable = TRUE;
+    // SV_Depth is clamped to the viewport's range: the full one
+    D3D11_VIEWPORT full = vp;
+    full.MinDepth = 0.0f;
+    full.MaxDepth = 1.0f;
+    ID3D11ShaderResourceView* none[16] = {};
+    ID3D11ShaderResourceView* views[2] = { nullptr, this->m_seamMask.m_srv };
+    ctx->PSSetShaderResources(0, 16, none);
+    ctx->OMSetRenderTargets(0, nullptr, dev->m_depthDsv);
+    ctx->OMSetBlendState(this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, 0), nullptr, 0xFFFFFFFF);
+    ctx->OMSetDepthStencilState(static_cast<ID3D11DepthStencilState*>(dev->IStateGet(State_Depth, &ds, sizeof(ds))), 0);
+    ctx->RSSetState(static_cast<ID3D11RasterizerState*>(dev->IStateGet(State_Raster, &rs, sizeof(rs))));
+    ctx->RSSetViewports(1, &full);
+    ctx->IASetInputLayout(nullptr);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->VSSetShader(static_cast<ID3D11VertexShader*>(this->m_shaders[Shader_FullscreenVs]), nullptr, 0);
+    ctx->GSSetShader(nullptr, nullptr, 0);
+    ctx->PSSetShader(static_cast<ID3D11PixelShader*>(this->m_shaders[Shader_SeamDepthPs]), nullptr, 0);
+    ctx->PSSetConstantBuffers(0, 1, &this->m_constants);
+    ctx->PSSetShaderResources(0, 2, views);
+    ctx->Draw(3, 0);
+    ctx->PSSetShaderResources(0, 16, none);
     this->IRestoreDevice();
 }
 
@@ -998,6 +1076,7 @@ void D3d11Lighting::ReleaseTargets() {
     }
 
     ReleaseTarget(this->m_meter);
+    ReleaseTarget(this->m_seamMask);
     SafeRelease(this->m_skySrv);
     SafeRelease(this->m_skyTex);
     this->m_skySize = 0;

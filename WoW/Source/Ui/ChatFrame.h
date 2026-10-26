@@ -187,6 +187,14 @@ struct DisplayChannel {
         HEADER = 4,
     };
 
+    enum HEADER_INDEX : int32_t {
+        NO_HEADER = -1,
+        GROUP_HEADER = 0,
+        WORLD_HEADER = 1,
+        CUSTOM_HEADER = 2,
+        NUM_HEADERS = 3,
+    };
+
     enum : int32_t {
         PARTY_INDEX = -1,
         RAID_INDEX = -2,
@@ -194,7 +202,7 @@ struct DisplayChannel {
     };
 
     /* 0000 */ int32_t m_channelIndex;
-    /* 0004 */ int32_t m_headerIndex;
+    /* 0004 */ HEADER_INDEX m_headerIndex;
     /* 0008 */ TYPE m_type;
     /* 000C */ int32_t m_collapsed;
     /* 0010 */ int32_t m_enabled;
@@ -455,7 +463,7 @@ extern uint32_t s_activeVoiceChannel;
 
 extern uint32_t s_numSavedInstances;
 
-extern uint8_t s_collapsedHeaders[3];
+extern uint8_t s_collapsedHeaders[DisplayChannel::HEADER_INDEX::NUM_HEADERS];
 
 extern ChatWindowInfo s_chatWindows[10];
 

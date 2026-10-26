@@ -36,7 +36,7 @@
 #include "WoW/Source/Ui/ScriptEvents.h"
 
 // STATIC: 0x00AC7A48
-static const char* s_channelCategories[3] = { "CHANNEL_CATEGORY_GROUP", "CHANNEL_CATEGORY_WORLD", "CHANNEL_CATEGORY_CUSTOM" };
+static const char* s_channelCategories[DisplayChannel::HEADER_INDEX::NUM_HEADERS] = { "CHANNEL_CATEGORY_GROUP", "CHANNEL_CATEGORY_WORLD", "CHANNEL_CATEGORY_CUSTOM" };
 
 // VERIFY: 3ea62573 manual
 // OFFSET: 0x0050D170
@@ -402,7 +402,7 @@ static int32_t Script_CollapseChannelHeader(lua_State* L) {
         if (index < s_numDisplayChannels) {
             uint32_t header = CGChat::s_displayChannels[index].m_headerIndex;
 
-            if (header <= 2) {
+            if (header <= DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
                 s_collapsedHeaders[header] = 1;
                 RebuildDisplayChannelList(1);
             }
@@ -421,7 +421,7 @@ static int32_t Script_ExpandChannelHeader(lua_State* L) {
         if (index < s_numDisplayChannels) {
             uint32_t header = CGChat::s_displayChannels[index].m_headerIndex;
 
-            if (header <= 2) {
+            if (header <= DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
                 s_collapsedHeaders[header] = 0;
                 RebuildDisplayChannelList(1);
             }
@@ -1199,7 +1199,7 @@ static int32_t Script_GetChannelDisplayInfo(lua_State* L) {
 
     DisplayChannel* display = &CGChat::s_displayChannels[index];
 
-    if (display->m_headerIndex >= 0) {
+    if (display->m_headerIndex >= DisplayChannel::HEADER_INDEX::GROUP_HEADER) {
         lua_pushstring(L, FrameScript_GetText(s_channelCategories[display->m_headerIndex], -1, GENDER_NOT_APPLICABLE));
         lua_pushnumber(L, 1.0);
 
@@ -1267,7 +1267,7 @@ static int32_t Script_GetChannelDisplayInfo(lua_State* L) {
             lua_pushnil(L);
         }
 
-        lua_pushstring(L, s_channelCategories[0]);
+        lua_pushstring(L, s_channelCategories[DisplayChannel::HEADER_INDEX::GROUP_HEADER]);
     } else {
         const char* name = CGChat::GetChannelShortName(channelIndex + 1, true);
         lua_pushstring(L, name ? name : "");
@@ -1287,7 +1287,7 @@ static int32_t Script_GetChannelDisplayInfo(lua_State* L) {
             lua_pushnil(L);
         }
 
-        lua_pushstring(L, display->m_flags & 1 ? s_channelCategories[1] : s_channelCategories[2]);
+        lua_pushstring(L, display->m_flags & 1 ? s_channelCategories[DisplayChannel::HEADER_INDEX::WORLD_HEADER] : s_channelCategories[DisplayChannel::HEADER_INDEX::CUSTOM_HEADER]);
     }
 
     if (display->m_voiceEnabled) {
@@ -1850,7 +1850,7 @@ static int32_t Script_GetSavedInstanceInfo(lua_State* L) {
 static int32_t Script_IsDisplayChannelOwner(lua_State* L) {
     uint32_t index = CGChat::FindDisplayChannelIndex(CGChat::s_activeDisplayChannelName, s_activeDisplayChannelType);
 
-    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < 0 && (s_activeDisplayChannelFlags & 0x1)) {
+    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & 0x1)) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -1864,7 +1864,7 @@ static int32_t Script_IsDisplayChannelOwner(lua_State* L) {
 static int32_t Script_IsDisplayChannelModerator(lua_State* L) {
     uint32_t index = CGChat::FindDisplayChannelIndex(CGChat::s_activeDisplayChannelName, s_activeDisplayChannelType);
 
-    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < 0 && (s_activeDisplayChannelFlags & 0x3)) {
+    if (index && CGChat::s_displayChannels[index - 1].m_headerIndex < DisplayChannel::HEADER_INDEX::GROUP_HEADER && (s_activeDisplayChannelFlags & 0x3)) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);

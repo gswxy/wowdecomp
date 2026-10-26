@@ -327,7 +327,7 @@ const ChatMessageGroup s_chatMessageGroups[46] = {
 uint32_t s_activeVoiceChannel;
 
 // STATIC: 0x00B743D0
-uint8_t s_collapsedHeaders[3];
+uint8_t s_collapsedHeaders[DisplayChannel::HEADER_INDEX::NUM_HEADERS];
 
 // STATIC: 0x00B743D3
 static bool s_pendingUserListActive;
@@ -3710,7 +3710,7 @@ void RebuildDisplayChannelList(int32_t signal) {
     memset(CGChat::s_displayChannels, 0, sizeof(CGChat::s_displayChannels));
 
     for (uint32_t i = 0; i < sizeof(CGChat::s_displayChannels) / sizeof(CGChat::s_displayChannels[0]); i++) {
-        CGChat::s_displayChannels[i].m_headerIndex = -1;
+        CGChat::s_displayChannels[i].m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
     }
 
     int32_t battleground;
@@ -3730,8 +3730,8 @@ void RebuildDisplayChannelList(int32_t signal) {
     uint32_t count = 1;
     DisplayChannel* group = &CGChat::s_displayChannels[0];
     group->m_channelIndex = 0;
-    group->m_headerIndex = 0;
-    group->m_collapsed = s_collapsedHeaders[0];
+    group->m_headerIndex = DisplayChannel::HEADER_INDEX::GROUP_HEADER;
+    group->m_collapsed = s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER];
     group->m_flags = 0;
     group->m_type = DisplayChannel::TYPE::HEADER;
     group->m_voiceEnabled = 0;
@@ -3745,11 +3745,11 @@ void RebuildDisplayChannelList(int32_t signal) {
         group->m_count++;
     }
 
-    if (!s_collapsedHeaders[0]) {
+    if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
         if (party && !raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
             entry->m_channelIndex = DisplayChannel::PARTY_INDEX;
-            entry->m_headerIndex = -1;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
             entry->m_flags = 0;
             entry->m_enabled = 1;
@@ -3757,7 +3757,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::PARTY, "");
             entry->m_count = CGPartyInfo::GetNumPartyMembers() + 1;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
@@ -3765,7 +3765,7 @@ void RebuildDisplayChannelList(int32_t signal) {
         } else if (raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
             entry->m_channelIndex = DisplayChannel::RAID_INDEX;
-            entry->m_headerIndex = -1;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
             entry->m_flags = 0;
             entry->m_enabled = 1;
@@ -3773,7 +3773,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::RAID, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
@@ -3783,7 +3783,7 @@ void RebuildDisplayChannelList(int32_t signal) {
         if (battleground) {
             DisplayChannel* entry = &CGChat::s_displayChannels[count];
             entry->m_channelIndex = DisplayChannel::BATTLEGROUND_INDEX;
-            entry->m_headerIndex = -1;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
             entry->m_flags = 0;
             entry->m_enabled = 1;
@@ -3791,7 +3791,7 @@ void RebuildDisplayChannelList(int32_t signal) {
             entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::BATTLEGROUND, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
@@ -3802,10 +3802,10 @@ void RebuildDisplayChannelList(int32_t signal) {
     int32_t zoneHeader = -1;
     int32_t customHeader = -1;
 
-    for (uint32_t header = 1; header < 3; header++) {
+    for (uint32_t header = DisplayChannel::HEADER_INDEX::WORLD_HEADER; header < DisplayChannel::HEADER_INDEX::NUM_HEADERS; header++) {
         DisplayChannel* entry = &CGChat::s_displayChannels[count];
         entry->m_channelIndex = 0;
-        entry->m_headerIndex = header;
+        entry->m_headerIndex = static_cast<DisplayChannel::HEADER_INDEX>(header);
         entry->m_collapsed = s_collapsedHeaders[header];
         entry->m_flags = 0;
         entry->m_enabled = 0;
@@ -3813,9 +3813,9 @@ void RebuildDisplayChannelList(int32_t signal) {
         entry->m_voiceEnabled = 0;
         entry->m_count = 0;
 
-        if (header == 1) {
+        if (header == DisplayChannel::HEADER_INDEX::WORLD_HEADER) {
             zoneHeader = count;
-        } else if (header == 2) {
+        } else if (header == DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
             customHeader = count;
         }
 
@@ -3830,13 +3830,13 @@ void RebuildDisplayChannelList(int32_t signal) {
 
             int32_t parent;
 
-            if (channel->m_zoneChannelID && header == 1) {
-                if (!s_collapsedHeaders[1]) {
+            if (channel->m_zoneChannelID && header == DisplayChannel::HEADER_INDEX::WORLD_HEADER) {
+                if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::WORLD_HEADER]) {
                     entry = &CGChat::s_displayChannels[count++];
                     entry->m_flags |= 1;
                     entry->m_collapsed = 0;
                     entry->m_channelIndex = i;
-                    entry->m_headerIndex = -1;
+                    entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
                     entry->m_enabled = channel->m_unk9C == 0;
                     entry->m_type = DisplayChannel::TYPE::CHANNEL;
                     entry->m_voiceEnabled = 0;
@@ -3851,11 +3851,11 @@ void RebuildDisplayChannelList(int32_t signal) {
 
                 parent = zoneHeader;
             } else {
-                if (channel->m_zoneChannelID || header != 2) {
+                if (channel->m_zoneChannelID || header != DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
                     continue;
                 }
 
-                if (!s_collapsedHeaders[2]) {
+                if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::CUSTOM_HEADER]) {
                     if (channel->m_unkA0 == 1) {
                         continue;
                     }
@@ -3863,7 +3863,7 @@ void RebuildDisplayChannelList(int32_t signal) {
                     entry = &CGChat::s_displayChannels[count++];
                     entry->m_channelIndex = i;
                     entry->m_collapsed = 0;
-                    entry->m_headerIndex = -1;
+                    entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
                     entry->m_flags = 0;
                     entry->m_enabled = channel->m_unkA0 == 0;
                     entry->m_type = DisplayChannel::TYPE::CHANNEL;
@@ -5002,7 +5002,7 @@ const char* CGChat::GetChannelShortName(int32_t number, bool includeInactive) {
 // OFFSET: 0x004FF4F0
 uint32_t CGChat::FindDisplayChannelIndex(const char* name, int32_t type) {
     for (uint32_t i = 0; i < s_numDisplayChannels; i++) {
-        if (static_cast<uint32_t>(CGChat::s_displayChannels[i].m_channelIndex) > CGChat::s_channels.m_count || CGChat::s_displayChannels[i].m_headerIndex >= 0) {
+        if (static_cast<uint32_t>(CGChat::s_displayChannels[i].m_channelIndex) > CGChat::s_channels.m_count || CGChat::s_displayChannels[i].m_headerIndex >= DisplayChannel::HEADER_INDEX::GROUP_HEADER) {
             continue;
         }
 

@@ -313,6 +313,14 @@ int32_t Packet_SMSG_LOG_XPGAIN(void* param, NETMESSAGE msgId, uint32_t time, CDa
 
 class CGChat {
     public:
+    enum RAID_INSTANCE_MESSAGE : int32_t {
+        WARNING_HOURS = 1,
+        WARNING_MINUTES = 2,
+        WARNING_MINUTES_SOON = 3,
+        WELCOME = 4,
+        EXPIRED = 5,
+    };
+
     enum CHANNEL_MEMBER_FLAGS : int32_t {
         OWNER = 0x1,
         MODERATOR = 0x2,

@@ -2358,25 +2358,25 @@ int32_t CGChat::OnRaidInstanceMessage(void* param, NETMESSAGE msgId, uint32_t ti
     CGRaidInfo::GetMapNameWithDifficulty(mapName, sizeof(mapName), mapId, difficulty);
 
     switch (type) {
-        case 1: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_HOURS: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_HOURS", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 3600);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 2: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_MINUTES: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_MIN", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 60);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 3: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_MINUTES_SOON: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_MIN_SOON", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 60);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 4: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WELCOME: {
             uint8_t locked;
             uint8_t extended;
             msg->Get(locked);
@@ -2385,7 +2385,7 @@ int32_t CGChat::OnRaidInstanceMessage(void* param, NETMESSAGE msgId, uint32_t ti
             break;
         }
 
-        case 5: {
+        case CGChat::RAID_INSTANCE_MESSAGE::EXPIRED: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_EXPIRED", -1, GENDER_NOT_APPLICABLE), mapName);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;

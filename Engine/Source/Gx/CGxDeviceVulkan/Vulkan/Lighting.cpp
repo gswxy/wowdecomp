@@ -69,7 +69,7 @@ namespace
         float m_giAmbient[4];
     };
 
-    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Count };
+    enum Prog { Prog_Ao, Prog_Blur, Prog_Apply, Prog_Bloom, Prog_Tonemap, Prog_Gi, Prog_Sky, Prog_Count };
 
     constexpr uint32_t kBloomLevels = 6;
     constexpr uint32_t kMaxSets     = 48;     ///< dispatches one frame slot may record (a frame uses up to ~24)
@@ -147,6 +147,8 @@ namespace
         texture::Image m_bloom[kBloomLevels]; ///< RGBA16F, halved level by level from the scene's extent
         texture::Image m_giMap;               ///< BENILLA probe GI: the probe field (RGBA32F), uploaded when its serial moves
         uint32_t m_giSerial = 0;
+        texture::Image m_skyMap;              ///< BENILLA sky occlusion: the tops map (R32F), uploaded when its serial moves
+        uint32_t m_skySerial = 0;
         uint64_t m_lastUsed = 0;
 
         bool ICreate();
@@ -220,6 +222,7 @@ namespace
             { kLightingBloomComp, sizeof kLightingBloomComp },
             { kLightingTonemapComp, sizeof kLightingTonemapComp },
             { kLightingGiComp, sizeof kLightingGiComp },
+            { kLightingSkyComp, sizeof kLightingSkyComp },
         };
 
         for (uint32_t i = 0; r == VK_SUCCESS && i < Prog_Count; i++)
@@ -722,8 +725,9 @@ namespace
         const bool ssao = (p.m_features & GxLighting_Ssao) && p.m_ssaoIntensity > 0.0f;
         const bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
         const bool gi = (p.m_features & GxLighting_ProbeGi) && p.m_giProbes;
+        const bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
 
-        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !gi) || !this->IGate()) return;
+        if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !gi && !sky) || !this->IGate()) return;
 
         const texture::Image* scene = frame::Scene();
         const uint32_t width = scene->extent.width;
@@ -768,9 +772,11 @@ namespace
 
         // the BENILLA passes between the occlusion and the fog (D3d11Lighting.cpp OpaqueDone's order): AO, probe GI,
         // fog. Without them the AO and the fog stay one pass.
-        const bool between = gi;
+        const bool between = gi || sky;
         // the BENILLA data maps, uploaded ahead of every dispatch
         const bool giOk = gi && this->IUpload(cmd, this->m_giMap, this->m_giSerial, p.m_giSerial, p.m_giSize[0], p.m_giSize[1], VK_FORMAT_R32G32B32A32_SFLOAT, 16, p.m_giProbes);
+        const uint32_t skySize = static_cast<uint32_t>(p.m_skyRow[3]);
+        const bool skyOk = sky && this->IUpload(cmd, this->m_skyMap, this->m_skySerial, p.m_skySerial, skySize, skySize, VK_FORMAT_R32_SFLOAT, 4, p.m_skyHeights);
 
         // the apply pass names gxColor in code either way: the scene stands in for the occlusion when SSAO is off
         if (ssao || !between)
@@ -785,6 +791,9 @@ namespace
 
         // BENILLA probe GI: x the light with the probes' irradiance in place of the stock ambient (lightingDebug 8: the factor)
         if (ok && giOk) ok = this->IMultiply(Prog_Gi, vp, {}, { this->m_giMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+
+        // BENILLA sky occlusion: x mix(floor, 1, open sky) into the frame (lightingDebug 6: the factor alone)
+        if (ok && skyOk) ok = this->IMultiply(Prog_Sky, vp, { this->m_skyMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }, {});
 
         if (ok && between && fog)
         {
@@ -880,7 +889,7 @@ namespace
     // After the device is idle (IDestroyVulkan): every object, destroyed at once.
     void VulkanLighting::Release()
     {
-        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_giMap };
+        texture::Image* images[] = { &this->m_depth, &this->m_out, &this->m_ao[0], &this->m_ao[1], &this->m_giMap, &this->m_skyMap };
         for (texture::Image* img : images) if (img->handle != VK_NULL_HANDLE) texture::DestroyIdle(*img);
         for (texture::Image& img : this->m_bloom) if (img.handle != VK_NULL_HANDLE) texture::DestroyIdle(img);
 

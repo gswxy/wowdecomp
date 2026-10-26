@@ -2484,7 +2484,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
     int32_t rebuild = 0;
 
     switch (notify) {
-        case 0: {
+        case CGChat::CHANNEL_NOTIFY::JOINED: {
             type = CHAT_MSG_CHANNEL_JOIN;
             msg->Get(guid.m_guid);
 
@@ -2495,7 +2495,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 1: {
+        case CGChat::CHANNEL_NOTIFY::LEFT: {
             type = CHAT_MSG_CHANNEL_LEAVE;
             msg->Get(guid.m_guid);
 
@@ -2506,7 +2506,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 2: {
+        case CGChat::CHANNEL_NOTIFY::YOU_JOINED: {
             msg->Get(flags);
             msg->Get(zoneChannelID);
             msg->Get(channelFlags);
@@ -2534,7 +2534,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 3: {
+        case CGChat::CHANNEL_NOTIFY::YOU_LEFT: {
             msg->Get(zoneChannelID);
             msg->Get(suspended);
             type = CHAT_MSG_CHANNEL_NOTICE;
@@ -2554,7 +2554,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 4: {
+        case CGChat::CHANNEL_NOTIFY::WRONG_PASSWORD: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "WRONG_PASSWORD", sizeof(text));
             reset = 1;
@@ -2562,33 +2562,33 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 5: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MEMBER: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_MEMBER", sizeof(text));
             break;
         }
 
-        case 6: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MODERATOR: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_MODERATOR", sizeof(text));
             break;
         }
 
-        case 7: {
+        case CGChat::CHANNEL_NOTIFY::PASSWORD_CHANGED: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "PASSWORD_CHANGED", sizeof(text));
             break;
         }
 
-        case 8: {
+        case CGChat::CHANNEL_NOTIFY::OWNER_CHANGED: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "OWNER_CHANGED", sizeof(text));
             break;
         }
 
-        case 9: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_NOT_FOUND: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2596,13 +2596,13 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 10: {
+        case CGChat::CHANNEL_NOTIFY::NOT_OWNER: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_OWNER", sizeof(text));
             break;
         }
 
-        case 11: {
+        case CGChat::CHANNEL_NOTIFY::CHANNEL_OWNER: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2610,7 +2610,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 12: {
+        case CGChat::CHANNEL_NOTIFY::FLAGS_CHANGED: {
             msg->Get(guid.m_guid);
             msg->Get(oldFlags);
             msg->Get(newFlags);
@@ -2618,41 +2618,41 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             return 1;
         }
 
-        case 13: {
+        case CGChat::CHANNEL_NOTIFY::ANNOUNCEMENTS_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "ANNOUNCEMENTS_ON", sizeof(text));
             break;
         }
 
-        case 14: {
+        case CGChat::CHANNEL_NOTIFY::ANNOUNCEMENTS_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "ANNOUNCEMENTS_OFF", sizeof(text));
             break;
         }
 
-        case 15: {
+        case CGChat::CHANNEL_NOTIFY::MODERATION_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "MODERATION_ON", sizeof(text));
             break;
         }
 
-        case 16: {
+        case CGChat::CHANNEL_NOTIFY::MODERATION_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "MODERATION_OFF", sizeof(text));
             break;
         }
 
-        case 17: {
+        case CGChat::CHANNEL_NOTIFY::MUTED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "MUTED", sizeof(text));
             break;
         }
 
-        case 18: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_KICKED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2660,14 +2660,14 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 19: {
+        case CGChat::CHANNEL_NOTIFY::BANNED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "BANNED", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 20: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_BANNED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2675,7 +2675,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 21: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_UNBANNED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2683,7 +2683,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 22: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_NOT_BANNED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2691,14 +2691,14 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 23: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_ALREADY_MEMBER: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "PLAYER_ALREADY_MEMBER", sizeof(text));
             break;
         }
 
-        case 24: {
+        case CGChat::CHANNEL_NOTIFY::INVITE: {
             msg->Get(guid.m_guid);
 
             if ((FriendList::s_friendList && FriendList::s_friendList->IsIgnored(guid, true)) || (guid.m_guid & 0xF000000000000000ULL) || !(guid.m_guid & 0xF07FFFFFFFFFFFFFULL) || s_inviteChannelName[0]) {
@@ -2718,33 +2718,33 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 25: {
+        case CGChat::CHANNEL_NOTIFY::INVITE_WRONG_FACTION: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "INVITE_WRONG_FACTION", sizeof(text));
             break;
         }
 
-        case 26: {
+        case CGChat::CHANNEL_NOTIFY::WRONG_FACTION: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "WRONG_FACTION", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 27: {
+        case CGChat::CHANNEL_NOTIFY::INVALID_NAME: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "INVALID_NAME", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 28: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MODERATED: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "NOT_MODERATED", sizeof(text));
             break;
         }
 
-        case 29: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_INVITED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2752,7 +2752,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 30: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_INVITE_BANNED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2760,27 +2760,27 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 31: {
+        case CGChat::CHANNEL_NOTIFY::THROTTLED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "THROTTLED", sizeof(text));
             break;
         }
 
-        case 32: {
+        case CGChat::CHANNEL_NOTIFY::NOT_IN_AREA: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_IN_AREA", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 33: {
+        case CGChat::CHANNEL_NOTIFY::NOT_IN_LFG: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_IN_LFG", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 34: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "VOICE_ON", sizeof(text));
@@ -2794,7 +2794,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 35: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "VOICE_OFF", sizeof(text));
@@ -2808,7 +2808,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 36: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_ON_SILENT: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             ChatChannel* channel = zoneChannelID ? CGChat::GetChannelByChatChannelID(zoneChannelID) : GetChannelByName(channelName);
@@ -2835,7 +2835,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
         CGChat::ResetChannel(zoneChannelID, channelName);
     }
 
-    if (notify == 2 && extra[0]) {
+    if (notify == CGChat::CHANNEL_NOTIFY::YOU_JOINED && extra[0]) {
         CGChat::AddChatMessage(extra, type, nullptr, 0, channelName, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 

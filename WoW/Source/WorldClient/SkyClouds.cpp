@@ -45,6 +45,7 @@ CVar* s_cvCover;
 CVar* s_cvSpeed;
 CVar* s_cvReflect;
 CVar* s_cvDip;
+CVar* s_cvDiscDebug;
 
 // wxl-light's fixed settings (light.ini defaults): opacity 0.9, sunset 0.85, depth_colour 1, disc 1, zone 1.
 constexpr float kOpacity = 0.9f;
@@ -260,6 +261,7 @@ void RegisterCVars() {
     s_cvCover = CVar::Register("skyCloudCover", "skyClouds: cloud cover in fair weather where the zone has no cloud sheet (0 = none, 1 = overcast)", 1, "0.35", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvSpeed = CVar::Register("skyCloudSpeed", "skyClouds: how fast the cloud shapes drift (1 = wxl-light)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvDip = CVar::Register("skyDiscDip", "gfxSunArc: how far the sky round the sun/moon sprite is eased down so the sprite reads on the glow (0 = off, 0.2)", 1, "0.2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvDiscDebug = CVar::Register("skyDiscDebug", "gfxSunArc: draw the sun/moon pass as opaque red over its dip (test: 0 = off)", 1, "0", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     s_cvReflect = CVar::Register("skyCloudsReflect", "skyClouds in the water reflection too (0 = the stock sheet there)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 }
 
@@ -298,7 +300,9 @@ void Draw() {
     f.sunZ = DayNight::g_sunToward.z;
     f.day = info.m_dayProgression;
     const float share = DayShare(f);
-    const float paint = arc ? share : 0.0f;     // wxl-light's sky only under the arc (the user's decision 2)
+    // wxl-light's sky only under the arc (the user's decision 2), and not under Forever Sky: its colours are the stock
+    // dome's stops, which our sky would cover by day (Palette reads only m_skyColors 0, 1, 5).
+    const float paint = arc && VolumetricFog::ForeverSkyStrength() <= 0.0f ? share : 0.0f;
 
     const uint32_t now = OsGetAsyncTimeMs();
     if (!reflecting) {
@@ -437,6 +441,7 @@ void DrawDisc(bool skyPass) {
         c[14][0] = skyFrom; c[14][1] = 1.0f;
     }
     c[14][2] = s_cvDip ? Clamp01(s_cvDip->m_floatValue) : kDiscDip;
+    c[14][3] = s_cvDiscDebug && s_cvDiscDebug->m_intValue ? 1.0f : 0.0f;
     CGxDevice* device = g_theGxDevicePtr;
     VolumetricFog::SavedPassState saved;
     VolumetricFog::BeginPasses(saved);

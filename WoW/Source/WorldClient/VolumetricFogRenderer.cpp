@@ -529,6 +529,10 @@ void BeginPasses(SavedPassState& saved) {
     GxRsSet(GxRs_Fog, 0);
     GxRsSet(GxRs_ClipPlaneMask, 0);
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
+    // No alpha test: CShaderEffect::SetShaders leaves GxRs_AlphaRef at the last M2 material's ref (unpushed), and the
+    // Vulkan backend alpha-tests every translated module against it (misc.x); D3D11's own ps_4_0 never do. A pass with
+    // low output alpha (SkyClouds::DrawDisc's sprite and dip) was discarded on Vulkan only.
+    GxRsSet(GxRs_AlphaRef, 0);
     GxRsSet(GxRs_ColorWrite, 15);
     GxRsSet(GxRs_ScissorTest, 0);
     GxRsSet(GxRs_StencilTest, 0);

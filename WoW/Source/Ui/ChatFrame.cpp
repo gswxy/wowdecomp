@@ -598,19 +598,19 @@ static void UpdateVoiceMemberFlags(PENDINGUSERLIST* user, uint8_t flags, WOWGUID
     user->m_flags = flags;
 
     if (type && !ComSatClient_IsTalkerSquelchedInChannel(guid, type, name)) {
-        user->m_flags |= 0x10;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_UNSQUELCHED;
     }
 
     if (ComSatClient_IsMemberInVoiceSession(user->m_guid, type, name)) {
-        user->m_flags |= 0x40;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
     }
 
     if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, type, name)) {
-        user->m_flags |= 0x80;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
     }
 
     if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x20;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
     }
 }
 
@@ -5241,15 +5241,15 @@ int32_t CGChat::OnUserListUpdate(void* param, NETMESSAGE msgId, uint32_t time, C
         user->m_flags = memberFlags;
 
         if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
-            user->m_flags |= 0x40;
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
         }
 
         if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
-            user->m_flags |= 0x80;
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
         }
 
         if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
-            user->m_flags |= 0x20;
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
         }
 
         if (displayIndex) {
@@ -5528,15 +5528,15 @@ int32_t CGChat::OnDisplayChannelList(CDataStore* msg) {
             user->m_flags = userFlags;
 
             if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
-                user->m_flags |= 0x40;
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
             }
 
             if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
-                user->m_flags |= 0x80;
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
             }
 
             if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
-                user->m_flags |= 0x20;
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
             }
         }
 
@@ -5711,22 +5711,22 @@ static void RebuildDisplayListMember(PENDINGUSERLIST* user, int32_t type, const 
         return;
     }
 
-    user->m_flags &= 0xF;
+    user->m_flags &= PENDINGUSERLIST::VOICE_FLAGS::BASE_FLAGS_MASK;
 
     if (!ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x10;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_UNSQUELCHED;
     }
 
     if (ComSatClient_IsMemberInVoiceSession(user->m_guid, type, name)) {
-        user->m_flags |= 0x40;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
     }
 
     if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, type, name)) {
-        user->m_flags |= 0x80;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
     }
 
     if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x20;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
     }
 }
 

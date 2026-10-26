@@ -157,6 +157,14 @@ class PROFANITYCHECK : public TSHashObject<PROFANITYCHECK, HASHKEY_STR> {
 };
 
 struct PENDINGUSERLIST : public TSLinkedNode<PENDINGUSERLIST> {
+    enum VOICE_FLAGS : int32_t {
+        VOICE_UNSQUELCHED = 0x10,
+        VOICE_MUTED_OR_SQUELCHED = 0x20,
+        VOICE_SESSION_MEMBER = 0x40,
+        VOICE_MEMBER_STATUS = 0x80,
+        BASE_FLAGS_MASK = 0xF,
+    };
+
     /* 0008 */ WOWGUID m_guid;
     /* 0010 */ uint8_t m_flags;
     /* 0014 */ uint32_t unused_0014;

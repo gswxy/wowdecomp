@@ -1445,19 +1445,19 @@ static int32_t Script_GetChannelRosterInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (user->m_flags & 0x20) {
+    if (user->m_flags & PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (user->m_flags & 0x40) {
+    if (user->m_flags & PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (user->m_flags & 0x80) {
+    if (user->m_flags & PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -1896,7 +1896,7 @@ static int32_t Script_IsSilenced(lua_State* L) {
                 continue;
             }
 
-            if (!(s_pendingUsers.m_data[i].m_flags & 0x10)) {
+            if (!(s_pendingUsers.m_data[i].m_flags & PENDINGUSERLIST::VOICE_FLAGS::VOICE_UNSQUELCHED)) {
                 lua_pushnumber(L, 1.0);
                 return 1;
             }

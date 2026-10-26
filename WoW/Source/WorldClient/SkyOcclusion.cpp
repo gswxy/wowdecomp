@@ -100,8 +100,8 @@ void RemoveDoodad(const CMapDoodadDef* def) {
     s_doodadsDirty |= s_doodads.erase(def) != 0;
 }
 
-bool Update(const float camera[3], const float*& heights, uint32_t& serial, float row[4], float params[4]) {
-    if (!s_cvar || s_cvar->m_intValue <= 0) {
+bool Update(const float camera[3], const float*& heights, uint32_t& serial, float row[4], float params[4], bool force) {
+    if (!force && (!s_cvar || s_cvar->m_intValue <= 0)) {
         if (!s_rays.empty()) {
             s_rays = {};
             s_props = {};

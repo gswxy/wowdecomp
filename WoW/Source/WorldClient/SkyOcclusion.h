@@ -17,8 +17,8 @@ bool Enabled();             // skyOcclusion on
 void AddDoodad(const CMapDoodadDef* def);
 void RemoveDoodad(const CMapDoodadDef* def);
 
-// Steps the map for the camera. False with skyOcclusion off. heights: kSize^2 world z (row = y texel), serial moves
+// Steps the map for the camera. False with skyOcclusion off unless force (the rain's shelter map wants it). heights: kSize^2 world z (row = y texel), serial moves
 // when they changed; row = (x0, y0, 1 / cell, size) world; params = (floor, lift, 0, 0).
-bool Update(const float camera[3], const float*& heights, uint32_t& serial, float row[4], float params[4]);
+bool Update(const float camera[3], const float*& heights, uint32_t& serial, float row[4], float params[4], bool force = false);
 
 }  // namespace SkyOcclusion

@@ -22,6 +22,9 @@ cbuffer GxPost : register(b0) {
     float4 gxSsilvb;               // SSILVB: x AO strength, y indirect strength, z radius (yards), w thickness (yards)
     float4 gxSkyRow;               // sky occlusion: xy the map's lower corner (render-relative), z 1 / texel yd, w texels a side
     float4 gxSky;                  // x floor, y lift (yd), z lift per yd off the texel, w render origin z
+    float4 gxWet;                  // rain on surfaces: x wetness 0..1, y 1 = screen-space reflections (0: the fog colour), z 1 = gxSkyMap is the shelter map
+    float4 gxOrigin;               // xyz the render origin (world)
+    row_major float4x4 gxProj;     // view to clip
 };
 
 #ifdef GX_MSAA
@@ -716,4 +719,207 @@ float4 SkyOcclusionPs(GxPostVaryings i) : SV_Target0 {
     float factor = lerp(gxSky.x, 1.0, open / 9.0);
     factor = lerp(1.0, factor, saturate(min(edge.x, edge.y)));
     return float4(factor, factor, factor, 1.0);
+}
+
+// BENILLA rain on surfaces (wet_hook.wgsl + wet_ssr.wgsl, weather/wetness.rs). benilla runs the hook in the receivers'
+// shaders; ours is two post passes over the opaque frame (before the liquids): WetDarkenPs multiplies the frame by the
+// wet albedo's ratio to the dry (wet_surface + the terrain's wet_puddles, on every surface), WetReflectPs adds the
+// screen-space reflection weighted by WET_REFLECT_GAIN x wet_reflectance. The normal comes from the depth (SSAO's
+// nearer-neighbour pair); the shelter is item 4's top-down map (a top 0.5-1.5 yd over the point covers it).
+struct WetPoint {
+    float3 p;      // view space
+    float3 n;      // view space, toward the camera
+    float w;       // wet_amount
+    float boost;   // the gloss weight, > 1 standing water
+    float puddle;
+};
+
+float WetHash(float2 p) {
+    float2 q = frac(p * float2(0.1031, 0.1030));
+    float2 r = q + dot(q, q.yx + 33.33);
+    return frac((r.x + r.y) * r.x);
+}
+
+float WetNoise(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(WetHash(i), WetHash(i + float2(1.0, 0.0)), u.x), lerp(WetHash(i + float2(0.0, 1.0)), WetHash(i + float2(1.0, 1.0)), u.x), u.y);
+}
+
+// shelter_amount: bilinear over the four texels around the point, each covered when its top lies 0.5-1.5 yd above
+float WetOpen(float3 pw) {
+    if (gxWet.z < 0.5) {
+        return 1.0;
+    }
+    float2 g = (pw.xy - gxSkyRow.xy) * gxSkyRow.z - 0.5;
+    float2 gf = floor(g);
+    if (any(gf < 0.0) || any(gf + 1.0 > gxSkyRow.w - 1.0)) {
+        return 1.0;
+    }
+    float z = pw.z + gxSky.w;
+    float2 f = g - gf;
+    float a = smoothstep(0.5, 1.5, gxSkyMap.Load(int3(gf, 0)) - z);
+    float b = smoothstep(0.5, 1.5, gxSkyMap.Load(int3(gf + float2(1.0, 0.0), 0)) - z);
+    float c = smoothstep(0.5, 1.5, gxSkyMap.Load(int3(gf + float2(0.0, 1.0), 0)) - z);
+    float d = smoothstep(0.5, 1.5, gxSkyMap.Load(int3(gf + float2(1.0, 1.0), 0)) - z);
+    return 1.0 - saturate(lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y));
+}
+
+bool WetAt(float2 pixel, out WetPoint o) {
+    o = (WetPoint)0;
+    float dep = GxDepthAt(int2(pixel));
+    if (!GxIsGeometry(dep)) {
+        return false;
+    }
+    o.p = GxViewPos(pixel, dep);
+    float3 l = GxViewPos(pixel - float2(1.0, 0.0), GxDepthAt(GxClampPixel(pixel - float2(1.0, 0.0))));
+    float3 r = GxViewPos(pixel + float2(1.0, 0.0), GxDepthAt(GxClampPixel(pixel + float2(1.0, 0.0))));
+    float3 u = GxViewPos(pixel - float2(0.0, 1.0), GxDepthAt(GxClampPixel(pixel - float2(0.0, 1.0))));
+    float3 b = GxViewPos(pixel + float2(0.0, 1.0), GxDepthAt(GxClampPixel(pixel + float2(0.0, 1.0))));
+    float3 dx = dot(r - o.p, r - o.p) < dot(o.p - l, o.p - l) ? r - o.p : o.p - l;
+    float3 dy = dot(b - o.p, b - o.p) < dot(o.p - u, o.p - u) ? b - o.p : o.p - u;
+    o.n = normalize(cross(dy, dx));
+    o.n = dot(o.n, o.p) > 0.0 ? -o.n : o.n;
+
+    float3 pw = mul(float4(o.p, 1.0), gxInvView).xyz;
+    float ny = mul(float4(o.n, 0.0), gxInvView).z;   // world up is z
+    float exposure = WetOpen(pw);
+    float wetness = saturate(gxWet.x);
+    if (exposure <= 0.0) {
+        return false;
+    }
+    // wet_amount / wet_surface's gloss
+    o.w = wetness * exposure * smoothstep(-0.2, 0.25, ny) * lerp(0.5, 1.0, smoothstep(0.3, 0.8, ny));
+    o.boost = o.w * smoothstep(0.35, 0.9, ny);
+    // wet_puddles (world xy here is benilla's xz)
+    {
+        float2 xz = pw.xy + gxOrigin.xy;
+        float field = 0.65 * WetNoise(xz * 0.17) + 0.35 * WetNoise(xz * 0.53 + 17.0);
+        float level = smoothstep(0.94, 0.99, ny);
+        float edge = lerp(0.8, 0.6, smoothstep(0.4, 1.0, wetness));
+        o.puddle = smoothstep(edge, edge + 0.06, field) * level * smoothstep(0.35, 0.8, wetness) * exposure;
+        o.boost = max(o.boost, 2.0 * o.puddle);
+    }
+    return o.w > 0.0;
+}
+
+// x the frame's ratio wet / dry: saturation x (1 + 0.3 w), x (1 - 0.36 w), puddles x (1 - 0.45 puddle)
+float4 WetDarkenPs(GxPostVaryings i) : SV_Target0 {
+    WetPoint wp;
+    if (!WetAt(i.pos.xy, wp)) {
+        discard;
+    }
+    if (gxTone.z == 7.0) {   // lightingDebug 7: r wetness, g puddle, b gloss weight / 2
+        return float4(wp.w, wp.puddle, wp.boost * 0.5, 1.0);
+    }
+    float3 c = max(gxColor.Load(int3(i.pos.xy, 0)).rgb, 1.0 / 255.0);
+    float luma = dot(c, float3(0.299, 0.587, 0.114));
+    float3 wet = max(lerp(luma.xxx, c, 1.0 + 0.3 * wp.w), 0.0) * (1.0 - 0.36 * wp.w) * (1.0 - 0.45 * wp.puddle);
+    return float4(saturate(wet / c), 1.0);
+}
+
+float2 WetUv(float3 q, out bool inside) {
+    float4 clip = mul(float4(q, 1.0), gxProj);
+    inside = false;
+    if (clip.w <= 1e-4) {
+        return 0.0;
+    }
+    float2 uv = clip.xy / clip.w * float2(0.5, -0.5) + 0.5;
+    inside = all(uv >= 0.0) && all(uv <= 1.0);
+    return uv;
+}
+
+float WetSceneW(float2 uv) {
+    float2 pixel = gxViewportPx.xy + uv * gxViewportPx.zw;
+    float d = GxDepthAt(GxClampPixel(pixel));
+    return GxIsGeometry(d) ? GxClipW(GxViewPos(floor(pixel) + 0.5, d)) : 1.0e9;
+}
+
+// fs_reflect: the view ray mirrored about world up, 10 quadratic steps + 3 bisections against the depth, the frame
+// snapshot (gxColor2, mip 2 = benilla's quarter blur off the puddles) where it lands, the fog colour where it leaves
+float4 WetReflectPs(GxPostVaryings i) : SV_Target0 {
+    WetPoint wp;
+    if (!WetAt(i.pos.xy, wp) || wp.boost <= 0.0) {
+        discard;
+    }
+    float3 v = -normalize(wp.p);
+    float fres = 0.03 + 0.97 * pow(1.0 - saturate(dot(wp.n, v)), 5.0);
+    float gloss = min(wp.boost, 1.0);
+    float mirror = max(wp.boost - 1.0, 0.0);
+    float tag = 0.55 * (gloss * min(0.25 * fres, 0.2) + mirror * (0.22 + 0.3 * fres));   // WET_REFLECT_GAIN x wet_reflectance
+    if (tag < 1.0 / 256.0) {
+        discard;
+    }
+
+    float3 up = normalize(mul(gxInvView, float4(0.0, 0.0, 1.0, 0.0)).xyz);   // world z in view space
+    float3 r = reflect(-v, up);
+    float3 fwd = normalize(gxProjW.xyz);
+    float away = smoothstep(0.0, 0.25, dot(r, fwd));
+    float3 sky = gxFogColor.rgb;
+    if (away <= 0.0 || gxWet.y < 0.5) {
+        return float4(sky * tag, 1.0);
+    }
+
+    float jitter = frac(52.9829189 * frac(dot(i.pos.xy, float2(0.06711056, 0.00583715))));
+    float d = GxClipW(wp.p);
+    float reach = clamp(d * 2.0, 12.0, 400.0);
+    float prevT = 0.0;
+    float t = 0.0;
+    bool hit = false;
+    bool landed = false;
+    float2 uv = (i.pos.xy - gxViewportPx.xy) / gxViewportPx.zw;
+    float rz = max(abs(dot(r, fwd)), 0.1);
+    [loop] for (int s = 0; s < 10; s++) {
+        float k = (s + jitter) / 10.0;
+        t = 0.3 + reach * k * k;
+        float3 q = wp.p + r * t;
+        bool inside;
+        float2 suv = WetUv(q, inside);
+        if (!inside) {
+            break;
+        }
+        uv = suv;
+        landed = true;
+        float sd = WetSceneW(uv);
+        float behind = GxClipW(q) - sd;
+        float span = (t - prevT) * rz + 0.5 + 0.01 * sd;
+        if (sd < 1.0e8 && behind > 0.0 && behind < span) {
+            hit = true;
+            break;
+        }
+        prevT = t;
+    }
+    if (hit) {
+        float lo = prevT;
+        float hi = t;
+        [unroll] for (int k = 0; k < 3; k++) {
+            float mid = 0.5 * (lo + hi);
+            float3 q = wp.p + r * mid;
+            bool inside;
+            float2 suv = WetUv(q, inside);
+            if (inside && GxClipW(q) > WetSceneW(suv)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        bool inside;
+        float2 suv = WetUv(wp.p + r * hi, inside);
+        if (inside) {
+            uv = suv;
+        }
+    }
+
+    float3 refl = sky;
+    if (landed) {
+        float puddle = smoothstep(0.18, 0.35, tag);
+        float2 src = (gxViewportPx.xy + uv * gxViewportPx.zw) * gxSource.xy;
+        float3 fetched = lerp(gxColor2.SampleLevel(gxLinear, src, 2.0).rgb, gxColor2.SampleLevel(gxLinear, src, 0.0).rgb, puddle);
+        float2 e = uv * 2.0 - 1.0;
+        float2 e4 = e * e * e * e;
+        float edge = saturate(1.0 - e4.x) * saturate(1.0 - e4.y);
+        refl = lerp(sky, max(fetched, 0.0), edge * away);
+    }
+    return float4(refl * tag, 1.0);
 }

@@ -1,5 +1,7 @@
 #include "WoW/Source/Ui/WorldLighting.h"
 #include "WoW/Source/WorldClient/SkyOcclusion.h"
+#include "WoW/Source/WorldClient/MapWeather.h"
+#include "WoW/Source/WorldClient/World.h"
 #include "WoW/Source/WorldClient/VolumetricFog.h"
 #include <algorithm>
 #include <cmath>
@@ -68,6 +70,9 @@ struct LightingCVars {
     CVar* ssilvbRadius;
     CVar* ssilvbThickness;
     CVar* fogScattering;
+    CVar* rainWetness;
+    CVar* rainReflections;
+    CVar* rainWetnessForce;
     CVar* debug;
     // the shader half
     CVar* master;
@@ -136,6 +141,10 @@ uint32_t Features() {
     }
 
     // vfogaudit: the stock fog it tints is pushed out while vfog draws, and the fitted fog would get the sun twice
+    if (s_cv.rainWetness->m_intValue > 0) {
+        features |= GxLighting_Wet;            // BENILLA rain on surfaces; dropped at SetupView while dry
+    }
+
     if (SkyOcclusion::Enabled()) {
         features |= GxLighting_SkyOcclusion;   // BENILLA sky occlusion; dropped at SetupView while its map is not up
     }
@@ -769,6 +778,31 @@ void WriteGpu(const GxLightingParams& p) {
     g_gxLightingGpuSerial++;
 }
 
+// BENILLA weather/wetness.rs: soaks toward 0.55 + 0.45 rain at (0.35 + 0.65 rain) / 90 s, dries at 1 / 240 s.
+// Clears GxLighting_Wet while dry.
+void WetStep(GxLightingParams& p) {
+    static float s_wetness = 0.0f;
+    static uint32_t s_last = 0;
+    const uint32_t now = OsGetAsyncTimeMs();
+    const float dt = s_last ? std::min((now - s_last) * 0.001f, 1.0f) : 0.0f;
+    s_last = now;
+    const Weather* weather = World::s_weather;
+    const float rain = weather && weather->m_rain && std::isfinite(weather->m_intensity) ? std::clamp(weather->m_intensity, 0.0f, 1.0f) : 0.0f;
+    if (rain > 0.0f) {
+        const float target = 0.55f + 0.45f * rain;
+        const float rate = (0.35f + 0.65f * rain) / 90.0f;
+        s_wetness = s_wetness < target ? std::min(s_wetness + rate * dt, target) : std::max(s_wetness - dt / 240.0f, target);
+    } else {
+        s_wetness = std::max(s_wetness - dt / 240.0f, 0.0f);
+    }
+    const float force = s_cv.rainWetnessForce->m_floatValue;
+    p.m_wetness = force >= 0.0f ? std::min(force, 1.0f) : s_wetness;
+    p.m_wetReflections = s_cv.rainReflections->m_intValue > 0;
+    if (!(p.m_wetness > 0.0f)) {
+        p.m_features &= ~GxLighting_Wet;
+    }
+}
+
 }
 
 void WorldLightingRegisterCVars() {
@@ -786,6 +820,9 @@ void WorldLightingRegisterCVars() {
     s_cv.ssgi = Reg("lightingSsgi", "SSILVB indirect light (colour bounce) strength, 0 = off (0-2; brightens only with hdr 1; costly)", "0");
     s_cv.ssilvbRadius = Reg("lightingSsilvbRadius", "SSILVB sweep radius in yards", "4");
     s_cv.ssilvbThickness = Reg("lightingSsilvbThickness", "SSILVB assumed occluder thickness in yards", "0.6");
+    s_cv.rainWetness = Reg("rainWetness", "Rain soaks the world (D3D11): surfaces open to the sky darken, flat ground gathers puddles that reflect; ~90 s to soak, 4 min to dry; 0 = off (benilla rainSurfaces)", "1");
+    s_cv.rainReflections = Reg("rainReflections", "Wet ground and puddles reflect the screen (rainWetness; 0 = the fog colour only)", "1");
+    s_cv.rainWetnessForce = Reg("rainWetnessForce", "Test: hold the wetness at this value 0..1 whatever the weather (-1 = the weather's, default)", "-1");
     s_cv.fogScattering = Reg("fogScattering", "Fog tinted toward the sun's colour around the sun, 0 = off", "0");
     s_cv.debug = Reg("lightingDebug", "1 shows the SSAO term alone; 2 lit surfaces by kind, 3 dynamic light alone; 4, 5 the SSAO inputs", "0");
     // the shader half (lit shader pack in custom.MPQ; D3D11 and Vulkan)
@@ -848,14 +885,20 @@ void WorldLightingSetupView(const C3Vector& camera) {
     BuildParams(s_params, s_params.m_features, camera);
     s_params.m_cameraPosition = camera - origin;
     const float skyCamera[3] = { camera.x, camera.y, camera.z };
-    if ((s_params.m_features & GxLighting_SkyOcclusion) &&
-        SkyOcclusion::Update(skyCamera, s_params.m_skyHeights, s_params.m_skySerial, s_params.m_skyRow, s_params.m_skyParams)) {
+    WetStep(s_params);
+    const bool wet = (s_params.m_features & GxLighting_Wet) != 0;   // the shelter map rides the sky occlusion's
+    if ((s_params.m_features & GxLighting_SkyOcclusion || wet) &&
+        SkyOcclusion::Update(skyCamera, s_params.m_skyHeights, s_params.m_skySerial, s_params.m_skyRow, s_params.m_skyParams, wet)) {
         s_params.m_skyRow[0] -= origin.x;
         s_params.m_skyRow[1] -= origin.y;
         s_params.m_skyParams[3] = origin.z;
     } else {
         s_params.m_features &= ~GxLighting_SkyOcclusion;
+        s_params.m_skyHeights = nullptr;
     }
+    s_params.m_renderOrigin[0] = origin.x;
+    s_params.m_renderOrigin[1] = origin.y;
+    s_params.m_renderOrigin[2] = origin.z;
     g_gxLighting->SetupView(s_params);
 
     // the shader half: the lights in reach (world space), smoothed across frames, moved into the render origin

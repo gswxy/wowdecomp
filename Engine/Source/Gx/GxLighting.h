@@ -26,6 +26,7 @@ enum EGxLightingFeature : uint32_t {
     GxLighting_Bloom = 0x100,         // needs Hdr
     GxLighting_Pbr = 0x200,           // PBR-lite: GGX specular, sky reflection, energy conservation (lightPbr)
     GxLighting_SkyOcclusion = 0x400,  // BENILLA sky occlusion (D3D11): the frame dimmed under the world's tops (skyOcclusion)
+    GxLighting_Wet = 0x800,           // BENILLA rain on surfaces (D3D11): wet darkening, puddles, reflections (rainWetness)
 };
 
 // CUSTOM (PBR-lite): the material category of the next draw, guessed by the engine (assets carry no PBR maps). The
@@ -76,6 +77,10 @@ struct GxLightingParams {
     uint32_t m_skySerial = 0;              // moves when m_skyHeights changed
     float m_skyRow[4] = {};                // x0, y0 (render-relative), 1 / texel yd, texels a side
     float m_skyParams[4] = {};             // floor, lift (yd), lift per yd off the texel, render origin z
+    // BENILLA rain on surfaces (D3D11; weather/wetness.rs): m_skyHeights doubles as the shelter map when set
+    float m_wetness = 0.0f;                // 0 dry .. 1 soaked
+    bool m_wetReflections = true;          // the screen-space reflection (else the fog colour)
+    float m_renderOrigin[3] = {};          // world position of the render origin
 
     // the lit shaders (GxLightingGpu)
     float m_lightWrap = 0.25f;

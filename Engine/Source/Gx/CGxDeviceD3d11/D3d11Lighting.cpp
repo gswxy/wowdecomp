@@ -36,6 +36,9 @@ struct PostConstants {
     float m_ssilvb[4];
     float m_skyRow[4];
     float m_sky[4];
+    float m_wet[4];
+    float m_origin[4];
+    float m_projFwd[16];
 };
 
 // the order of Lighting.py's JOBS
@@ -62,6 +65,10 @@ enum EShader {
     Shader_SsilvbCompositePs,
     Shader_SkyOcclusionPs,
     Shader_SkyOcclusionPsMs,
+    Shader_WetDarkenPs,
+    Shader_WetDarkenPsMs,
+    Shader_WetReflectPs,
+    Shader_WetReflectPsMs,
     Shaders_Last,
 };
 
@@ -128,6 +135,11 @@ class D3d11Lighting final : public IGxLighting {
     uint32_t m_skySize = 0;
     uint32_t m_skySerial = 0;
     bool ISkyMap();
+    // BENILLA rain on surfaces: the opaque frame's snapshot (mipped: level 2 is the reflection's blur)
+    ID3D11Texture2D* m_wetTex = nullptr;
+    ID3D11ShaderResourceView* m_wetSrv = nullptr;
+    bool m_wetShelter = false;
+    void IWet(ID3D11ShaderResourceView* depth, bool msaa, bool shelter);
 
     Target m_meter;
     ID3D11Texture2D* m_meterStaging = nullptr;
@@ -416,6 +428,11 @@ void D3d11Lighting::IWriteConstants(uint32_t targetWidth, uint32_t targetHeight,
     c.m_ssilvb[3] = p.m_ssilvbThickness;
     memcpy(c.m_skyRow, p.m_skyRow, sizeof(c.m_skyRow));
     memcpy(c.m_sky, p.m_skyParams, sizeof(c.m_sky));
+    c.m_wet[0] = p.m_wetness;
+    c.m_wet[1] = p.m_wetReflections ? 1.0f : 0.0f;
+    c.m_wet[2] = this->m_wetShelter ? 1.0f : 0.0f;
+    memcpy(c.m_origin, p.m_renderOrigin, sizeof(p.m_renderOrigin));
+    memcpy(c.m_projFwd, this->m_proj, sizeof(c.m_projFwd));
     UploadConstants(this->m_device->m_d3dContext, this->m_constants, &c, sizeof(c));
 }
 
@@ -539,8 +556,9 @@ void D3d11Lighting::OpaqueDone() {
     bool ssao = (p.m_features & GxLighting_Ssao) && (p.m_ssaoIntensity > 0.0f || (p.m_ssilvb && p.m_ssgiIntensity > 0.0f));
     bool fog = (p.m_features & (GxLighting_HeightFog | GxLighting_Scattering)) != 0;
     bool sky = (p.m_features & GxLighting_SkyOcclusion) && p.m_skyHeights;
+    bool wet = (p.m_features & GxLighting_Wet) && p.m_wetness > 0.0f;
 
-    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !sky) || !dev->m_depthSrv) {
+    if (!this->m_worldActive || !this->m_viewSet || (!ssao && !fog && !sky && !wet) || !dev->m_depthSrv) {
         return;
     }
 
@@ -605,6 +623,10 @@ void D3d11Lighting::OpaqueDone() {
         ID3D11BlendState* blend = p.m_debug == 6 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
         ID3D11ShaderResourceView* views[4] = { depth, nullptr, nullptr, this->m_skySrv };
         this->IDraw(msaa ? Shader_SkyOcclusionPsMs : Shader_SkyOcclusionPs, frame, vp, blend, views, 4);
+    }
+
+    if (wet) {
+        this->IWet(depth, msaa, p.m_skyHeights && this->ISkyMap());
     }
 
     if (fog) {
@@ -813,6 +835,59 @@ bool D3d11Lighting::ISkyMap() {
     return true;
 }
 
+// BENILLA rain on surfaces: snapshot the opaque frame, multiply it by the wet albedo's ratio, add the reflection.
+void D3d11Lighting::IWet(ID3D11ShaderResourceView* depth, bool msaa, bool shelter) {
+    CGxDeviceD3d11* dev = this->m_device;
+    const GxLightingParams& p = this->m_params;
+    D3D11_TEXTURE2D_DESC bb;
+    dev->m_backBuffer->GetDesc(&bb);
+    D3D11_TEXTURE2D_DESC have = {};
+
+    if (this->m_wetTex) {
+        this->m_wetTex->GetDesc(&have);
+    }
+
+    if (!this->m_wetTex || have.Width != bb.Width || have.Height != bb.Height || have.Format != bb.Format) {
+        SafeRelease(this->m_wetSrv);
+        SafeRelease(this->m_wetTex);
+        D3D11_TEXTURE2D_DESC d = bb;
+        d.MipLevels = 3;
+        d.ArraySize = 1;
+        d.SampleDesc.Count = 1;
+        d.SampleDesc.Quality = 0;
+        d.Usage = D3D11_USAGE_DEFAULT;
+        d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        d.CPUAccessFlags = 0;
+        d.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+        if (FAILED(dev->m_d3dDevice->CreateTexture2D(&d, nullptr, &this->m_wetTex)) ||
+            FAILED(dev->m_d3dDevice->CreateShaderResourceView(this->m_wetTex, nullptr, &this->m_wetSrv))) {
+            SafeRelease(this->m_wetTex);
+            return;
+        }
+    }
+
+    ID3D11DeviceContext* ctx = dev->m_d3dContext;
+    if (msaa) {
+        ctx->ResolveSubresource(this->m_wetTex, 0, dev->m_backBuffer, 0, bb.Format);
+    } else {
+        ctx->CopySubresourceRegion(this->m_wetTex, 0, 0, 0, 0, dev->m_backBuffer, 0, nullptr);
+    }
+    ctx->GenerateMips(this->m_wetSrv);
+
+    const uint8_t rgb = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
+    float source[4] = { 1.0f / bb.Width, 1.0f / bb.Height, 0.0f, 0.0f };
+    this->m_wetShelter = shelter;
+    this->IWriteConstants(bb.Width, bb.Height, source);
+    ID3D11ShaderResourceView* views[4] = { depth, this->m_wetSrv, this->m_wetSrv, shelter ? this->m_skySrv : nullptr };
+    // lightingDebug 7: the wetness terms instead of the scene
+    ID3D11BlendState* darken = p.m_debug == 7 ? this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ZERO, rgb) : this->IBlend(D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, rgb);
+    this->IDraw(msaa ? Shader_WetDarkenPsMs : Shader_WetDarkenPs, dev->m_backBufferRtv, this->m_viewport, darken, views, 4);
+
+    if (p.m_debug != 7) {
+        this->IDraw(msaa ? Shader_WetReflectPsMs : Shader_WetReflectPs, dev->m_backBufferRtv, this->m_viewport, this->IBlend(D3D11_BLEND_ONE, D3D11_BLEND_ONE, rgb), views, 4);
+    }
+}
+
 // BENILLA auto-exposure: read back the last meter grid if it has landed (never waiting), meter this frame's scene when
 // none is in flight, and ease the lift toward what the scene key asks for. Scales m_params.m_exposure.
 void D3d11Lighting::IAutoExposure(ID3D11ShaderResourceView* scene, uint32_t width, uint32_t height) {
@@ -926,6 +1001,8 @@ void D3d11Lighting::ReleaseTargets() {
     SafeRelease(this->m_skySrv);
     SafeRelease(this->m_skyTex);
     this->m_skySize = 0;
+    SafeRelease(this->m_wetSrv);
+    SafeRelease(this->m_wetTex);
     SafeRelease(this->m_meterStaging);
     this->m_meterPending = false;
 }

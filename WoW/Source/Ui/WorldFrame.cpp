@@ -2647,3 +2647,21 @@ CGWorldFrame::~CGWorldFrame() {
 
     FFX::Destroy();
 }
+
+C3Vector CGWorldFrame::GetScreenToWorldCoordinates()
+{
+    CSimpleTop* top = this->m_simpleTop;
+    CSimpleFrame* focus = top->m_mouseFocus;
+    HITTESTRESULT hit{0};
+    hit.m_point = C3Vector(0.0f, 0.0f, 0.0f);
+
+    if (focus == this)
+    {
+        C2Vector ddc = { 0.0f, 0.0f };
+        NDCToDDC(top->m_mousePosition.m_x, top->m_mousePosition.m_y, &ddc.x, &ddc.y);
+
+        this->HitTestPoint(ddc.x, ddc.y, 1, &hit);
+    }
+
+    return hit.m_point;
+}

@@ -3,6 +3,13 @@
 
 #include <cstdint>
 
+enum SPELL_CAST_WORLD_TYPE
+{
+    SPELL_CAST_WORLD_TYPE_NONE    = 0,
+    SPELL_CAST_WORLD_TYPE_TERRAIN = 1,
+    SPELL_CAST_WORLD_TYPE_PLAYER  = 2
+};
+
 enum SPELL_AURA : uint32_t
 {
     SPELL_AURA_NONE                                         = 0,

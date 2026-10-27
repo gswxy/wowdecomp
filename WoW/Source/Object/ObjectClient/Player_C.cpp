@@ -14797,3 +14797,8 @@ int32_t Packet_SMSG_VOICE_PARENTAL_CONTROLS(void* param, NETMESSAGE msgId, uint3
 int32_t CGPlayer_C::GetVirtualItemDisplayRec(VIRTUAL_MONSTER_SLOT slot, ItemDisplayInfoRec& rec) const {
     return g_itemDisplayInfoDB.GetRecord(this->GetVirtualItemDisplayID(slot), &rec);
 }
+
+C3Vector& CGPlayer_C::GetAnchorPos() const
+{
+    return this->m_movement->m_anchorPos;
+}

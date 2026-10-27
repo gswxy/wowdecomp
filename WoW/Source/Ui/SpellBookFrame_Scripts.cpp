@@ -1063,17 +1063,32 @@ static int32_t Script_CastSpellByName(lua_State* L) {
         return 0;
     }
 
-    WOWGUID target;
-
-    if (!Script_GetGUIDFromToken(lua_tolstring(L, 2, nullptr), target, true)) {
-        return 0;
-    }
-
     const char* name = lua_tolstring(L, 1, nullptr);
     int32_t petSpell;
     int32_t spellId = GetSpellIdByName(name, &petSpell);
 
     if (!spellId) {
+        return 0;
+    }
+
+    SpellRec spell;
+    g_spellDB.GetRecord(spellId, &spell);
+
+    WOWGUID target;
+    const char* token = lua_tolstring(L, 2, nullptr);
+
+    if (token && !SStrCmpI("cursor", token, 6))
+    {
+        target.m_guid = 0;
+        Spell_C::s_castAtTerrain = SPELL_CAST_WORLD_TYPE_TERRAIN;
+    }
+    else if (token && !SStrCmpI("player", token, 6) && (spell.m_targets & 0x40))
+    {
+        target = player->m_obj->m_guid;
+        Spell_C::s_castAtTerrain = SPELL_CAST_WORLD_TYPE_PLAYER;
+    }
+    else if (!Script_GetGUIDFromToken(token, target, true))
+    {
         return 0;
     }
 
@@ -1126,9 +1141,6 @@ static int32_t Script_CastSpellByName(lua_State* L) {
     if (!pet) {
         return 0;
     }
-
-    SpellRec spell;
-    g_spellDB.GetRecord(spellId, &spell);
 
     if ((spell.m_attributesExD & 0x20) || player->GetPossessedUnit() == pet) {
         Spell_C_CastSpell(pet, spell.m_id, nullptr, target, nullptr, false);

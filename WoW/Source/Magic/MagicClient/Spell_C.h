@@ -138,6 +138,8 @@ class Spell_C {
     /* 0000 */ uint8_t unused_0000[8];
     /* 0008 */ uint32_t unused_0008;
 
+    static int32_t s_castAtTerrain;
+
     static void SendPendingCast(PendingSpellCast* cast, bool hideVisuals);
     static void GetSpellRange(CGUnit_C* caster, int32_t spellId, float* minRange, float* maxRange, CGObject_C* target);
     static bool HandleSpriteRay(const WOWGUID& guid, bool checkRange);

@@ -23,7 +23,7 @@
 #include "WoW/Source/Ui/PetInfo.h"
 #include "WoW/Source/Ui/RuneInfo.h"
 #include "WoW/Source/Net/Types.h"
-#include "WoW/Source/Ui/GameUI.h"
+#include "WoW/Source/Ui/WorldFrame.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -203,6 +203,8 @@ static TSList<PeriodicClientTrigger, TSGetLink<PeriodicClientTrigger>> s_periodi
 
 // STATIC: 0x00D3F5DC
 static TSHashTable<DESTLOCSPELLCASTINDEXHASHNODE, CHashKeyGUID> s_destLocSpellCasts;
+
+int32_t Spell_C::s_castAtTerrain = SPELL_CAST_WORLD_TYPE_NONE;
 
 // VERIFY: f852b51c manual
 // OFFSET: 0x008008D0
@@ -8560,6 +8562,28 @@ bool Spell_C_CastSpell(CGUnit_C* caster, int32_t spellId, const CGItem_C* item, 
         if (g_spellDB.GetRecord(s_autoRepeatingSpell, &autoRepeat) && autoRepeat.m_equippedItemClass == 2 && (autoRepeat.m_equippedItemSubclass & 0x80000)) {
             Spell_C_CancelAutoRepeat(true);
         }
+    }
+
+    if (Spell_C::s_castAtTerrain)
+    {
+        if (caster->m_movement->m_flags & 0x4C0300F)
+        {
+            if (((spell.m_attributesEx & 0x44) && (spell.m_channelInterruptFlags & 0x18))
+                || ((spell.m_interruptFlags & 0x1) && !(spell.m_attributesExB & 0x20) && (SpellRec::GetCastTime(&spell, caster->m_unit->m_unitFieldPetnumber != 0, 0, 0) || (spell.m_auraInterruptFlags & 0x18))))
+            {
+                Spell_C_SpellFailed(cast, &spell, SPELL_FAILED_MOVING, -1, -1, false);
+                return false;
+            }
+        }
+
+        CGPlayer_C* player = reinterpret_cast<CGPlayer_C*>(caster);
+
+        CTerrainClickEvent evt{ 0 };
+        evt.m_point = (Spell_C::s_castAtTerrain == SPELL_CAST_WORLD_TYPE_PLAYER) ? player->GetAnchorPos() : CGWorldFrame::s_currentWorldFrame->GetScreenToWorldCoordinates();
+
+        Spell_C_HandleTerrainClick(evt);
+
+        Spell_C::s_castAtTerrain = SPELL_CAST_WORLD_TYPE_NONE;
     }
 
     return true;

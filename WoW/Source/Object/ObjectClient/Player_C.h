@@ -442,6 +442,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     void SetActiveMirrorHandlers();
     void UnsetActiveMirrorHandlers();
     void MeleeModeLeave();
+    C3Vector& GetAnchorPos() const;
 };
 
 class PlaySpellVisuaKitData {

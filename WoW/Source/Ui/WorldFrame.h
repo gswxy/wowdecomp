@@ -203,6 +203,7 @@ class CGWorldFrame : public CSimpleFrame {
     void SetPlayerFadeCameraValue(uint8_t value);
     void UnitClear();
     void SetCameraTarget(CGObject_C* target, int32_t freeLook);
+    C3Vector GetScreenToWorldCoordinates();
 };
 
 class CWorldClickEvent {

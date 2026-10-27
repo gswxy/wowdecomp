@@ -207,7 +207,11 @@ int32_t MacroConditions::Evaluate(MacroSubstring* target) {
 
         memcpy(token, this->m_target.m_start, length);
         token[length] = '\0';
-        Script_GetGUIDFromToken(token, unit, true);
+
+        if (SStrCmpI("cursor", token, 6))
+        {
+            Script_GetGUIDFromToken(token, unit, true);
+        }
 
         for (uint32_t i = 0; i < count; i++) {
             MacroCondition* condition = &this->m_conditions.m_data[i];

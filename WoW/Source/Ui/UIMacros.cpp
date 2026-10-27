@@ -1050,7 +1050,11 @@ int32_t MACRONODE::FindSpellID() {
     if (target.m_end != target.m_start) {
         char token[256];
         target.GetText(token, sizeof(token));
-        Script_GetGUIDFromToken(token, guid, false);
+
+        if (!SStrCmpI("cursor", token, 6))
+        {
+            Script_GetGUIDFromToken(token, guid, false);
+        }
     }
 
     if (itemId != this->m_itemID || spellId != this->m_spellID || guid != this->m_target) {

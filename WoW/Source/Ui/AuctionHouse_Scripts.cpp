@@ -1211,12 +1211,13 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
 
             for (uint32_t i = 0; i < 3; i++) {
                 if (timeLeft < s_timeLeftThresholds[i]) {
-                    lua_pushnumber(L, i + 1);
+                    CGAuctionHouse::TIME_LEFT_CATEGORY category = static_cast<CGAuctionHouse::TIME_LEFT_CATEGORY>(i + 1);
+                    lua_pushnumber(L, category);
                     return 1;
                 }
             }
 
-            lua_pushnumber(L, 4.0);
+            lua_pushnumber(L, CGAuctionHouse::TIME_LEFT_CATEGORY::TIME_LEFT_VERY_LONG);
         } else if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD) {
             lua_pushnumber(L, (auction->m_expireTime - now) / 1000);
         }

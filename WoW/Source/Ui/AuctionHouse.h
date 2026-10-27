@@ -88,6 +88,13 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum TIME_LEFT_CATEGORY : uint32_t {
+        TIME_LEFT_SHORT = 1,
+        TIME_LEFT_MEDIUM = 2,
+        TIME_LEFT_LONG = 3,
+        TIME_LEFT_VERY_LONG = 4,
+    };
+
     enum COMMAND_ACTION : uint32_t {
         START_AUCTION = 0,
         CANCEL_AUCTION = 1,

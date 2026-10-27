@@ -454,7 +454,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
 
         message->m_invoiceItemID = 0;
         message->m_invoiceRandomPropertiesID = 0;
-        message->m_invoiceType = -1;
+        message->m_invoiceType = CGMailInfo::INVOICE_TYPE::UNSET;
 
         if (!type && FriendList::s_friendList->IsIgnored(message->m_sender, true) && !(message->m_flags & 0x20A)) {
             CDataStore reply;
@@ -773,12 +773,12 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
                 break;
             }
 
-            case 1: {
+            case CGMailInfo::INVOICE_TYPE::BUYER: {
                 format = FrameScript_GetText("AUCTION_WON_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
 
-            case 2: {
+            case CGMailInfo::INVOICE_TYPE::SELLER: {
                 format = FrameScript_GetText("AUCTION_SOLD_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
@@ -794,7 +794,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
                 break;
             }
 
-            case 6: {
+            case CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE: {
                 format = FrameScript_GetText("AUCTION_INVOICE_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
@@ -811,7 +811,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
             message->m_subject[0] = '\0';
         }
 
-        if (type == 1 || type == 2 || type == 6) {
+        if (type == CGMailInfo::INVOICE_TYPE::BUYER || type == CGMailInfo::INVOICE_TYPE::SELLER || type == CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE) {
             message->m_invoiceItemID = itemID;
             message->m_invoiceRandomPropertiesID = randomPropertiesID;
             message->m_invoiceType = type;

@@ -570,15 +570,15 @@ static int32_t Script_GetInboxInvoiceInfo(lua_State* L) {
     uint32_t etaTime = 0;
 
     switch (message->m_invoiceType) {
-        case 2:
+        case CGMailInfo::INVOICE_TYPE::SELLER:
             sscanf(message->m_body, "%16I64X:%d:%d:%d:%d", &player.m_guid, &bid, &buyout, &deposit, &consignment);
             break;
 
-        case 6:
+        case CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE:
             sscanf(message->m_body, "%16I64X:%d:%d:%d:%d:%d:%d", &player.m_guid, &bid, &buyout, &deposit, &consignment, &moneyDelay, &etaTime);
             break;
 
-        case 1:
+        case CGMailInfo::INVOICE_TYPE::BUYER:
             sscanf(message->m_body, "%16I64X:%d:%d", &player.m_guid, &bid, &buyout);
             break;
     }
@@ -586,9 +586,9 @@ static int32_t Script_GetInboxInvoiceInfo(lua_State* L) {
     WowTime eta;
     WowTime::WowDecodeTime(etaTime, &eta);
 
-    if (message->m_invoiceType == 2) {
+    if (message->m_invoiceType == CGMailInfo::INVOICE_TYPE::SELLER) {
         lua_pushstring(L, "seller");
-    } else if (message->m_invoiceType == 6) {
+    } else if (message->m_invoiceType == CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE) {
         lua_pushstring(L, "seller_temp_invoice");
     } else {
         lua_pushstring(L, "buyer");

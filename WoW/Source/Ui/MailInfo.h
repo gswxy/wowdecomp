@@ -76,6 +76,13 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    enum INVOICE_TYPE : int32_t {
+        UNSET = -1,
+        BUYER = 1,
+        SELLER = 2,
+        SELLER_TEMP_INVOICE = 6,
+    };
+
     static const int32_t NUM_INBOX_COUNT_RESULTS = 2;
 
     static const int32_t NUM_PACKAGE_INFO_RESULTS = 3;

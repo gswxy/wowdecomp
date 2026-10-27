@@ -886,7 +886,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
             lua_pushnil(L);
             lua_pushnumber(L, 0.0);
             lua_pushnumber(L, 0.0);
-            return 4;
+            return CGMailInfo::NUM_SEND_MAIL_ITEM_RESULTS;
         }
     } else {
         index = 0;
@@ -906,7 +906,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
         lua_pushnil(L);
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
-        return 4;
+        return CGMailInfo::NUM_SEND_MAIL_ITEM_RESULTS;
     }
 
     char name[256];
@@ -918,7 +918,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
     lua_pushstring(L, texture);
     lua_pushnumber(L, item->m_item->m_itemFieldStackCount);
     lua_pushnumber(L, stats->m_inventoryType ? static_cast<int32_t>(stats->m_quality) : -1);
-    return 4;
+    return CGMailInfo::NUM_SEND_MAIL_ITEM_RESULTS;
 }
 
 // VERIFY: 6c063b68 auto

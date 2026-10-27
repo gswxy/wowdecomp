@@ -956,7 +956,7 @@ static int32_t Script_PlaceAuctionBid(lua_State* L) {
         return 0;
     }
 
-    if (bid > 2000000000 && bid > auction->m_bid + auction->m_minIncrement) {
+    if (bid > CGAuctionHouse::HIGH_BID_THRESHOLD && bid > auction->m_bid + auction->m_minIncrement) {
         return 0;
     }
 

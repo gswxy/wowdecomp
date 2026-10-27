@@ -43,7 +43,7 @@ static const AuctionItemClass s_auctionClasses[CGAuctionHouse::NUM_CLASS_FILTERS
 };
 
 // STATIC: 0x00A14FD0
-static const AuctionInvType s_auctionInvTypes[14] = {
+static const AuctionInvType s_auctionInvTypes[CGAuctionHouse::NUM_INVENTORY_FILTERS] = {
     { 1, "INVTYPE_HEAD", 1, 0 },
     { 2, "INVTYPE_NECK", 1, 1 },
     { 3, "INVTYPE_SHOULDER", 0, 0 },
@@ -167,9 +167,9 @@ static int32_t Script_GetAuctionInvTypes(lua_State* L) {
         remaining--;
     }
 
-    lua_checkstack(L, 28);
+    lua_checkstack(L, 2 * CGAuctionHouse::NUM_INVENTORY_FILTERS);
 
-    for (uint32_t i = 0; i < 14; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::NUM_INVENTORY_FILTERS; i++) {
         lua_pushstring(L, s_auctionInvTypes[i].m_token);
 
         if (s_auctionClasses[classIndex].m_classID == 4) {
@@ -187,7 +187,7 @@ static int32_t Script_GetAuctionInvTypes(lua_State* L) {
         lua_pushnumber(L, 1.0);
     }
 
-    return 28;
+    return 2 * CGAuctionHouse::NUM_INVENTORY_FILTERS;
 }
 
 // VERIFY: a694c251 auto
@@ -470,7 +470,7 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
     if (lua_isnumber(L, 4)) {
         uint32_t index = static_cast<uint32_t>(lua_tonumber(L, 4)) - 1;
 
-        if (index < 14) {
+        if (index < CGAuctionHouse::NUM_INVENTORY_FILTERS) {
             invType = s_auctionInvTypes[index].m_invType;
         }
     }

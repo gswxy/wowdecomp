@@ -102,6 +102,7 @@ class CGAuctionHouse {
     };
 
     static const int32_t NUM_CLASS_FILTERS = 12;
+    static const int32_t NUM_INVENTORY_FILTERS = 14;
     static const int32_t MAX_SELL_ITEMS = 200;
     static const int32_t MAX_SORT_CRITERIA = 12;
 

@@ -2242,9 +2242,9 @@ uint32_t CalculateAuctionDeposit(uint32_t depositRate, uint32_t sellPrice, uint3
     for (uint32_t i = 0; i < CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES; i++) {
         if (runTime == s_depositRunTimes[i]) {
             uint32_t deposit = static_cast<uint32_t>(static_cast<float>(depositRate * sellPrice / 100) * runTime * 0.0041666669f);
-            return deposit < 100 ? 100 : deposit;
+            return deposit < CGAuctionHouse::MIN_DEPOSIT ? CGAuctionHouse::MIN_DEPOSIT : deposit;
         }
     }
 
-    return 100;
+    return CGAuctionHouse::MIN_DEPOSIT;
 }

@@ -119,6 +119,7 @@ class CGAuctionHouse {
         NUM_RUN_TIMES = 3,
     };
 
+    static const int32_t MIN_DEPOSIT = 100;
     static const int32_t INITIAL_OUTBID_CAPACITY = 8;
     static const int32_t HIGH_BID_THRESHOLD = 2000000000;
     static const int32_t EXPIRY_GRACE_MS = 10000;

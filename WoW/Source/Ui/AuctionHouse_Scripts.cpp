@@ -291,7 +291,7 @@ static int32_t Script_GetNumAuctionItems(lua_State* L) {
 }
 
 // STATIC: 0x00A15238
-static const uint32_t s_timeLeftThresholds[3] = { 1800000, 7200000, 43200000 };
+static const uint32_t s_timeLeftThresholds[CGAuctionHouse::NUM_TIME_LEFT_THRESHOLDS] = { 1800000, 7200000, 43200000 };
 
 // STATIC: 0x00A15248
 static const CGAuctionHouse::RUN_TIME AUCTION_RUN_TIMES[CGAuctionHouse::RUN_TIME::NUM_RUN_TIMES] = { CGAuctionHouse::RUN_TIME::RUN_TIME_SHORT, CGAuctionHouse::RUN_TIME::RUN_TIME_DEFAULT, CGAuctionHouse::RUN_TIME::RUN_TIME_LONG };
@@ -1209,7 +1209,7 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
         if (auction->m_sold == AuctionItemInfo::SALE_STATE::UNSOLD) {
             uint32_t timeLeft = auction->m_expireTime - now;
 
-            for (uint32_t i = 0; i < 3; i++) {
+            for (uint32_t i = 0; i < CGAuctionHouse::NUM_TIME_LEFT_THRESHOLDS; i++) {
                 if (timeLeft < s_timeLeftThresholds[i]) {
                     CGAuctionHouse::TIME_LEFT_CATEGORY category = static_cast<CGAuctionHouse::TIME_LEFT_CATEGORY>(i + 1);
                     lua_pushnumber(L, category);

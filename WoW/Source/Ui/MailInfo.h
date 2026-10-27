@@ -76,6 +76,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_RECENT_SENDERS = 3;
+
     static SendMailItem m_sendItems[16];
     static uint8_t m_lockSendItems;
     static uint32_t m_sendPending;
@@ -141,7 +143,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
 int32_t Packet_SMSG_RECEIVED_MAIL(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg);
 int32_t Packet_SMSG_SHOW_MAILBOX(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg);
 
-extern MailSenderInfo s_recentSenders[3];
+extern MailSenderInfo s_recentSenders[CGMailInfo::NUM_RECENT_SENDERS];
 
 MailAttachmentInfo* GetFirstAttachment(MailboxMessageInfo* message);
 MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index);

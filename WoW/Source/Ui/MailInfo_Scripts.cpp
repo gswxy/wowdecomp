@@ -758,7 +758,7 @@ static int32_t Script_InboxItemCanDelete(lua_State* L) {
 static int32_t Script_GetLatestThreeSenders(lua_State* L) {
     int32_t count = 0;
 
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
 
         if ((sender.m_guid || sender.m_entry) && sender.m_timeLeft <= 0.0f) {

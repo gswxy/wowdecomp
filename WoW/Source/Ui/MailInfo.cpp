@@ -38,7 +38,7 @@ uint8_t CGMailInfo::m_lockSendItems;
 uint32_t CGMailInfo::m_sendPending;
 
 // STATIC: 0x00BEAFE8
-MailSenderInfo s_recentSenders[3];
+MailSenderInfo s_recentSenders[CGMailInfo::NUM_RECENT_SENDERS];
 
 // STATIC: 0x00BEB1BC
 uint32_t CGMailInfo::m_sendMoney;
@@ -551,7 +551,7 @@ void CGMailInfo::InitializeGame() {
 void CGMailInfo::UpdateRecentSenders() {
     bool changed = false;
 
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
 
         if (!sender.m_guid && !sender.m_entry) {
@@ -594,7 +594,7 @@ void CGMailInfo::UpdateRecentSenders() {
 // VERIFY: 2350f8eb auto
 // OFFSET: 0x0056DED0
 void CGMailInfo::UpdatePendingMail(float elapsed) {
-    for (int32_t i = 0; i < 3; i++) {
+    for (int32_t i = 0; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
 
         if ((sender.m_guid || sender.m_entry) && sender.m_timeLeft > 0.0f) {
@@ -1434,7 +1434,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
     msg->Get(count);
 
     for (uint32_t i = 0; i < count; i++) {
-        if (i >= 3) {
+        if (i >= CGMailInfo::NUM_RECENT_SENDERS) {
             break;
         }
 
@@ -1446,7 +1446,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
         msg->Get(sender.m_timeLeft);
     }
 
-    for (uint32_t i = count; i < 3; i++) {
+    for (uint32_t i = count; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
         sender.m_timeLeft = 0.0f;
         sender.m_guid = WOWGUID();

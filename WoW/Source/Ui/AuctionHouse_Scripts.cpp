@@ -843,7 +843,7 @@ static int32_t Script_GetAuctionItemInfo(lua_State* L) {
         lua_pushnil(L);
         lua_pushnil(L);
         lua_pushnumber(L, 0.0);
-        return 13;
+        return CGAuctionHouse::NUM_ITEM_INFO_RESULTS;
     }
 
     char name[256];
@@ -897,7 +897,7 @@ static int32_t Script_GetAuctionItemInfo(lua_State* L) {
     }
 
     lua_pushnumber(L, auction->m_sold);
-    return 13;
+    return CGAuctionHouse::NUM_ITEM_INFO_RESULTS;
 }
 
 // VERIFY: e2337546 manual

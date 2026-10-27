@@ -127,6 +127,7 @@ class CGAuctionHouse {
     static const int32_t BID_EXTENSION_MS = 90000;
     static const int32_t DEFAULT_QUERY_DELAY_MS = 5000;
     static const int32_t GET_ALL_QUERY_COOLDOWN_MS = 900000;
+    static const int32_t NUM_ITEM_INFO_RESULTS = 13;
     static const int32_t NUM_TIME_LEFT_THRESHOLDS = 3;
     static const int32_t NUM_CLASS_FILTERS = 12;
     static const int32_t NUM_INVENTORY_FILTERS = 14;

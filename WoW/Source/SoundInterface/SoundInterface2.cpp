@@ -35,7 +35,7 @@
 #include "WoW/Source/WorldClient/World.h"
 
 // STATIC: 0x00B24180
-static const char* s_raceFileNames[RACE_DRAENEI + 1] = {
+static const char* s_raceFileNames[LAST_PLAYER_RACE + 1] = {
     nullptr,
     "Human",    // RACE_HUMAN
     "Orc",      // RACE_ORC

@@ -84,7 +84,7 @@ TSGrowableArray<AuctionItemInfo> CGAuctionHouse::m_ownerList;
 TSGrowableArray<AuctionItemInfo> CGAuctionHouse::m_bidderList;
 
 // STATIC: 0x00ACF628
-int32_t CGAuctionHouse::m_desiredDelayTime = 5000;
+int32_t CGAuctionHouse::m_desiredDelayTime = CGAuctionHouse::DEFAULT_QUERY_DELAY_MS;
 
 // STATIC: 0x00ACF62C
 int32_t CGAuctionHouse::m_selectedBrowseItem = -1;
@@ -215,7 +215,7 @@ void CGAuctionHouse::EnterWorld() {
     CGAuctionHouse::m_pendingSoldItems = 0;
     CGAuctionHouse::m_pendingBidItems = 0;
     CGAuctionHouse::m_auctionsTabShowing = 0;
-    CGAuctionHouse::m_desiredDelayTime = 5000;
+    CGAuctionHouse::m_desiredDelayTime = CGAuctionHouse::DEFAULT_QUERY_DELAY_MS;
     CGAuctionHouse::m_selectedBrowseItem = -1;
     CGAuctionHouse::m_selectedOwnedItem = -1;
     CGAuctionHouse::m_selectedBidItem = -1;
@@ -1593,7 +1593,7 @@ void CGAuctionHouse::SetAuctioneer(WOWGUID auctioneer, int32_t auctionHouseID) {
     CGAuctionHouse::m_canGetOwnerList = 1;
     CGAuctionHouse::m_canGetBidderList = 1;
     CGAuctionHouse::m_auctioneer = auctioneer;
-    CGAuctionHouse::m_desiredDelayTime = 5000;
+    CGAuctionHouse::m_desiredDelayTime = CGAuctionHouse::DEFAULT_QUERY_DELAY_MS;
     CGAuctionHouse::m_browseList.Clear();
     CGAuctionHouse::m_numTotalItems = 0;
     CGAuctionHouse::m_ownerList.Clear();
@@ -1806,9 +1806,7 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
     msg->Get(action);
     msg->Get(result);
 
-    CGAuctionHouse::COMMAND_RESULT commandResult = static_cast<CGAuctionHouse::COMMAND_RESULT>(result);
-
-    if (commandResult == CGAuctionHouse::COMMAND_RESULT::INVENTORY_ERROR) {
+    if (result == CGAuctionHouse::COMMAND_RESULT::INVENTORY_ERROR) {
         msg->Get(inventoryError);
     }
 
@@ -1816,7 +1814,7 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
         CGAuctionHouse::OnMultisellFailure(false);
     }
 
-    switch (commandResult) {
+    switch (result) {
         case CGAuctionHouse::COMMAND_RESULT::SUCCESS: {
             CGAuctionHouse::COMMAND_ACTION commandAction = static_cast<CGAuctionHouse::COMMAND_ACTION>(action);
 

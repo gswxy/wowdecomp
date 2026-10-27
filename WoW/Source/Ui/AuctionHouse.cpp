@@ -1806,7 +1806,9 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
     msg->Get(action);
     msg->Get(result);
 
-    if (result == 1) {
+    CGAuctionHouse::COMMAND_RESULT commandResult = static_cast<CGAuctionHouse::COMMAND_RESULT>(result);
+
+    if (commandResult == CGAuctionHouse::COMMAND_RESULT::INVENTORY_ERROR) {
         msg->Get(inventoryError);
     }
 
@@ -1814,8 +1816,8 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
         CGAuctionHouse::OnMultisellFailure(false);
     }
 
-    switch (result) {
-        case 0: {
+    switch (commandResult) {
+        case CGAuctionHouse::COMMAND_RESULT::SUCCESS: {
             CGAuctionHouse::COMMAND_ACTION commandAction = static_cast<CGAuctionHouse::COMMAND_ACTION>(action);
 
             if (commandAction == CGAuctionHouse::COMMAND_ACTION::START_AUCTION) {
@@ -1868,19 +1870,19 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
             return 1;
         }
 
-        case 1:
+        case CGAuctionHouse::COMMAND_RESULT::INVENTORY_ERROR:
             CGGameUI::DisplayError(static_cast<UIErrors>(GetDisplayErrorByInventoryError(inventoryError)));
             return 1;
 
-        case 3:
+        case CGAuctionHouse::COMMAND_RESULT::NOT_ENOUGH_MONEY:
             CGGameUI::DisplayError(ERR_NOT_ENOUGH_MONEY);
             return 1;
 
-        case 4:
+        case CGAuctionHouse::COMMAND_RESULT::ITEM_NOT_FOUND:
             CGGameUI::DisplayError(ERR_ITEM_NOT_FOUND);
             return 1;
 
-        case 5: {
+        case CGAuctionHouse::COMMAND_RESULT::HIGHER_BID: {
             WOWGUID bidder;
             uint32_t bid;
             uint32_t minIncrement;
@@ -1926,15 +1928,15 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
             return 1;
         }
 
-        case 7:
+        case CGAuctionHouse::COMMAND_RESULT::BID_INCREMENT:
             CGGameUI::DisplayError(ERR_AUCTION_BID_INCREMENT);
             return 1;
 
-        case 10:
+        case CGAuctionHouse::COMMAND_RESULT::BID_OWN_AUCTION:
             CGGameUI::DisplayError(ERR_AUCTION_BID_OWN);
             return 1;
 
-        case 13:
+        case CGAuctionHouse::COMMAND_RESULT::RESTRICTED_ACCOUNT:
             CGGameUI::DisplayError(ERR_RESTRICTED_ACCOUNT);
             return 1;
 

@@ -88,6 +88,17 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum COMMAND_RESULT : uint32_t {
+        SUCCESS = 0,
+        INVENTORY_ERROR = 1,
+        NOT_ENOUGH_MONEY = 3,
+        ITEM_NOT_FOUND = 4,
+        HIGHER_BID = 5,
+        BID_INCREMENT = 7,
+        BID_OWN_AUCTION = 10,
+        RESTRICTED_ACCOUNT = 13,
+    };
+
     enum TIME_LEFT_CATEGORY : uint32_t {
         TIME_LEFT_SHORT = 1,
         TIME_LEFT_MEDIUM = 2,

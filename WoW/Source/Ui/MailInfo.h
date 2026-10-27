@@ -76,6 +76,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_STATIONERY_INFO_RESULTS = 3;
+
     static const int32_t NUM_SEND_MAIL_ITEM_RESULTS = 4;
 
     static const int32_t NUM_INBOX_TEXT_RESULTS = 4;

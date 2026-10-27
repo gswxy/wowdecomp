@@ -245,13 +245,13 @@ static int32_t Script_GetStationeryInfo(lua_State* L) {
             lua_pushnumber(L, stats->m_buyPrice);
         }
 
-        return 3;
+        return CGMailInfo::NUM_STATIONERY_INFO_RESULTS;
     }
 
     lua_pushnil(L);
     lua_pushnil(L);
     lua_pushnil(L);
-    return 3;
+    return CGMailInfo::NUM_STATIONERY_INFO_RESULTS;
 }
 
 // VERIFY: b60ccfe5 auto

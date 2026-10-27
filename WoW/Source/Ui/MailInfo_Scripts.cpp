@@ -305,10 +305,10 @@ static int32_t Script_GetNumPackages(lua_State* L) {
 // VERIFY: 12b74c11 auto
 // OFFSET: 0x00571B00
 static int32_t Script_GetSendMailPrice(lua_State* L) {
-    uint32_t price = 30;
-    uint32_t itemPrice = 30 * CGMailInfo::GetNumSendItems();
+    uint32_t price = CGMailInfo::POSTAGE_PER_ITEM;
+    uint32_t itemPrice = CGMailInfo::POSTAGE_PER_ITEM * CGMailInfo::GetNumSendItems();
 
-    if (itemPrice >= 30) {
+    if (itemPrice >= CGMailInfo::POSTAGE_PER_ITEM) {
         price = itemPrice;
     }
 

@@ -76,6 +76,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t POSTAGE_PER_ITEM = 30;
+
     static const int32_t NUM_INBOX_HEADER_INFO_RESULTS = 14;
 
     enum COMMAND_RESULT : uint32_t {

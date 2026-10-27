@@ -27,7 +27,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 
 // STATIC: 0x00A14F70
-static const AuctionItemClass s_auctionClasses[12] = {
+static const AuctionItemClass s_auctionClasses[CGAuctionHouse::NUM_CLASS_FILTERS] = {
     { 2, 1 },
     { 4, 1 },
     { 1, 1 },
@@ -91,7 +91,7 @@ static int32_t Script_GetAuctionHouseDepositRate(lua_State* L) {
 static int32_t Script_GetAuctionItemClasses(lua_State* L) {
     int32_t count = 0;
 
-    for (uint32_t i = 0; i < 12; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::NUM_CLASS_FILTERS; i++) {
         ItemClassRec* rec = g_itemClassDB.GetRecord(s_auctionClasses[i].m_classID);
 
         if (rec) {
@@ -113,7 +113,7 @@ static int32_t Script_GetAuctionItemSubClasses(lua_State* L) {
 
     uint32_t index = static_cast<uint32_t>(lua_tonumber(L, 1)) - 1;
 
-    if (index >= 12 || !s_auctionClasses[index].m_hasSubClasses) {
+    if (index >= CGAuctionHouse::NUM_CLASS_FILTERS || !s_auctionClasses[index].m_hasSubClasses) {
         return 0;
     }
 
@@ -143,7 +143,7 @@ static int32_t Script_GetAuctionInvTypes(lua_State* L) {
     uint32_t classIndex = static_cast<uint32_t>(lua_tonumber(L, 1)) - 1;
     int32_t subClass = static_cast<int32_t>(lua_tonumber(L, 2)) - 1;
 
-    if (classIndex >= 12 || !s_auctionClasses[classIndex].m_hasSubClasses) {
+    if (classIndex >= CGAuctionHouse::NUM_CLASS_FILTERS || !s_auctionClasses[classIndex].m_hasSubClasses) {
         return 0;
     }
 
@@ -480,7 +480,7 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
     if (lua_isnumber(L, 5)) {
         uint32_t index = static_cast<uint32_t>(lua_tonumber(L, 5)) - 1;
 
-        if (index < 12) {
+        if (index < CGAuctionHouse::NUM_CLASS_FILTERS) {
             classID = s_auctionClasses[index].m_classID;
         }
     }

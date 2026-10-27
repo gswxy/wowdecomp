@@ -76,6 +76,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_INBOX_HEADER_INFO_RESULTS = 14;
+
     enum COMMAND_RESULT : uint32_t {
         SUCCESS = 0,
         INVENTORY_ERROR = 1,

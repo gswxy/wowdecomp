@@ -429,7 +429,7 @@ static int32_t Script_GetInboxHeaderInfo(lua_State* L) {
         lua_pushnil(L);
         lua_pushnil(L);
         lua_pushnil(L);
-        return 14;
+        return CGMailInfo::NUM_INBOX_HEADER_INFO_RESULTS;
     }
 
     uint32_t numAttachments = GetNumAttachments(message);
@@ -534,7 +534,7 @@ static int32_t Script_GetInboxHeaderInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    return 14;
+    return CGMailInfo::NUM_INBOX_HEADER_INFO_RESULTS;
 }
 
 // VERIFY: 0bc89b80 manual

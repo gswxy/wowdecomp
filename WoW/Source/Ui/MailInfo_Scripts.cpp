@@ -476,7 +476,7 @@ static int32_t Script_GetInboxHeaderInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    bool isGM = message->m_stationery == 61;
+    bool isGM = message->m_stationery == CGMailInfo::GM_STATIONERY_ID;
     lua_pushstring(L, GetSenderName(message->m_senderEntry, message->m_messageType, message->m_sender, message->m_stationery));
 
     if (message->m_flags & 0x8) {
@@ -1092,7 +1092,7 @@ static int32_t Script_GetInboxText(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if ((!SStrLen(message->m_body) && !message->m_mailTemplateID) || (message->m_flags & 0x4) || message->m_stationery == 61 || message->m_messageType == 5 || (message->m_messageType == 2 && !message->m_invoiceItemID)) {
+    if ((!SStrLen(message->m_body) && !message->m_mailTemplateID) || (message->m_flags & 0x4) || message->m_stationery == CGMailInfo::GM_STATIONERY_ID || message->m_messageType == 5 || (message->m_messageType == 2 && !message->m_invoiceItemID)) {
         lua_pushnil(L);
     } else {
         lua_pushnumber(L, 1.0);

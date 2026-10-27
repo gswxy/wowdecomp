@@ -934,7 +934,7 @@ bool CGMailInfo::CanComplain(uint32_t index) {
     }
 
     MailboxMessageInfo* message = CGMailInfo::m_inbox.m_data[index];
-    return message && !message->m_messageType && !(message->m_flags & 0x2) && message->m_stationery != 61 && message->m_sender != player->m_obj->m_guid && !FriendList::s_friendList->IsFriend(message->m_sender);
+    return message && !message->m_messageType && !(message->m_flags & 0x2) && message->m_stationery != CGMailInfo::GM_STATIONERY_ID && message->m_sender != player->m_obj->m_guid && !FriendList::s_friendList->IsFriend(message->m_sender);
 }
 
 // VERIFY: 56c85263 auto
@@ -1369,7 +1369,7 @@ const char* GetSenderName(int32_t entry, int32_t type, WOWGUID guid, int32_t sta
     switch (type) {
         case 0:
         case 5: {
-            if (stationery == 61) {
+            if (stationery == CGMailInfo::GM_STATIONERY_ID) {
                 return FrameScript_GetText("GM_EMAIL_NAME", -1, GENDER_NOT_APPLICABLE);
             }
 

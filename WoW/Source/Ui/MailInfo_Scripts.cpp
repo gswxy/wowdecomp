@@ -1133,7 +1133,7 @@ static int32_t Script_GetInboxItem(lua_State* L) {
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
         lua_pushnil(L);
-        return 5;
+        return CGMailInfo::NUM_INBOX_ITEM_RESULTS;
     }
 
     WOWGUID none = WOWGUID();
@@ -1148,7 +1148,7 @@ static int32_t Script_GetInboxItem(lua_State* L) {
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
         lua_pushnil(L);
-        return 5;
+        return CGMailInfo::NUM_INBOX_ITEM_RESULTS;
     }
 
     char name[256];
@@ -1168,7 +1168,7 @@ static int32_t Script_GetInboxItem(lua_State* L) {
         lua_pushnil(L);
     }
 
-    return 5;
+    return CGMailInfo::NUM_INBOX_ITEM_RESULTS;
 }
 
 // VERIFY: 46d21530 auto

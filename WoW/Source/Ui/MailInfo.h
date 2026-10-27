@@ -76,6 +76,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_INBOX_ITEM_RESULTS = 5;
+
     static const int32_t MAX_SEND_ITEMS = 12;
     static const int32_t MAX_SEND_ITEM_INDEX = 11;
 

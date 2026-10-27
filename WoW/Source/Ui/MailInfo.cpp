@@ -177,7 +177,7 @@ void InboxItemQueryCallback(int32_t id, const WOWGUID& guid, void* param, bool s
 // VERIFY: f71662b9 auto
 // OFFSET: 0x0056D8A0
 void CGMailInfo::ClearSendItem(uint32_t index) {
-    if (index < 12) {
+    if (index < CGMailInfo::MAX_SEND_ITEMS) {
         CGMailInfo::m_sendItems[index].m_guid = WOWGUID();
         CGMailInfo::m_sendItems[index].m_container = WOWGUID();
         CGMailInfo::m_sendItems[index].m_slot = 0;
@@ -1128,14 +1128,14 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
 
     if (index == static_cast<uint32_t>(-1)) {
         for (sendIndex = 0; CGMailInfo::GetSendItemGuid(sendIndex); sendIndex++) {
-            if (sendIndex + 1 >= 12) {
+            if (sendIndex + 1 >= CGMailInfo::MAX_SEND_ITEMS) {
                 CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT_SLOT);
                 return false;
             }
         }
     }
 
-    if (sendIndex > 11) {
+    if (sendIndex > CGMailInfo::MAX_SEND_ITEM_INDEX) {
         CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT_SLOT);
         return false;
     }
@@ -1292,12 +1292,12 @@ void CGMailInfo::EnterWorld() {
 // VERIFY: a233ad46 auto
 // OFFSET: 0x0056D290
 void CGMailInfo::SetSendItem(uint32_t index, WOWGUID item, WOWGUID container, uint8_t slot) {
-    if (index >= 12) {
+    if (index >= CGMailInfo::MAX_SEND_ITEMS) {
         return;
     }
 
     if (item) {
-        for (uint32_t i = 0; i < 12; i++) {
+        for (uint32_t i = 0; i < CGMailInfo::MAX_SEND_ITEMS; i++) {
             if (i != index && CGMailInfo::m_sendItems[i].m_guid == item) {
                 memset(&CGMailInfo::m_sendItems[i], 0, sizeof(SendMailItem));
             }

@@ -1040,7 +1040,7 @@ static int32_t Script_GetAuctionSellItemInfo(lua_State* L) {
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
-        return 9;
+        return CGAuctionHouse::NUM_SELL_ITEM_INFO_RESULTS;
     }
 
     char name[256];
@@ -1068,7 +1068,7 @@ static int32_t Script_GetAuctionSellItemInfo(lua_State* L) {
     lua_pushnumber(L, stats->m_sellPrice);
     lua_pushnumber(L, stats->m_stackable);
     lua_pushnumber(L, FindSellableItems(item->m_obj->m_entryID));
-    return 9;
+    return CGAuctionHouse::NUM_SELL_ITEM_INFO_RESULTS;
 }
 
 // VERIFY: 6bd4bdb4 auto

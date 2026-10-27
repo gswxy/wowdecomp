@@ -119,6 +119,7 @@ class CGAuctionHouse {
         NUM_RUN_TIMES = 3,
     };
 
+    static const int32_t ITEMS_PER_PAGE = 50;
     static const int32_t BID_EXTENSION_MS = 90000;
     static const int32_t DEFAULT_QUERY_DELAY_MS = 5000;
     static const int32_t GET_ALL_QUERY_COOLDOWN_MS = 900000;

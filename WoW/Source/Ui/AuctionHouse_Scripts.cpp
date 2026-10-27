@@ -507,7 +507,7 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
     int32_t page = 0;
 
     if (lua_isnumber(L, 7)) {
-        page = 50 * static_cast<int32_t>(lua_tonumber(L, 7));
+        page = CGAuctionHouse::ITEMS_PER_PAGE * static_cast<int32_t>(lua_tonumber(L, 7));
     }
 
     uint8_t usable = 0;
@@ -785,7 +785,7 @@ static int32_t Script_GetBidderAuctionItems(lua_State* L) {
         int32_t page = 0;
 
         if (lua_isnumber(L, 1)) {
-            page = 50 * static_cast<int32_t>(lua_tonumber(L, 1));
+            page = CGAuctionHouse::ITEMS_PER_PAGE * static_cast<int32_t>(lua_tonumber(L, 1));
         }
 
         BidderListItems(page);

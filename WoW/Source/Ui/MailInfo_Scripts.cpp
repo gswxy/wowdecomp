@@ -1032,7 +1032,7 @@ static int32_t Script_GetInboxText(lua_State* L) {
         lua_pushnil(L);
         lua_pushnil(L);
         lua_pushnil(L);
-        return 4;
+        return CGMailInfo::NUM_INBOX_TEXT_RESULTS;
     }
 
     CGMailInfo::MarkAsRead(index);
@@ -1104,7 +1104,7 @@ static int32_t Script_GetInboxText(lua_State* L) {
         lua_pushnil(L);
     }
 
-    return 4;
+    return CGMailInfo::NUM_INBOX_TEXT_RESULTS;
 }
 
 // VERIFY: af16e1e0 manual

@@ -207,9 +207,9 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
     msg->Get(action);
     msg->Get(result);
 
-    if (result == 1) {
+    if (result == CGMailInfo::COMMAND_RESULT::INVENTORY_ERROR) {
         msg->Get(inventoryError);
-    } else if (action == 2 && (!result || result == 21)) {
+    } else if (action == 2 && (!result || result == CGMailInfo::COMMAND_RESULT::ATTACHMENT_EXPIRED)) {
         msg->Get(itemGuid);
         msg->Get(itemCount);
     }
@@ -219,7 +219,7 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
     }
 
     switch (result) {
-        case 0: {
+        case CGMailInfo::COMMAND_RESULT::SUCCESS: {
             switch (action) {
                 case 0: {
                     CGGameUI::DisplayError(ERR_MAIL_SENT);
@@ -252,66 +252,66 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             break;
         }
 
-        case 1: {
+        case CGMailInfo::COMMAND_RESULT::INVENTORY_ERROR: {
             CGGameUI::DisplayError(static_cast<UIErrors>(GetDisplayErrorByInventoryError(inventoryError)));
             break;
         }
 
-        case 2: {
+        case CGMailInfo::COMMAND_RESULT::TO_SELF: {
             CGGameUI::DisplayError(ERR_MAIL_TO_SELF);
             break;
         }
 
-        case 3: {
+        case CGMailInfo::COMMAND_RESULT::NOT_ENOUGH_MONEY: {
             CGGameUI::DisplayError(ERR_NOT_ENOUGH_MONEY);
             break;
         }
 
-        case 4: {
+        case CGMailInfo::COMMAND_RESULT::TARGET_NOT_FOUND: {
             CGGameUI::DisplayError(ERR_MAIL_TARGET_NOT_FOUND);
             break;
         }
 
-        case 5: {
+        case CGMailInfo::COMMAND_RESULT::WRONG_FACTION: {
             CGGameUI::DisplayError(ERR_PLAYER_WRONG_FACTION);
             break;
         }
 
-        case 14: {
+        case CGMailInfo::COMMAND_RESULT::RESTRICTED_ACCOUNT: {
             CGGameUI::DisplayError(ERR_RESTRICTED_ACCOUNT);
             break;
         }
 
-        case 15: {
+        case CGMailInfo::COMMAND_RESULT::REACHED_CAP: {
             CGGameUI::DisplayError(ERR_MAIL_REACHED_CAP);
             break;
         }
 
-        case 16: {
+        case CGMailInfo::COMMAND_RESULT::WRAPPED_COD: {
             CGGameUI::DisplayError(ERR_MAIL_WRAPPED_COD);
             break;
         }
 
-        case 17: {
+        case CGMailInfo::COMMAND_RESULT::SQUELCHED: {
             CGGameUI::DisplayError(ERR_USER_SQUELCHED);
             break;
         }
 
-        case 18: {
+        case CGMailInfo::COMMAND_RESULT::TOO_MANY_ATTACHMENTS: {
             CGGameUI::DisplayError(ERR_MAIL_TOO_MANY_ATTACHMENTS);
             break;
         }
 
-        case 19: {
+        case CGMailInfo::COMMAND_RESULT::INVALID_ATTACHMENT: {
             CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT);
             break;
         }
 
-        case 20: {
+        case CGMailInfo::COMMAND_RESULT::NO_DISPLAY_ERROR: {
             break;
         }
 
-        case 21: {
+        case CGMailInfo::COMMAND_RESULT::ATTACHMENT_EXPIRED: {
             CGGameUI::DisplayError(ERR_MAIL_ATTACHMENT_EXPIRED);
             CGMailInfo::RemoveItem(messageID, itemGuid);
             break;

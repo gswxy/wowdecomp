@@ -76,6 +76,23 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    enum COMMAND_RESULT : uint32_t {
+        SUCCESS = 0,
+        INVENTORY_ERROR = 1,
+        TO_SELF = 2,
+        NOT_ENOUGH_MONEY = 3,
+        TARGET_NOT_FOUND = 4,
+        WRONG_FACTION = 5,
+        RESTRICTED_ACCOUNT = 14,
+        REACHED_CAP = 15,
+        WRAPPED_COD = 16,
+        SQUELCHED = 17,
+        TOO_MANY_ATTACHMENTS = 18,
+        INVALID_ATTACHMENT = 19,
+        NO_DISPLAY_ERROR = 20,
+        ATTACHMENT_EXPIRED = 21,
+    };
+
     static const int32_t NUM_RECENT_SENDERS = 3;
 
     static SendMailItem m_sendItems[16];

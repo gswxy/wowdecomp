@@ -68,7 +68,7 @@ static int32_t Script_HasNewMail(lua_State* L) {
 static int32_t Script_GetInboxNumItems(lua_State* L) {
     lua_pushnumber(L, CGMailInfo::m_numInboxItems);
     lua_pushnumber(L, CGMailInfo::m_totalInboxItems);
-    return 2;
+    return CGMailInfo::NUM_INBOX_COUNT_RESULTS;
 }
 
 // VERIFY: 54d478fd auto

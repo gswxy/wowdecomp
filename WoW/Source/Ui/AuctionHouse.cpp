@@ -1843,7 +1843,7 @@ int32_t Packet_SMSG_AUCTION_COMMAND_RESULT(void* param, NETMESSAGE msgId, uint32
                             auction->m_bid = CGAuctionHouse::m_lastBidAmount;
                             auction->m_minIncrement = minIncrement;
                             auction->m_bidder = ClntObjMgrGetActivePlayer();
-                            auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + 90000 ? OsGetAsyncTimeMs() + 90000 : auction->m_expireTime;
+                            auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS ? OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS : auction->m_expireTime;
 
                             if (!CGAuctionHouse::m_pendingBrowseItems) {
                                 FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_ITEM_LIST_UPDATE, nullptr);
@@ -1992,7 +1992,7 @@ int32_t Packet_SMSG_AUCTION_BIDDER_NOTIFICATION(void* param, NETMESSAGE msgId, u
                     auction->m_bid = bid;
                     auction->m_minIncrement = minIncrement;
                     auction->m_bidder = bidder;
-                    auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + 90000 ? OsGetAsyncTimeMs() + 90000 : auction->m_expireTime;
+                    auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS ? OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS : auction->m_expireTime;
 
                     if (!CGAuctionHouse::m_pendingBidItems) {
                         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_BIDDER_LIST_UPDATE, nullptr);
@@ -2009,7 +2009,7 @@ int32_t Packet_SMSG_AUCTION_BIDDER_NOTIFICATION(void* param, NETMESSAGE msgId, u
                     auction->m_bid = bid;
                     auction->m_minIncrement = minIncrement;
                     auction->m_bidder = bidder;
-                    auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + 90000 ? OsGetAsyncTimeMs() + 90000 : auction->m_expireTime;
+                    auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS ? OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS : auction->m_expireTime;
 
                     if (!CGAuctionHouse::m_pendingBrowseItems) {
                         FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_ITEM_LIST_UPDATE, nullptr);
@@ -2062,7 +2062,7 @@ int32_t Packet_SMSG_AUCTION_OWNER_NOTIFICATION(void* param, NETMESSAGE msgId, ui
                 auction->m_bid = bid;
                 auction->m_minIncrement = minIncrement;
                 auction->m_bidder = bidder;
-                auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + 90000 ? OsGetAsyncTimeMs() + 90000 : auction->m_expireTime;
+                auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS ? OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS : auction->m_expireTime;
 
                 if (!CGAuctionHouse::m_pendingOwnedItems && !CGAuctionHouse::m_pendingSoldItems) {
                     FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_OWNED_LIST_UPDATE, nullptr);
@@ -2079,7 +2079,7 @@ int32_t Packet_SMSG_AUCTION_OWNER_NOTIFICATION(void* param, NETMESSAGE msgId, ui
                 auction->m_bid = bid;
                 auction->m_minIncrement = minIncrement;
                 auction->m_bidder = bidder;
-                auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + 90000 ? OsGetAsyncTimeMs() + 90000 : auction->m_expireTime;
+                auction->m_expireTime = auction->m_expireTime <= OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS ? OsGetAsyncTimeMs() + CGAuctionHouse::BID_EXTENSION_MS : auction->m_expireTime;
 
                 if (!CGAuctionHouse::m_pendingBrowseItems) {
                     FrameScript_SignalEvent(SCRIPT_EVENT_AUCTION_ITEM_LIST_UPDATE, nullptr);

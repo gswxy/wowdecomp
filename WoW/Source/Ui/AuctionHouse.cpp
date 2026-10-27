@@ -2171,9 +2171,9 @@ void CGAuctionHouse::InitializeGame() {
     CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::OWNER_LIST] = 0;
     CGAuctionHouse::m_numOutbidItems = 0;
 
-    CGAuctionHouse::m_outbidItems.SetCount(8);
+    CGAuctionHouse::m_outbidItems.SetCount(CGAuctionHouse::INITIAL_OUTBID_CAPACITY);
 
-    for (uint32_t i = 0; i < 8; i++) {
+    for (uint32_t i = 0; i < CGAuctionHouse::INITIAL_OUTBID_CAPACITY; i++) {
         CGAuctionHouse::m_outbidItems.m_data[i] = static_cast<OutbidItemInfo*>(SMemAlloc(sizeof(OutbidItemInfo), __FILE__, __LINE__, 0));
     }
 

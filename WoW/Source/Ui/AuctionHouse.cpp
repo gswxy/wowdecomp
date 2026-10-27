@@ -1751,7 +1751,7 @@ int32_t FindItemForAuction(WOWGUID item, uint32_t count) {
 
     WOWGUID container;
     uint32_t slot;
-    return player->m_bag.FindItem(FindSellItemsCallback, &find, container, slot, 70) ? CGAuctionHouse::m_numSellItems : 0;
+    return player->m_bag.FindItem(FindSellItemsCallback, &find, container, slot, BAG_SEARCH_FLAGS::BAG_SEARCH_BAG_SLOTS | BAG_SEARCH_FLAGS::BAG_SEARCH_BACKPACK | BAG_SEARCH_FLAGS::BAG_SEARCH_KEYRING) ? CGAuctionHouse::m_numSellItems : 0;
 }
 
 // VERIFY: f69c4580 manual
@@ -1771,7 +1771,7 @@ int32_t FindSellableItems(int32_t itemId) {
 
     WOWGUID container;
     uint32_t slot;
-    player->m_bag.FindItem(FindSellItemsCallback, &find, container, slot, 70);
+    player->m_bag.FindItem(FindSellItemsCallback, &find, container, slot, BAG_SEARCH_FLAGS::BAG_SEARCH_BAG_SLOTS | BAG_SEARCH_FLAGS::BAG_SEARCH_BACKPACK | BAG_SEARCH_FLAGS::BAG_SEARCH_KEYRING);
     return find.m_total;
 }
 

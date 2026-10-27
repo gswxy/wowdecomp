@@ -1206,7 +1206,7 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
     uint32_t now = OsGetAsyncTimeMs();
 
     if (static_cast<int32_t>(now - auction->m_expireTime) < 0) {
-        if (auction->m_sold == 0) {
+        if (auction->m_sold == AuctionItemInfo::SALE_STATE::UNSOLD) {
             uint32_t timeLeft = auction->m_expireTime - now;
 
             for (uint32_t i = 0; i < 3; i++) {
@@ -1217,7 +1217,7 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
             }
 
             lua_pushnumber(L, 4.0);
-        } else if (auction->m_sold == 1) {
+        } else if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD) {
             lua_pushnumber(L, (auction->m_expireTime - now) / 1000);
         }
 
@@ -1226,7 +1226,7 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
 
     lua_pushnumber(L, 1.0);
 
-    if (auction->m_sold == 1 || now - auction->m_expireTime > 10000) {
+    if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD || now - auction->m_expireTime > 10000) {
         CGAuctionHouse::AuctionItemExpired(auction->m_auctionID);
     }
 

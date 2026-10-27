@@ -1284,7 +1284,7 @@ int32_t Packet_SMSG_AUCTION_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t 
 
         msg->Get(auction->m_bidder.m_guid);
         msg->Get(auction->m_bid);
-        auction->m_sold = 0;
+        auction->m_sold = AuctionItemInfo::SALE_STATE::UNSOLD;
 
         WOWGUID none = WOWGUID();
 
@@ -1373,7 +1373,7 @@ int32_t Packet_SMSG_AUCTION_OWNER_LIST_RESULT(void* param, NETMESSAGE msgId, uin
 
         msg->Get(auction->m_bidder.m_guid);
         msg->Get(auction->m_bid);
-        auction->m_sold = 0;
+        auction->m_sold = AuctionItemInfo::SALE_STATE::UNSOLD;
 
         WOWGUID none = WOWGUID();
 
@@ -1407,7 +1407,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
     for (uint32_t i = 0; i < CGAuctionHouse::m_ownerList.Count(); i++) {
         AuctionItemInfo* auction = &CGAuctionHouse::m_ownerList.m_data[i];
 
-        if (auction->m_sold == 1) {
+        if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD) {
             if (CGAuctionHouse::m_pendingSoldItems) {
                 g_itemDBCache.CancelCallback(auction->m_itemID, AuctionOwnedSoldItemQueryCallback, nullptr);
             }
@@ -1486,7 +1486,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
         auction->m_expireTime = now - static_cast<int64_t>(daysLeft * -86400000.0);
         auction->m_bidder.m_guid = buyer;
         auction->m_bid = bid;
-        auction->m_sold = 1;
+        auction->m_sold = AuctionItemInfo::SALE_STATE::SOLD;
 
         WOWGUID none = WOWGUID();
 
@@ -1556,7 +1556,7 @@ int32_t Packet_SMSG_AUCTION_BIDDER_LIST_RESULT(void* param, NETMESSAGE msgId, ui
 
         msg->Get(auction->m_bidder.m_guid);
         msg->Get(auction->m_bid);
-        auction->m_sold = 0;
+        auction->m_sold = AuctionItemInfo::SALE_STATE::UNSOLD;
 
         WOWGUID none = WOWGUID();
 

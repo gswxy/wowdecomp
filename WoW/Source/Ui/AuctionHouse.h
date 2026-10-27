@@ -54,6 +54,11 @@ struct AuctionInvType {
 };
 
 struct AuctionItemInfo {
+    enum SALE_STATE : int32_t {
+        UNSOLD = 0,
+        SOLD = 1,
+    };
+
     /* 0000 */ int32_t m_auctionHouseID;
     /* 0004 */ uint32_t m_auctionID;
     /* 0008 */ uint32_t m_itemID;
@@ -73,7 +78,7 @@ struct AuctionItemInfo {
     /* 008C */ uint32_t m_expireTime;
     /* 0090 */ WOWGUID m_bidder;
     /* 0098 */ uint32_t m_bid;
-    /* 009C */ int32_t m_sold;
+    /* 009C */ SALE_STATE m_sold;
 };
 
 struct AuctionNotifyInfo {

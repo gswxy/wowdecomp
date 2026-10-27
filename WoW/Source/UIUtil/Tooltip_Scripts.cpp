@@ -2192,7 +2192,7 @@ static int32_t Script_SetInboxItem(lua_State* L) {
         link.Clear();
 
         for (uint32_t i = 0; i < 12; i++) {
-            if (i >= 7) {
+            if (i >= MailAttachmentInfo::NUM_ENCHANTMENTS) {
                 link.m_enchants[i] = 0;
                 link.m_enchantDurations[i] = 0;
                 link.m_enchantCharges[i] = 0;

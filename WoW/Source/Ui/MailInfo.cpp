@@ -435,7 +435,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             msg->Get(attachment->m_itemGuid);
             msg->Get(reinterpret_cast<uint32_t&>(attachment->m_itemID));
 
-            for (uint32_t k = 0; k < 7; k++) {
+            for (uint32_t k = 0; k < MailAttachmentInfo::NUM_ENCHANTMENTS; k++) {
                 msg->Get(reinterpret_cast<uint32_t&>(attachment->m_enchantIDs[k]));
                 msg->Get(attachment->m_enchantDurations[k]);
                 msg->Get(reinterpret_cast<uint32_t&>(attachment->m_enchantCharges[k]));

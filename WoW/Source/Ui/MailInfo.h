@@ -26,6 +26,8 @@ struct StationeryInfo {
 };
 
 struct MailAttachmentInfo {
+    static const int32_t NUM_ENCHANTMENTS = 7;
+
     /* 0000 */ uint32_t m_itemGuid;
     /* 0004 */ int32_t m_itemID;
     /* 0008 */ int32_t m_randomPropertiesID;
@@ -33,9 +35,9 @@ struct MailAttachmentInfo {
     /* 0010 */ uint32_t unused_0010;
     /* 0014 */ uint32_t m_count;
     /* 0018 */ int32_t m_spellCharges;
-    /* 001C */ int32_t m_enchantIDs[7];
-    /* 0038 */ uint32_t m_enchantDurations[7];
-    /* 0054 */ int32_t m_enchantCharges[7];
+    /* 001C */ int32_t m_enchantIDs[NUM_ENCHANTMENTS];
+    /* 0038 */ uint32_t m_enchantDurations[NUM_ENCHANTMENTS];
+    /* 0054 */ int32_t m_enchantCharges[NUM_ENCHANTMENTS];
     /* 0070 */ uint32_t m_maxDurability;
     /* 0074 */ uint32_t m_durability;
     /* 0078 */ uint32_t unk_0078;

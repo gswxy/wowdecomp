@@ -1262,7 +1262,7 @@ int32_t Packet_SMSG_AUCTION_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t 
         msg->Get(auction->m_auctionID);
         msg->Get(auction->m_itemID);
 
-        for (uint32_t j = 0; j < 7; j++) {
+        for (uint32_t j = 0; j < AuctionItemInfo::NUM_ENCHANTMENTS; j++) {
             msg->Get(auction->m_enchantID[j]);
             msg->Get(auction->m_enchantDuration[j]);
             msg->Get(auction->m_enchantCharges[j]);
@@ -1351,7 +1351,7 @@ int32_t Packet_SMSG_AUCTION_OWNER_LIST_RESULT(void* param, NETMESSAGE msgId, uin
         msg->Get(auction->m_auctionID);
         msg->Get(auction->m_itemID);
 
-        for (uint32_t j = 0; j < 7; j++) {
+        for (uint32_t j = 0; j < AuctionItemInfo::NUM_ENCHANTMENTS; j++) {
             msg->Get(auction->m_enchantID[j]);
             msg->Get(auction->m_enchantDuration[j]);
             msg->Get(auction->m_enchantCharges[j]);
@@ -1468,7 +1468,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
         auction->m_auctionID = auctionId;
         auction->m_itemID = itemId;
 
-        for (uint32_t j = 0; j < 7; j++) {
+        for (uint32_t j = 0; j < AuctionItemInfo::NUM_ENCHANTMENTS; j++) {
             auction->m_enchantID[j] = 0;
             auction->m_enchantDuration[j] = 0;
             auction->m_enchantCharges[j] = 0;
@@ -1534,7 +1534,7 @@ int32_t Packet_SMSG_AUCTION_BIDDER_LIST_RESULT(void* param, NETMESSAGE msgId, ui
         msg->Get(auction->m_auctionID);
         msg->Get(auction->m_itemID);
 
-        for (uint32_t j = 0; j < 7; j++) {
+        for (uint32_t j = 0; j < AuctionItemInfo::NUM_ENCHANTMENTS; j++) {
             msg->Get(auction->m_enchantID[j]);
             msg->Get(auction->m_enchantDuration[j]);
             msg->Get(auction->m_enchantCharges[j]);

@@ -54,6 +54,8 @@ struct AuctionInvType {
 };
 
 struct AuctionItemInfo {
+    static const int32_t NUM_ENCHANTMENTS = 7;
+
     enum SALE_STATE : int32_t {
         UNSOLD = 0,
         SOLD = 1,
@@ -62,9 +64,9 @@ struct AuctionItemInfo {
     /* 0000 */ int32_t m_auctionHouseID;
     /* 0004 */ uint32_t m_auctionID;
     /* 0008 */ uint32_t m_itemID;
-    /* 000C */ uint32_t m_enchantID[7];
-    /* 0028 */ uint32_t m_enchantDuration[7];
-    /* 0044 */ uint32_t m_enchantCharges[7];
+    /* 000C */ uint32_t m_enchantID[NUM_ENCHANTMENTS];
+    /* 0028 */ uint32_t m_enchantDuration[NUM_ENCHANTMENTS];
+    /* 0044 */ uint32_t m_enchantCharges[NUM_ENCHANTMENTS];
     /* 0060 */ uint32_t m_randomPropertyID;
     /* 0064 */ uint32_t m_suffixFactor;
     /* 0068 */ uint32_t m_count;

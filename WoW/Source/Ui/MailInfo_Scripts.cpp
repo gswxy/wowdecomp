@@ -292,7 +292,7 @@ static int32_t Script_GetPackageInfo(lua_State* L) {
     }
 
     lua_pushnumber(L, cost);
-    return 3;
+    return CGMailInfo::NUM_PACKAGE_INFO_RESULTS;
 }
 
 // VERIFY: 4291f14f auto

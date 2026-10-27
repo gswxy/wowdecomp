@@ -108,6 +108,7 @@ class CGAuctionHouse {
         NUM_RUN_TIMES = 3,
     };
 
+    static const int32_t GET_ALL_QUERY_COOLDOWN_MS = 900000;
     static const int32_t NUM_TIME_LEFT_THRESHOLDS = 3;
     static const int32_t NUM_CLASS_FILTERS = 12;
     static const int32_t NUM_INVENTORY_FILTERS = 14;

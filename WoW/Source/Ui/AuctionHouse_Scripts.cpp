@@ -524,7 +524,7 @@ static int32_t Script_QueryAuctionItems(lua_State* L) {
 
     bool getAll = lua_type(L, 10) == LUA_TBOOLEAN && lua_toboolean(L, 10);
 
-    if (getAll && (CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::BROWSE_LIST))) {
+    if (getAll && (CGAuctionHouse::m_queryPending[CGAuctionHouse::LIST_TYPE::BROWSE_LIST] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - CGAuctionHouse::GET_ALL_QUERY_COOLDOWN_MS) < 0) || !CGAuctionHouse::CanSendQuery(CGAuctionHouse::LIST_TYPE::BROWSE_LIST))) {
         return 0;
     }
 
@@ -629,7 +629,7 @@ static int32_t Script_CanSendAuctionQuery(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (type >= CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES || CGAuctionHouse::m_queryPending[type] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - 900000) < 0) || !CGAuctionHouse::CanSendQuery(type)) {
+    if (type >= CGAuctionHouse::LIST_TYPE::NUM_LIST_TYPES || CGAuctionHouse::m_queryPending[type] > 0 || (CGAuctionHouse::m_lastGetAllTime && static_cast<int32_t>(OsGetAsyncTimeMs() - CGAuctionHouse::m_lastGetAllTime - CGAuctionHouse::GET_ALL_QUERY_COOLDOWN_MS) < 0) || !CGAuctionHouse::CanSendQuery(type)) {
         lua_pushnil(L);
     } else {
         lua_pushnumber(L, 1.0);

@@ -3601,11 +3601,11 @@ bool CGxDeviceD3d11::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_
     ID3D11Query* d3dQuery = static_cast<ID3D11Query*>(query->m_apiSpecific);
 
     switch (param) {
-        case GxQueryParam_Unk0:
+        case GxQueryParam_DataSize:
             data = d3dQuery->GetDataSize();
             return true;
 
-        case GxQueryParam_Unk1:
+        case GxQueryParam_ResultAvailable:
             data = this->m_d3dContext->GetData(d3dQuery, nullptr, 0, 0) == S_OK;
             return false;
 
@@ -3790,7 +3790,7 @@ void CGxDeviceD3d11::DeviceOverride(EGxOverride override, uint32_t value) {
 
     if (override == GxOverride_PixelShader) {
         this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
-    } else if (override == GxOverride_Unk7) {
+    } else if (override == GxOverride_TexNonPow2) {
         this->m_caps.m_texNonPow2 = value != 0;
     }
 }

@@ -70,7 +70,7 @@ static int32_t GpuQuadsOn() {
 // no more live particles than the stock 0x4000 vertex cap draws (over it the sort queue keeps the rest; stock path)
 static uint8_t GpuQuadsFor(CParticleEmitter2* emitter) {
     uint32_t live = emitter->m_liveList.Count();
-    return s_drawDepth == 1 && !emitter->m_params.m_hasModel && !(emitter->m_flags & 0x40000) && emitter->m_vertsPerParticle && live <= 0x4000 / emitter->m_vertsPerParticle && GpuQuadsOn();
+    return s_drawDepth == 1 && !emitter->m_params.m_particleType && !(emitter->m_flags & 0x40000) && emitter->m_vertsPerParticle && live <= 0x4000 / emitter->m_vertsPerParticle && GpuQuadsOn();
 }
 
 static void PrebuildThread(void*) {
@@ -113,7 +113,7 @@ static void PrebuildParticles(CM2SceneRender* render, M2Element* elements, uint3
         uint32_t live = emitter->m_liveList.Count();
 
         // Over the 0x4000 vertex cap stock leaves sorted particles in s_pq; keep those on the stock path
-        if (emitter->m_params.m_hasModel || !live || live > 0x4000 / emitter->m_vertsPerParticle) {
+        if (emitter->m_params.m_particleType || !live || live > 0x4000 / emitter->m_vertsPerParticle) {
             continue;
         }
 

@@ -77,7 +77,7 @@ namespace {
         for (size_t i = 0; i < s_draining.size();) {
             uint32_t available = 0;
 
-            if (GxQueryGetParam(s_draining[i], GxQueryParam_Unk1, &available) && available) {
+            if (GxQueryGetParam(s_draining[i], GxQueryParam_ResultAvailable, &available) && available) {
                 s_free.push_back(s_draining[i]);
                 s_draining[i] = s_draining.back();
                 s_draining.pop_back();
@@ -170,7 +170,7 @@ void OcclusionCull::BeginFrame() {
         if (e.query) {
             uint32_t available = 0;
 
-            if (GxQueryGetParam(e.query, GxQueryParam_Unk1, &available) && available) {
+            if (GxQueryGetParam(e.query, GxQueryParam_ResultAvailable, &available) && available) {
                 uint32_t samples = 1;
                 e.occluded = GxQueryGetData(e.query, &samples) && samples == 0;
                 e.answerAt = e.queryAt;

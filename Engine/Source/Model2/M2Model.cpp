@@ -2657,7 +2657,7 @@ int32_t CM2Model::CanAnimateSTThreaded() {
         for (uint32_t i = 0; i < this->m_shared->m_data->m_particles.m_count; i++) {
             CParticleEmitter2* emitter = this->m_particleEmitters[i];
 
-            if (emitter->m_params.m_hasModel || (emitter->m_flags & 0x40000) || emitter->m_childEmitterCount) {
+            if (emitter->m_params.m_particleType || (emitter->m_flags & 0x40000) || emitter->m_childEmitterCount) {
                 return 0;
             }
         }

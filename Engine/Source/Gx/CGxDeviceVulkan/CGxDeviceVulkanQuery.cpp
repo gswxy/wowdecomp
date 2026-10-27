@@ -84,11 +84,11 @@ bool CGxDeviceVulkan::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32
     }
 
     switch (param) {
-        case GxQueryParam_Unk0:
+        case GxQueryParam_DataSize:
             data = sizeof(uint32_t);
             return true;
 
-        case GxQueryParam_Unk1:
+        case GxQueryParam_ResultAvailable:
             data = queries::Available(h) ? 1u : 0u;
             return true;
 

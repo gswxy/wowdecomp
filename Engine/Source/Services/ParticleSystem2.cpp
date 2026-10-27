@@ -1983,7 +1983,7 @@ void CParticleEmitter2::BuildParticleQuads(GxParticleQuad* quads, uint32_t& quad
     if (this->m_flags & 0x20) {
         for (; i < this->m_liveList.Count(); i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             float depth = s_particleXform.c2 * particle->m_position.z + s_particleXform.b2 * particle->m_position.y + s_particleXform.a2 * particle->m_position.x + s_particleXform.d2;
             CParticleEmitter2::s_pq.Push(depth, particle);
         }
@@ -1995,7 +1995,7 @@ void CParticleEmitter2::BuildParticleQuads(GxParticleQuad* quads, uint32_t& quad
     } else {
         for (; i < count; i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             quad += this->BuildQuads(*particle, quad);
         }
     }

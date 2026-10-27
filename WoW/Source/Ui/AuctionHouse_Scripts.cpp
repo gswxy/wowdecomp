@@ -1227,7 +1227,7 @@ static int32_t Script_GetAuctionItemTimeLeft(lua_State* L) {
 
     lua_pushnumber(L, 1.0);
 
-    if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD || now - auction->m_expireTime > 10000) {
+    if (auction->m_sold == AuctionItemInfo::SALE_STATE::SOLD || now - auction->m_expireTime > CGAuctionHouse::EXPIRY_GRACE_MS) {
         CGAuctionHouse::AuctionItemExpired(auction->m_auctionID);
     }
 

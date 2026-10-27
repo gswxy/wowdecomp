@@ -556,7 +556,7 @@ static int32_t Script_GetInboxInvoiceInfo(lua_State* L) {
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
         lua_pushnumber(L, 0.0);
-        return 7;
+        return CGMailInfo::NUM_EMPTY_INBOX_INVOICE_INFO_RESULTS;
     }
 
     char itemName[256];
@@ -604,7 +604,7 @@ static int32_t Script_GetInboxInvoiceInfo(lua_State* L) {
     lua_pushnumber(L, moneyDelay);
     lua_pushnumber(L, eta.m_hour);
     lua_pushnumber(L, eta.m_minute);
-    return 10;
+    return CGMailInfo::NUM_INBOX_INVOICE_INFO_RESULTS;
 }
 
 // VERIFY: 5d367394 auto

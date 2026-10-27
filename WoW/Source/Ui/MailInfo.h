@@ -76,6 +76,9 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_EMPTY_INBOX_INVOICE_INFO_RESULTS = 7;
+    static const int32_t NUM_INBOX_INVOICE_INFO_RESULTS = 10;
+
     static const int32_t GM_STATIONERY_ID = 61;
 
     static const int32_t POSTAGE_PER_ITEM = 30;

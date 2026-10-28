@@ -531,9 +531,9 @@ void CGMailInfo::InitializeGame() {
         CGMailInfo::m_stationeries.m_data[i]->m_itemGUID = WOWGUID{ 0 };
     }
 
-    CGMailInfo::m_inbox.SetCount(8);
+    CGMailInfo::m_inbox.SetCount(CGMailInfo::INITIAL_INBOX_RECORDS);
 
-    for (uint32_t i = 0; i < 8; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::INITIAL_INBOX_RECORDS; i++) {
         CGMailInfo::m_inbox.m_data[i] = static_cast<MailboxMessageInfo*>(SMemAlloc(sizeof(MailboxMessageInfo), __FILE__, __LINE__, 0));
     }
 

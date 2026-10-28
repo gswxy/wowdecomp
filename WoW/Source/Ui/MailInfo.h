@@ -81,6 +81,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t TEXTURE_PATH_BUFFER_SIZE = 260;
+
     static const int32_t INITIAL_INBOX_RECORDS = 8;
 
     static const int32_t INBOX_QUERY_INTERVAL_MS = 60000;

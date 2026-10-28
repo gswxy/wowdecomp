@@ -32,10 +32,10 @@
 #include "Engine/Source/FrameXML/LoadXML.h"
 
 // STATIC: 0x00BEB210
-static char s_stationeryTexture[260];
+static char s_stationeryTexture[CGMailInfo::TEXTURE_PATH_BUFFER_SIZE];
 
 // STATIC: 0x00BEB318
-static char s_packageTexture[260];
+static char s_packageTexture[CGMailInfo::TEXTURE_PATH_BUFFER_SIZE];
 
 // VERIFY: 27fef505 manual
 // OFFSET: 0x0056D5D0
@@ -400,7 +400,7 @@ static int32_t Script_GetSendMailItemLink(lua_State* L) {
 }
 
 // STATIC: 0x00BEB420
-static char s_headerTexture[260];
+static char s_headerTexture[CGMailInfo::TEXTURE_PATH_BUFFER_SIZE];
 
 // VERIFY: 4a59927a manual
 // OFFSET: 0x0056E520
@@ -913,7 +913,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
     item->GetFullItemName(name, sizeof(name));
     lua_pushstring(L, name);
     const char* iconPath = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
-    char texture[260];
+    char texture[CGMailInfo::TEXTURE_PATH_BUFFER_SIZE];
     SStrPrintf(texture, sizeof(texture), "%s%s%s", iconPath, *iconPath ? "\\" : "", CGItem_C::GetInventoryArt(stats->m_displayId));
     lua_pushstring(L, texture);
     lua_pushnumber(L, item->m_item->m_itemFieldStackCount);
@@ -1138,7 +1138,7 @@ static int32_t Script_GetInboxItem(lua_State* L) {
 
     WOWGUID none = WOWGUID();
     ItemStats_C* stats = g_itemDBCache.GetRecord(attachment->m_itemID, none, &InboxItemQueryCallback, nullptr, false);
-    char texture[260];
+    char texture[CGMailInfo::TEXTURE_PATH_BUFFER_SIZE];
 
     if (!stats) {
         lua_pushstring(L, FrameScript_GetText("UNKNOWNOBJECT", -1, GENDER_NOT_APPLICABLE));

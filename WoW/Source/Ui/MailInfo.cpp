@@ -1105,7 +1105,7 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
         return false;
     }
 
-    if ((object->GetItemStaticFlags(0) & 0x10000) || object->m_item->m_itemFieldDuration || stats->m_holidayId) {
+    if ((object->GetItemStaticFlags(0) & ITEM_STATIC_FLAGS::ITEM_FLAG_REAL_DURATION) || object->m_item->m_itemFieldDuration || stats->m_holidayId) {
         CGGameUI::DisplayError(ERR_MAIL_LIMITED_DURATION_ITEM);
         return false;
     }

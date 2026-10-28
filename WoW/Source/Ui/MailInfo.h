@@ -81,6 +81,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t ITEM_NAME_BUFFER_SIZE = 256;
+
     static const int32_t NUM_SEND_ITEM_SLOTS = 16;
 
     static const int32_t TEXTURE_PATH_BUFFER_SIZE = 260;

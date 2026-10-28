@@ -763,7 +763,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
             return;
         }
 
-        char itemName[256];
+        char itemName[CGMailInfo::ITEM_NAME_BUFFER_SIZE];
         CGItem_C::BuildItemName(itemName, sizeof(itemName), itemID, randomPropertiesID);
         const char* format;
 

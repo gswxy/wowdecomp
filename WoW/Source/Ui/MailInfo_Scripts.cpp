@@ -559,7 +559,7 @@ static int32_t Script_GetInboxInvoiceInfo(lua_State* L) {
         return CGMailInfo::NUM_EMPTY_INBOX_INVOICE_INFO_RESULTS;
     }
 
-    char itemName[256];
+    char itemName[CGMailInfo::ITEM_NAME_BUFFER_SIZE];
     CGItem_C::BuildItemName(itemName, sizeof(itemName), message->m_invoiceItemID, message->m_invoiceRandomPropertiesID);
     WOWGUID player = WOWGUID();
     int32_t bid = 0;
@@ -909,7 +909,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
         return CGMailInfo::NUM_SEND_MAIL_ITEM_RESULTS;
     }
 
-    char name[256];
+    char name[CGMailInfo::ITEM_NAME_BUFFER_SIZE];
     item->GetFullItemName(name, sizeof(name));
     lua_pushstring(L, name);
     const char* iconPath = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
@@ -1151,7 +1151,7 @@ static int32_t Script_GetInboxItem(lua_State* L) {
         return CGMailInfo::NUM_INBOX_ITEM_RESULTS;
     }
 
-    char name[256];
+    char name[CGMailInfo::ITEM_NAME_BUFFER_SIZE];
     CGItem_C::BuildItemName(name, sizeof(name), attachment->m_itemID, attachment->m_randomPropertiesID);
     lua_pushstring(L, name);
     const char* iconPath = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);

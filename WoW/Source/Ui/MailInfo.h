@@ -81,6 +81,9 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t COD_SUBJECT_BUFFER_SIZE = 512;
+    static const int32_t MULTI_ATTACHMENT_ICON_DISPLAY_ID = 7913;
+
     static const int32_t ITEM_NAME_BUFFER_SIZE = 256;
 
     static const int32_t NUM_SEND_ITEM_SLOTS = 16;

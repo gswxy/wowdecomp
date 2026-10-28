@@ -442,7 +442,7 @@ static int32_t Script_GetInboxHeaderInfo(lua_State* L) {
         SStrPack(s_headerTexture, package->m_icon, sizeof(s_headerTexture));
         lua_pushstring(L, s_headerTexture);
     } else if (numAttachments > 1) {
-        SStrPack(s_headerTexture, CGItem_C::GetInventoryArt(7913), sizeof(s_headerTexture));
+        SStrPack(s_headerTexture, CGItem_C::GetInventoryArt(CGMailInfo::MULTI_ATTACHMENT_ICON_DISPLAY_ID), sizeof(s_headerTexture));
         lua_pushstring(L, s_headerTexture);
     } else {
         ItemStats_C* stats = nullptr;
@@ -480,7 +480,7 @@ static int32_t Script_GetInboxHeaderInfo(lua_State* L) {
     lua_pushstring(L, GetSenderName(message->m_senderEntry, message->m_messageType, message->m_sender, message->m_stationery));
 
     if (message->m_flags & 0x8) {
-        char subject[512];
+        char subject[CGMailInfo::COD_SUBJECT_BUFFER_SIZE];
         SStrPrintf(subject, sizeof(subject), FrameScript_GetText("COD_PAYMENT", -1, GENDER_NOT_APPLICABLE), message->m_subject);
         lua_pushstring(L, subject);
     } else {

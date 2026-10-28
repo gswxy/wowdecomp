@@ -943,7 +943,7 @@ int32_t CGItem_C::GetCurrentSpellCharges() {
 // VERIFY: a124b25b manual
 // OFFSET: 0x00707E60
 int32_t CGItem_C::HasUseEffect() {
-    if (this->GetItemStaticFlags(0) & 0x40) {
+    if (this->GetItemStaticFlags(0) & ITEM_STATIC_FLAGS::ITEM_FLAG_PLAYERCAST) {
         return 1;
     }
 

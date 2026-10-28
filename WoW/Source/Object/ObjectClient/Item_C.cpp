@@ -1569,7 +1569,7 @@ int32_t CGItem_C::UseItem(WOWGUID* target, int32_t confirmed) {
 
     MapRec* map = g_mapDB.GetRecord(CGGameUI::m_iCurrentMapID);
 
-    if (map && map->m_instanceType == 4 && !(stats->m_flags[0] & 0x200000)) {
+    if (map && map->m_instanceType == 4 && !(stats->m_flags[0] & ITEM_STATIC_FLAGS::ITEM_FLAG_IGNORE_DEFAULT_ARENA_RESTRICTIONS)) {
         uint32_t cooldown;
         uint32_t categoryCooldown;
         uint32_t category;

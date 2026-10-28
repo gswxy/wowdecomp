@@ -1574,7 +1574,7 @@ int32_t CGItem_C::UseItem(WOWGUID* target, int32_t confirmed) {
         uint32_t categoryCooldown;
         uint32_t category;
 
-        if (stats->m_bonding == 4 || (stats->m_flags[0] & 0x4000000) || (this->GetSpellCooldownInfo(cooldown, categoryCooldown, category), this->GetUsableSpellCharges() < 0) || cooldown > 900000 || categoryCooldown > 900000) {
+        if (stats->m_bonding == 4 || (stats->m_flags[0] & ITEM_STATIC_FLAGS::ITEM_FLAG_NOT_USEABLE_IN_ARENA) || (this->GetSpellCooldownInfo(cooldown, categoryCooldown, category), this->GetUsableSpellCharges() < 0) || cooldown > 900000 || categoryCooldown > 900000) {
             CGGameUI::DisplayError(ERR_CANT_USE_ITEM_IN_ARENA);
             return 0;
         }

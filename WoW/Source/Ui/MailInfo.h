@@ -81,6 +81,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t INBOX_QUERY_INTERVAL_MS = 60000;
+
     enum INVOICE_TYPE : int32_t {
         UNSET = -1,
         BUYER = 1,

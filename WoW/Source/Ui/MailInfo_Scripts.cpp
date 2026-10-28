@@ -125,7 +125,7 @@ static int32_t Script_CheckInbox(lua_State* L) {
         return 0;
     }
 
-    CGMailInfo::m_nextUpdateTime = now + 60000;
+    CGMailInfo::m_nextUpdateTime = now + CGMailInfo::INBOX_QUERY_INTERVAL_MS;
     CGMailInfo::m_commandPending = 1;
     CDataStore msg;
     msg.Put(static_cast<uint32_t>(CMSG_MAIL_GET_LIST));

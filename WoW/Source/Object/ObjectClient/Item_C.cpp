@@ -1697,7 +1697,7 @@ int32_t CGItem_C::UseItem(WOWGUID* target, int32_t confirmed) {
     if (player->IsShapeShifted()) {
         SpellShapeshiftFormRec* form = g_spellShapeshiftFormDB.GetRecord(player->GetShapeshiftForm());
 
-        if (form && !(form->m_flags & 0x80) && (!(form->m_flags & 0x40) || !this->GetInventoryType()) && !(stats->m_flags[0] & 0x800000)) {
+        if (form && !(form->m_flags & 0x80) && (!(form->m_flags & 0x40) || !this->GetInventoryType()) && !(stats->m_flags[0] & ITEM_STATIC_FLAGS::ITEM_FLAG_USE_WHEN_SHAPESHIFTED)) {
             if (!player->CanAutoUnshift()) {
                 CGGameUI::DisplayError(ERR_NO_ITEMS_WHILE_SHAPESHIFTED);
                 return 0;

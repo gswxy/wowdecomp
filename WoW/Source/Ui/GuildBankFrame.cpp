@@ -151,7 +151,7 @@ void CGGuildBankInfo::SwapItems(uint8_t tab, uint32_t slot, WOWGUID item, WOWGUI
         return;
     }
 
-    if ((object->GetItemStaticFlags(0) & ITEM_FLAG_CONJURED) || ((object->GetItemStaticFlags(0) & 0x10000) && static_cast<int32_t>(stats->m_duration) > 0) || object->m_item->m_itemFieldDuration || object->IsZoneBound() || object->IsInstanceBound()) {
+    if ((object->GetItemStaticFlags(0) & ITEM_FLAG_CONJURED) || ((object->GetItemStaticFlags(0) & ITEM_STATIC_FLAGS::ITEM_FLAG_REAL_DURATION) && static_cast<int32_t>(stats->m_duration) > 0) || object->m_item->m_itemFieldDuration || object->IsZoneBound() || object->IsInstanceBound()) {
         CGGameUI::DisplayError(ERR_GUILD_BANK_CONJURED_ITEM);
         return;
     }

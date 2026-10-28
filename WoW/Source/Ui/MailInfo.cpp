@@ -1094,7 +1094,7 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
             return false;
         }
 
-        if (!(stats->m_flags[0] & 0x8000000)) {
+        if (!(stats->m_flags[0] & ITEM_STATIC_FLAGS::ITEM_FLAG_IS_BOUND_TO_ACCOUNT)) {
             CGGameUI::DisplayError(ERR_MAIL_BOUND_ITEM);
             return false;
         }

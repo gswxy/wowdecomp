@@ -2177,7 +2177,7 @@ static int32_t Script_SetInboxItem(lua_State* L) {
     int32_t attachmentIndex;
 
     if (lua_isnumber(L, 3) && (attachmentIndex = static_cast<int32_t>(lua_tonumber(L, 3))) != 0) {
-        if (static_cast<uint32_t>(attachmentIndex - 1) >= 16) {
+        if (static_cast<uint32_t>(attachmentIndex - 1) >= MailboxMessageInfo::MAX_ATTACHMENTS) {
             lua_pushnil(L);
             return 1;
         }

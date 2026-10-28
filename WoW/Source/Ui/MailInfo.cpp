@@ -98,7 +98,7 @@ MailAttachmentInfo* GetFirstAttachment(MailboxMessageInfo* message) {
         return nullptr;
     }
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < MailboxMessageInfo::MAX_ATTACHMENTS; i++) {
         if (message->m_attachments[i].m_itemID) {
             return &message->m_attachments[i];
         }
@@ -128,7 +128,7 @@ MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index) {
         return GetFirstAttachment(message);
     }
 
-    if (index < 16) {
+    if (index < MailboxMessageInfo::MAX_ATTACHMENTS) {
         return &message->m_attachments[index];
     }
 
@@ -140,7 +140,7 @@ MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index) {
 int32_t GetNumAttachments(const MailboxMessageInfo* message) {
     int32_t count = 0;
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < MailboxMessageInfo::MAX_ATTACHMENTS; i++) {
         if (message->m_attachments[i].m_itemID) {
             count++;
         }
@@ -399,7 +399,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
         memset(message->m_attachments, 0, sizeof(message->m_attachments));
 
         TSBitField<TSGrowableArray<uint32_t> > used;
-        used.m_count = 16;
+        used.m_count = MailboxMessageInfo::MAX_ATTACHMENTS;
         used.m_bits.ReallocData(1);
 
         if (used.m_count) {
@@ -410,13 +410,13 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             uint8_t index;
             msg->Get(index);
 
-            if (index >= 16) {
+            if (index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                 index = 0;
             }
 
             if (used.m_bits.m_data[index >> 5] & (1 << (index & 0x1F))) {
                 for (index = 0; used.m_bits.m_data[index >> 5] & (1 << (index & 0x1F)); ) {
-                    if (++index >= 16) {
+                    if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                         break;
                     }
                 }
@@ -425,7 +425,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             MailAttachmentInfo unused;
             MailAttachmentInfo* attachment;
 
-            if (index >= 16) {
+            if (index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                 attachment = &unused;
             } else {
                 attachment = &message->m_attachments[index];
@@ -895,7 +895,7 @@ void CGMailInfo::RemoveItem(uint32_t messageID, uint32_t itemGuid) {
     uint32_t index = 0;
 
     while (!message->m_attachments[index].m_itemID || message->m_attachments[index].m_itemGuid != itemGuid) {
-        if (++index >= 16) {
+        if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
             return;
         }
     }
@@ -1178,7 +1178,7 @@ void CGMailInfo::ProcessAutoLootAttachments(MailboxMessageInfo* message) {
             break;
         }
 
-        if (++index >= 16) {
+        if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
             return;
         }
     }
@@ -1192,7 +1192,7 @@ void CGMailInfo::ProcessAutoLootAttachments(MailboxMessageInfo* message) {
     ClientServices::Send2(&msg);
     CGMailInfo::m_commandPending = 1;
 
-    for (index++; index < 16; index++) {
+    for (index++; index < MailboxMessageInfo::MAX_ATTACHMENTS; index++) {
         MailAttachmentInfo* next = GetAttachment(message, index);
 
         if (next && next->m_itemID) {

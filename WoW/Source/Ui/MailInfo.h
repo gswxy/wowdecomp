@@ -44,6 +44,8 @@ struct MailAttachmentInfo {
 };
 
 struct MailboxMessageInfo {
+    static const int32_t MAX_ATTACHMENTS = 16;
+
     /* 0000 */ int32_t m_messageID;
     /* 0004 */ int32_t m_messageType;
     /* 0008 */ WOWGUID m_sender;
@@ -62,7 +64,7 @@ struct MailboxMessageInfo {
     /* 2174 */ int32_t m_invoiceType;
     /* 2178 */ int32_t m_mailTemplateID;
     /* 217C */ uint32_t m_invoiceValue;
-    /* 2180 */ MailAttachmentInfo m_attachments[16];
+    /* 2180 */ MailAttachmentInfo m_attachments[MAX_ATTACHMENTS];
     /* 2940 */ uint32_t m_deletePending;
     /* 2944 */ uint32_t unused_2944;
 };

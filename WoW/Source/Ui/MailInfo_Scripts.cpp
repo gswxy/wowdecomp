@@ -1036,8 +1036,8 @@ static int32_t Script_GetInboxText(lua_State* L) {
     }
 
     CGMailInfo::MarkAsRead(index);
-    char buffer[8000];
-    char text[8000];
+    char buffer[MailboxMessageInfo::BODY_BUFFER_SIZE];
+    char text[MailboxMessageInfo::BODY_BUFFER_SIZE];
 
     if (!SStrLen(message->m_body)) {
         MailTemplateRec* mailTemplate = message->m_mailTemplateID ? g_mailTemplateDB.GetRecord(message->m_mailTemplateID) : nullptr;

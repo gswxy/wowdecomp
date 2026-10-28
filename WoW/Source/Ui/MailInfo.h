@@ -44,21 +44,24 @@ struct MailAttachmentInfo {
 };
 
 struct MailboxMessageInfo {
+    static const int32_t SUBJECT_BUFFER_SIZE = 256;
+    static const int32_t BODY_BUFFER_SIZE = 8000;
+
     static const int32_t MAX_ATTACHMENTS = 16;
 
     /* 0000 */ int32_t m_messageID;
     /* 0004 */ int32_t m_messageType;
     /* 0008 */ WOWGUID m_sender;
     /* 0010 */ int32_t m_senderEntry;
-    /* 0014 */ char m_subject[256];
-    /* 0114 */ char m_body[8000];
+    /* 0014 */ char m_subject[SUBJECT_BUFFER_SIZE];
+    /* 0114 */ char m_body[BODY_BUFFER_SIZE];
     /* 2054 */ int32_t m_package;
     /* 2058 */ int32_t m_stationery;
     /* 205C */ int32_t m_money;
     /* 2060 */ int32_t m_cod;
     /* 2064 */ uint32_t m_flags;
     /* 2068 */ float m_expireTime;
-    /* 206C */ char m_invoiceSubject[256];
+    /* 206C */ char m_invoiceSubject[SUBJECT_BUFFER_SIZE];
     /* 216C */ int32_t m_invoiceItemID;
     /* 2170 */ int32_t m_invoiceRandomPropertiesID;
     /* 2174 */ int32_t m_invoiceType;

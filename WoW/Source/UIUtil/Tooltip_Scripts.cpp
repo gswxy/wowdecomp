@@ -2132,7 +2132,7 @@ static int32_t Script_SetSendMailItem(lua_State* L) {
     if (lua_isnumber(L, 2)) {
         index = static_cast<int32_t>(lua_tonumber(L, 2) - 1.0);
 
-        if (index >= 16) {
+        if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
             lua_pushnil(L);
             return 1;
         }

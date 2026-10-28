@@ -29,7 +29,7 @@
 #include "WoW/Source/UIUtil/Tooltip.h"
 
 // STATIC: 0x00BEB038
-SendMailItem CGMailInfo::m_sendItems[16];
+SendMailItem CGMailInfo::m_sendItems[CGMailInfo::NUM_SEND_ITEM_SLOTS];
 
 // STATIC: 0x00BEB1B8
 uint8_t CGMailInfo::m_lockSendItems;
@@ -1312,7 +1312,7 @@ void CGMailInfo::SetSendItem(uint32_t index, WOWGUID item, WOWGUID container, ui
 // VERIFY: 84774f72 auto
 // OFFSET: 0x0056D320
 void CGMailInfo::GetSendItem(uint32_t index, WOWGUID& item, WOWGUID& container, uint8_t& slot) {
-    if (index >= 16) {
+    if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
         item = WOWGUID();
         container = WOWGUID();
         slot = 0;
@@ -1326,7 +1326,7 @@ void CGMailInfo::GetSendItem(uint32_t index, WOWGUID& item, WOWGUID& container, 
 // VERIFY: 0362ced0 manual
 // OFFSET: 0x0056D390
 WOWGUID CGMailInfo::GetSendItemGuid(uint32_t index) {
-    if (index >= 16) {
+    if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
         return WOWGUID();
     }
 
@@ -1338,7 +1338,7 @@ WOWGUID CGMailInfo::GetSendItemGuid(uint32_t index) {
 uint32_t CGMailInfo::GetNumSendItems() {
     uint32_t count = 0;
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         if (CGMailInfo::m_sendItems[i].m_guid) {
             count++;
         }
@@ -1354,7 +1354,7 @@ bool CGMailInfo::IsSendItem(WOWGUID item) {
         return false;
     }
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         if (CGMailInfo::m_sendItems[i].m_guid == item) {
             return true;
         }

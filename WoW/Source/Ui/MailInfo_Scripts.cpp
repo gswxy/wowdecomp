@@ -376,7 +376,7 @@ static int32_t Script_GetSendMailItemLink(lua_State* L) {
     if (lua_isnumber(L, 1)) {
         index = static_cast<int32_t>(lua_tonumber(L, 1) - 1.0);
 
-        if (index >= 16) {
+        if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
             return 0;
         }
     } else {
@@ -840,7 +840,7 @@ static int32_t Script_ClickSendMailItemButton(lua_State* L) {
         return 0;
     }
 
-    if (index >= 16) {
+    if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
         return 0;
     }
 
@@ -881,7 +881,7 @@ static int32_t Script_GetSendMailItem(lua_State* L) {
     if (lua_isnumber(L, 1)) {
         index = static_cast<int32_t>(lua_tonumber(L, 1) - 1.0);
 
-        if (index >= 16) {
+        if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
             lua_pushnil(L);
             lua_pushnil(L);
             lua_pushnumber(L, 0.0);
@@ -960,7 +960,7 @@ static int32_t Script_SendMail(lua_State* L) {
 
     uint32_t count = 0;
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         WOWGUID guid = CGMailInfo::GetSendItemGuid(i);
 
         if (!guid) {
@@ -996,7 +996,7 @@ static int32_t Script_SendMail(lua_State* L) {
     msg.Put(static_cast<uint32_t>(package));
     msg.Put(static_cast<uint8_t>(count));
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         WOWGUID guid = CGMailInfo::GetSendItemGuid(i);
 
         if (guid) {

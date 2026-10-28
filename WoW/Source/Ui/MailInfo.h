@@ -81,6 +81,8 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
+    static const int32_t NUM_SEND_ITEM_SLOTS = 16;
+
     static const int32_t TEXTURE_PATH_BUFFER_SIZE = 260;
 
     static const int32_t INITIAL_INBOX_RECORDS = 8;
@@ -137,7 +139,7 @@ class CGMailInfo {
 
     static const int32_t NUM_RECENT_SENDERS = 3;
 
-    static SendMailItem m_sendItems[16];
+    static SendMailItem m_sendItems[NUM_SEND_ITEM_SLOTS];
     static uint8_t m_lockSendItems;
     static uint32_t m_sendPending;
     static void ClearSendMail(bool signal);

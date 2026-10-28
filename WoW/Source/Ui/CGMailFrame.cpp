@@ -9,7 +9,7 @@
 // VERIFY: 587c3b2c manual
 // OFFSET: 0x0056D4D0
 void CGMailInfo::ClearSendMail(bool signal) {
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         if (CGMailInfo::m_sendItems[i].m_guid) {
             CGGameUI::UnlockItem(CGMailInfo::m_sendItems[i].m_guid);
         }

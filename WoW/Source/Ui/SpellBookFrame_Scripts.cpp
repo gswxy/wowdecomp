@@ -1074,6 +1074,12 @@ static int32_t Script_CastSpellByName(lua_State* L) {
     SpellRec spell;
     g_spellDB.GetRecord(spellId, &spell);
 
+    // Not stock (@cursor/@player ground casts): Spell_C_CastSpell clears the flag only on success; clear it on every
+    // return so a failed or pet cast does not drop the next ground spell at the cursor.
+    struct ClearCastAtTerrain {
+        ~ClearCastAtTerrain() { Spell_C::s_castAtTerrain = SPELL_CAST_WORLD_TYPE_NONE; }
+    } clearCastAtTerrain;
+
     WOWGUID target;
     const char* token = lua_tolstring(L, 2, nullptr);
 

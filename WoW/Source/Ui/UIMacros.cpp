@@ -1051,7 +1051,7 @@ int32_t MACRONODE::FindSpellID() {
         char token[256];
         target.GetText(token, sizeof(token));
 
-        if (!SStrCmpI("cursor", token, 6))
+        if (SStrCmpI("cursor", token, 6))
         {
             Script_GetGUIDFromToken(token, guid, false);
         }

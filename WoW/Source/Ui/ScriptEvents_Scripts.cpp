@@ -3785,7 +3785,7 @@ static int32_t Script_UnitRangedDamage(lua_State* L) {
     lua_pushnumber(L, negative);
 
     if (player->m_obj->m_guid == ClntObjMgrGetActivePlayer()) {
-        lua_pushnumber(L, *reinterpret_cast<float*>(&player->m_player->m_playerFieldModDamageDonePct[school]));
+        lua_pushnumber(L, player->m_player->m_playerFieldModDamageDonePct[school]);
     } else {
         lua_pushnumber(L, 0.0);
     }

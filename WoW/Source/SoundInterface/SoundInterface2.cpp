@@ -1,4 +1,6 @@
 #include <cstddef>
+#include "WoW/Common/Types.h"
+#include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -33,7 +35,20 @@
 #include "WoW/Source/WorldClient/World.h"
 
 // STATIC: 0x00B24180
-static const char* s_raceFileNames[] = { nullptr, "Human", "Orc", "Dwarf", "NightElf", "Scourge", "Tauren", "Gnome", "Troll", "Goblin", "BloodElf", "Draenei" };
+static const char* s_raceFileNames[NUM_PLAYABLE_RACES] = {
+    nullptr,
+    "Human",    // RACE_HUMAN
+    "Orc",      // RACE_ORC
+    "Dwarf",    // RACE_DWARF
+    "NightElf", // RACE_NIGHT_ELF
+    "Scourge",  // RACE_UNDEAD
+    "Tauren",   // RACE_TAUREN
+    "Gnome",    // RACE_GNOME
+    "Troll",    // RACE_TROLL
+    "Goblin",   // RACE_GOBLIN
+    "BloodElf", // RACE_BLOOD_ELF
+    "Draenei",  // RACE_DRAENEI
+};
 
 // STATIC: 0x009F2010
 const char SI2::s_channelGroupNames[18][32] = {
@@ -92,7 +107,7 @@ TSGrowableArray<uint32_t> SI2::s_suppressors;
 static const char* s_savedVoiceSession;
 
 // STATIC: 0x00AC3860
-static int32_t s_savedVoiceSessionType = 4;
+static int32_t s_savedVoiceSessionType = COMSATDATA::SESSION_TYPE::NONE;
 
 // STATIC: 0x00B4A3E4
 static float s_chaosRestartTimer;
@@ -371,7 +386,7 @@ int32_t SI2::OnFocusChanged(const void* data, void* param) {
         if (CGGameUI::m_initialized && enableVoiceChat && enableVoiceChat->m_intValue && s_savedVoiceSession) {
             CGChat::SetActiveVoiceSession(s_savedVoiceSession, s_savedVoiceSessionType, -1);
             s_savedVoiceSession = nullptr;
-            s_savedVoiceSessionType = 4;
+            s_savedVoiceSessionType = COMSATDATA::SESSION_TYPE::NONE;
         }
     } else if (s_enableSoundWhenGameIsInBG->m_intValue) {
         SE2::MuteAllSound(false);
@@ -382,7 +397,7 @@ int32_t SI2::OnFocusChanged(const void* data, void* param) {
 
         if (CGGameUI::m_initialized && !s_savedVoiceSession) {
             s_savedVoiceSession = CGChat::GetChannelStringForDisplay(CGChat::GetActiveVoiceSession(), &s_savedVoiceSessionType);
-            CGChat::SetActiveVoiceSession(nullptr, 4, -1);
+            CGChat::SetActiveVoiceSession(nullptr, COMSATDATA::SESSION_TYPE::NONE, -1);
         }
     }
 
@@ -1412,10 +1427,10 @@ void SI2::PlaySpellFizzleSound(uint32_t spellId, const void* object) {
 // VERIFY: d94cc51b manual
 // OFFSET: 0x004C6710
 void SI2::ForceUpdateZoneSounds() {
-    CGObject_C* unit = ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__);
+    CGObject_C* unit = ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__);
 
     if (!unit) {
-        unit = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__);
+        unit = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__);
 
         if (!unit) {
             return;
@@ -1456,7 +1471,7 @@ void SI2::ForceUpdateZoneSounds() {
 // VERIFY: 34fea195 manual
 // OFFSET: 0x004C5D60
 bool SI2::GetObjectPosition(uint64_t guid, C3Vector* position) {
-    CGObject_C* object = ClntObjMgrObjectPtr(WOWGUID{ guid }, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(WOWGUID{ guid }, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (object) {
         *position = object->GetPosition();
@@ -1469,7 +1484,7 @@ bool SI2::GetObjectPosition(uint64_t guid, C3Vector* position) {
 // OFFSET: 0x004C6810
 int32_t SI2::GetChunkLocation(int32_t* mapId, int32_t* chunkX, int32_t* chunkY, int32_t* subchunkX, int32_t* subchunkY) {
     *mapId = World::QueryMapId();
-    CGObject_C* player = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__);
+    CGObject_C* player = ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__);
 
     if (!player) {
         return 0;
@@ -1477,9 +1492,9 @@ int32_t SI2::GetChunkLocation(int32_t* mapId, int32_t* chunkX, int32_t* chunkY, 
 
     C3Vector position = player->GetPosition();
     float x = -(position.x - 17066.666f);
-    float y = -(position.y - 17066.666f) * 0.029999999f;
+    float y = -(position.y - 17066.666f) * OO_COORD_TO_CHUNK;
     *subchunkX = CMath::fint_(y - s_subchunkRound);
-    x *= 0.029999999f;
+    x *= OO_COORD_TO_CHUNK;
     *subchunkY = CMath::fint_(x - s_subchunkRound);
     *chunkX = (*subchunkX >> 4) & 0x3F;
     *chunkY = (*subchunkY >> 4) & 0x3F;

@@ -19,6 +19,7 @@
 #include "WoW/Source/WorldClient/MapWeather.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "Engine/Source/Gx/CGxVertexPT.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00ADF220
 static float s_maxWindTilt = 45.0f;
@@ -371,13 +372,8 @@ void Rain::UpdatePackets() {
         return;
     }
 
-    float tick = 0.016666999f;
-
-    if (FrameTime::s_tickTimeSec < 0.016666999f) {
-        tick = FrameTime::s_tickTimeSec;
-    }
-
-    float count = tick * this->m_particlesPerFrame;
+    static float s_spawnCarry;
+    float count = WeatherSpawnCount(this->m_particlesPerFrame, s_spawnCarry);
 
     if (count <= 1.0f) {
         return;
@@ -419,8 +415,8 @@ void Rain::RenderPatterPacketsSW() {
     g_theGxDevicePtr->RsPush();
     GxRsSet(GxRs_BlendingMode, 5);
     GxRsSet(GxRs_AlphaRef, static_cast<int32_t>(CGxDevice::s_alphaRef[g_theGxDevicePtr->m_appRenderStates.m_data[GxRs_BlendingMode].m_value.m_data.i[0]]));
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     GxRsSet(GxRs_MatDiffuse, *reinterpret_cast<int32_t*>(&World::s_weather->m_color));
     GxRsSet(GxRs_DepthWrite, 0);
     GxRsSet(GxRs_Lighting, 0);
@@ -516,8 +512,8 @@ void Rain::RenderDropPacketsSW() {
     g_theGxDevicePtr->RsPush();
     GxRsSet(GxRs_BlendingMode, 5);
     GxRsSet(GxRs_AlphaRef, static_cast<int32_t>(CGxDevice::s_alphaRef[g_theGxDevicePtr->m_appRenderStates.m_data[GxRs_BlendingMode].m_value.m_data.i[0]]));
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     GxRsSet(GxRs_MatDiffuse, *reinterpret_cast<int32_t*>(&World::s_weather->m_color));
     GxRsSet(GxRs_DepthWrite, 0);
     GxRsSet(GxRs_Lighting, 0);

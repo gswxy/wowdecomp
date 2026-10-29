@@ -1,4 +1,5 @@
 #include "MapWeather.h"
+#include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cfloat>
 #include <new>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -17,12 +18,38 @@
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "Engine/Source/Os/Time.h"
+#include "WoW/Source/WorldClient/FrameTime.h"
 
 // STATIC: 0x00ADF1F8
 float s_weatherDensity = 0.66f;
 
 // STATIC: 0x00CD8528
 uint8_t s_weatherTypeForced;
+
+static CVar* s_weatherSteadyRate;
+
+float WeatherSpawnCount(float rate, float& carry) {
+    float tick = FrameTime::s_tickTimeSec;
+
+    if (!s_weatherSteadyRate || !s_weatherSteadyRate->m_intValue) {
+        // Stock: the budget caps at 1/60 s and the remainder is dropped, so below 60 fps the
+        // weather thins (half at 30 fps) and a fraction is lost every frame.
+        carry = 0.0f;
+        return (tick < 0.016666999f ? tick : 0.016666999f) * rate;
+    }
+
+    // ponytail: 0.25 s cap so a hitch does not dump a burst; the rest of a longer stall is dropped.
+    carry += (tick < 0.25f ? tick : 0.25f) * rate;
+    float whole = floorf(carry);
+
+    if (whole < 1.0f) {
+        return 0.0f;
+    }
+
+    carry -= whole;
+    // UpdatePacket spawns lrintf(count - 0.5): +0.25 makes that exactly `whole`.
+    return whole + 0.25f;
+}
 
 // VERIFY: 63454e2e manual
 // OFFSET: 0x00783B30
@@ -187,8 +214,8 @@ void WeatherGrid::GetCellSpacing(float* cellSize, float* cellsPerYard) {
 // VERIFY: 8e6d2779 auto
 // OFFSET: 0x00784BE0
 float WeatherGrid::GetHeight(const C3Vector* position) {
-    uint32_t x = static_cast<int32_t>(floor(position->x * 0.03f)) - this->m_minCellX;
-    uint32_t y = static_cast<int32_t>(floor(position->y * 0.03f)) - this->m_minCellY;
+    uint32_t x = static_cast<int32_t>(floor(position->x * OO_COORD_TO_CHUNK)) - this->m_minCellX;
+    uint32_t y = static_cast<int32_t>(floor(position->y * OO_COORD_TO_CHUNK)) - this->m_minCellY;
 
     if (x > 4 || y > 4) {
         return FLT_MAX;
@@ -293,8 +320,8 @@ bool WeatherGrid::Raycast(const C3Vector* start, const C3Vector* end, C3Vector* 
 // VERIFY: 32392fc5 auto
 // OFFSET: 0x00784F20
 void WeatherGrid::UpdateOriginCell(const C3Vector* position) {
-    int32_t x = static_cast<int32_t>(floor(position->x * 0.03f));
-    int32_t y = static_cast<int32_t>(floor(position->y * 0.03f));
+    int32_t x = static_cast<int32_t>(floor(position->x * OO_COORD_TO_CHUNK));
+    int32_t y = static_cast<int32_t>(floor(position->y * OO_COORD_TO_CHUNK));
 
     if (x == this->m_originX && y == this->m_originY) {
         return;
@@ -467,6 +494,7 @@ Weather::Weather() {
 
     CVar::Register("weatherDensity", nullptr, 0, "2", CVarHandler_weatherDensity, CATEGORY_DEFAULT, false, nullptr, false);
     s_useShaders = CVar::Register("useWeatherShaders", nullptr, 0, "1", nullptr, CATEGORY_DEFAULT, false, nullptr, false);
+    s_weatherSteadyRate = CVar::Register("weatherSteadyRate", "Rain, snow and sand spawn at the same rate at any frame rate (0 = stock: thinner below 60 fps)", 0, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
 
     uint32_t forcedType = 0;
 
@@ -586,7 +614,7 @@ void Weather::Update() {
     WOWGUID activePlayer = ClntObjMgrGetActivePlayer();
 
     if (activePlayer) {
-        CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(activePlayer, TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(activePlayer, TYPE_PLAYER, __FILE__, __LINE__));
 
         if (player) {
             C3Vector delta(this->m_playerVelocityX, this->m_playerVelocityY, 0.0f);
@@ -819,14 +847,14 @@ void Weather::UpdatePosDeltas() {
     WOWGUID activePlayer = ClntObjMgrGetActivePlayer();
 
     if (activePlayer) {
-        CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(activePlayer, TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(activePlayer, TYPE_PLAYER, __FILE__, __LINE__));
 
         if (player) {
             playerPos = player->GetPosition();
             playerVelocity = player->m_movement->m_moveDir * player->m_movement->m_currentSpeed;
 
             if (player->GetTransportGUID()) {
-                CGObject_C* transport = ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPEMASK_OBJECT, __FILE__, __LINE__);
+                CGObject_C* transport = ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPE_OBJECT, __FILE__, __LINE__);
 
                 if (transport) {
                     transportPos = transport->GetPosition();

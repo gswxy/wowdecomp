@@ -1,6 +1,8 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <windows.h>
 #include "Engine/Source/Gx/Buffer.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxPool.h"
@@ -11,7 +13,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 
 // STATIC: 0x00A2D57C
-static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
+static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4, 8 };
 
 // STATIC: 0x00A2D5B0
 static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last] = {
@@ -35,11 +37,11 @@ static const int32_t s_vertexAttribOffset[GxVertexBufferFormats_Last][GxVAs_Last
 static BlitFormat s_blitFormats[GxTexFormats_Last] = {
     BlitFormat_Unknown, BlitFormat_Abgr8888, BlitFormat_Argb8888, BlitFormat_Argb4444, BlitFormat_Argb1555,
     BlitFormat_Rgb565, BlitFormat_Dxt1, BlitFormat_Dxt3, BlitFormat_Dxt5, BlitFormat_Uv88, BlitFormat_Gr1616F,
-    BlitFormat_R32F, BlitFormat_D24X8
+    BlitFormat_R32F, BlitFormat_D24X8, BlitFormat_Abgr16161616F
 };
 
 // STATIC: 0x00AD87E4
-const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL" };
+const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL", "Vulkan" };
 
 // STATIC: 0x00AD8AC0
 static uint32_t s_vertexSize[GxVertexBufferFormats_Last] = { 12, 24, 28, 32, 36, 40, 44, 16, 24, 32, 20, 28, 48, 48 };
@@ -115,7 +117,9 @@ static int (*s_drawListSorters[GxuSorts_Last])(const void*, const void*) = { Dra
 // VERIFY: 0b88acbc auto
 // OFFSET: 0x008C8DE0
 EGxApi GxDefaultApi() {
-    return GxApi_D3d9;
+    // Not 12340 (D3d9): Wow32/Wow64 default to the Vulkan backend. ConsoleDeviceInitialize falls back
+    // to D3d9 when the Vulkan device or its shader manifest cannot be brought up.
+    return GxApi_Vulkan;
 }
 
 // VERIFY: cef2b995 auto
@@ -125,6 +129,10 @@ int32_t GxApiSupported(EGxApi api) {
         case GxApi_OpenGl:
         case GxApi_D3d9:
         case GxApi_D3d9Ex:
+        // Not in 12340: opt-in D3D11 backend (CGxDeviceD3d11), never the default.
+        case GxApi_D3d11:
+        // Not in 12340 either: opt-in Vulkan backend (CGxDeviceVulkan).
+        case GxApi_Vulkan:
             return 1;
 
         default:
@@ -192,6 +200,16 @@ CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& 
 
         case GxApi_D3d9Ex:
             device = CreateCGxDeviceD3d9Ex();
+            g_theGxDevicePtr = device;
+            break;
+
+        case GxApi_D3d11:
+            device = CreateCGxDeviceD3d11();
+            g_theGxDevicePtr = device;
+            break;
+
+        case GxApi_Vulkan:
+            device = CreateCGxDeviceVulkan();
             g_theGxDevicePtr = device;
             break;
 
@@ -902,6 +920,40 @@ void GxLog(const char* format, ...) {
     va_end(args);
 }
 
+// Not stock: quit tracing, flushed per line so a hang on quit shows the last step reached. Once GxLogClose has run
+// (ConsoleDeviceDestroy) it appends straight to Logs\gx.log, so the rest of shutdown up to process exit is traced too.
+void GxTeardownLog(const char* format, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    _vsnprintf(buffer, sizeof(buffer) - 1, format, args);
+    va_end(args);
+    buffer[sizeof(buffer) - 1] = 0;
+
+    if (CGxDevice::m_log) {
+        CGxDevice::Log("teardown: %s", static_cast<const char*>(buffer)); // char* would pick the va_list overload
+        SLogFlush(CGxDevice::m_log);
+        return;
+    }
+
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char line[600];
+    int32_t length = _snprintf(line, sizeof(line) - 1, "%u/%u %02u:%02u:%02u.%03u  teardown: %s\r\n", t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, buffer);
+
+    if (length < 0) {
+        length = static_cast<int32_t>(sizeof(line) - 1);
+    }
+
+    HANDLE file = CreateFileA("Logs\\gx.log", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD written;
+        WriteFile(file, line, static_cast<DWORD>(length), &written, nullptr);
+        CloseHandle(file);
+    }
+}
+
 // VERIFY: b49a76f0 manual
 // OFFSET: 0x00682200
 void GxLogCrashInfo(char* buffer, uint32_t size) {
@@ -999,7 +1051,7 @@ bool GxQueryEnd(CGxQuery* query) {
 // VERIFY: ed0eecd3 manual
 // OFFSET: 0x006816F0
 bool GxQueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t* data) {
-    if (query && param < 2 && data) {
+    if (query && param < GxQueryParams_Last && data) {
         return g_theGxDevicePtr->QueryGetParam(query, param, *data);
     }
 

@@ -1,4 +1,6 @@
 #include "MapRenderChunk.h"
+#include <algorithm>
+#include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cmath>
 #include <cstring>
 #include "Engine/Source/Gx/CGxBuf.h"
@@ -10,6 +12,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "WoW/Source/WorldClient/LegionLights.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Gx/CGxDevice/CGxShader.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
@@ -23,6 +26,179 @@
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
+#include <string>
+#include <unordered_map>
+#include "Engine/Source/BlizzardCore/SFile2-Core.h"
+#include "Engine/Source/BLPFile/blp.h"
+#include "WoW/Source/WorldClient/TerrainHeightGen.h"
+#include <vector>
+
+// TERRAINPOM (not in 12340): height blend on the terrain (Tools/VulkanShaders/bls/terrainpom.py)
+float CMapRenderChunk::s_heightBlend = 1.0f;
+
+namespace {
+
+// a generated height map's texels, its whole box-filtered mip chain (ARGB8888, height in every channel)
+struct TerrainHeightChain {
+    std::vector<uint32_t> texels;
+    std::vector<size_t> offsets;
+};
+
+void TerrainHeightChainCallback(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels) {
+    TerrainHeightChain* chain = static_cast<TerrainHeightChain*>(userArg);
+
+    if (command == GxTex_Latch && level < chain->offsets.size()) {
+        texelStrideInBytes = 4 * width;
+        texels = &chain->texels[chain->offsets[level]];
+    }
+}
+
+// the height map made from the diffuse file `source` as the client reads it (SFile: the highest priority archive
+// holding it wins, so a texture pack's replacement), or nullptr when it cannot be decoded
+CTexture* TerrainHeightGenerate(const char* source, const char* name) {
+    CBLPFile blp;
+
+    if (!blp.Open(source, 1)) {
+        return nullptr;
+    }
+
+    uint8_t* bits = nullptr;
+    uint32_t stride = 0;
+    uint32_t side = blp.Width(0);
+    std::vector<float> heights;
+    uint32_t outSide = 0;
+    TerrainHeightGen::Kind kind = TerrainHeightGen::Kind_Failed;
+
+    // B G R A rows of 4 * side bytes, as TreeLeaves reads them
+    if (side == blp.Height(0) && blp.Lock(PIXEL_ARGB8888, 0, bits, stride) && bits) {
+        kind = TerrainHeightGen::Generate(bits, side, name, heights, outSide);
+    }
+
+    blp.Unlock(0);
+    blp.Close();
+
+    if (kind == TerrainHeightGen::Kind_Failed) {
+        return nullptr;
+    }
+
+    // ponytail: never freed, like the cache that holds its texture
+    TerrainHeightChain* chain = new TerrainHeightChain;
+    std::vector<float> level(heights);
+
+    for (uint32_t size = outSide;; size >>= 1) {
+        chain->offsets.push_back(chain->texels.size());
+
+        for (float h : level) {
+            uint32_t v = static_cast<uint32_t>(std::min(std::max(std::lround(h * 255.0f), 0L), 255L));
+            chain->texels.push_back(v * 0x01010101u);
+        }
+
+        if (size == 1) {
+            break;
+        }
+
+        // box mips
+        std::vector<float> next((size / 2) * (size / 2));
+
+        for (uint32_t y = 0; y < size / 2; y++) {
+            for (uint32_t x = 0; x < size / 2; x++) {
+                const float* row = &level[(2 * y) * size + 2 * x];
+                next[y * (size / 2) + x] = (row[0] + row[1] + row[size] + row[size + 1]) * 0.25f;
+            }
+        }
+
+        level.swap(next);
+    }
+
+    std::string texName = std::string(name) + " (height)";
+    return TextureCreate(outSide, outSide, GxTex_Argb8888, GxTex_Argb8888, CGxTexFlags(GxTex_LinearMipLinear, 1, 1, 0, 0, 0, 1), chain, TerrainHeightChainCallback, texName.c_str(), 0);
+}
+
+// the height map of a tileset layer (height in alpha), made at first use from the diffuse the client
+// loaded (TerrainHeightGen), so it follows whatever archive won; failing that the baked "x_h.blp" beside it
+// (Data/patch-T.MPQ, made from the stock textures), else nullptr. Only D3D11 / Vulkan draw it.
+// ponytail: generated on the main thread, 50-90 ms per new 256 px tileset (14 at 128; -O2 on a busy 5825U), a hitch when new
+// tiles stream in; move Generate to a worker if that shows. Cached by name for the session and never freed
+CTexture* TerrainHeightTexture(const char* name, CTexture* diffuse) {
+    static std::unordered_map<std::string, CTexture*> s_cache;
+
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+
+    if (!name || !*name || (api != GxApi_D3d11 && api != GxApi_Vulkan)) {
+        return nullptr;
+    }
+
+    std::string key(name);
+
+    for (char& c : key) {
+        c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : (c == '/' ? '\\' : c);
+    }
+
+    auto it = s_cache.find(key);
+
+    if (it != s_cache.end()) {
+        return it->second;
+    }
+
+    // the file the layer actually drew from (x_s.blp with specular terrain on, same RGB as x.blp); CTexture keeps
+    // its name without the extension (LoadBlpWithAlias puts ".blp" back to read it)
+    std::string source = diffuse && diffuse->m_filename[0] ? std::string(diffuse->m_filename) : key;
+
+    if (source.find('.', source.find_last_of("\\/") + 1) == std::string::npos) {
+        source += ".blp";
+    }
+
+    CTexture* texture = TerrainHeightGenerate(source.c_str(), key.c_str());
+    size_t dot = key.rfind('.');
+
+    if (!texture && dot != std::string::npos) {
+        std::string path = key.substr(0, dot) + "_h.blp";
+
+        if (SFile::FileExistsInArchives(path.c_str())) {
+            texture = CMap::LoadTexture(path.c_str());
+        }
+    }
+
+    s_cache.emplace(key, texture);
+    return texture;
+}
+
+// the heights (s10 + layer) and the pixel constants c13 / c14 of one chunk draw; all zero (the stock picture) on
+// D3D9 or with the height blend off
+void TerrainPomBind(CMapRenderChunk* chunk) {
+    float has[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float params[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+    bool on = (api == GxApi_D3d11 || api == GxApi_Vulkan) && CMapRenderChunk::s_heightBlend > 0.0f;
+
+    for (uint32_t i = 0; i < 4; i++) {
+        CGxTex* gxTex = nullptr;
+
+        if (on && i < chunk->m_layersCount && chunk->m_layers[i].m_heightTexture) {
+            gxTex = TextureGetGxTex(chunk->m_layers[i].m_heightTexture, 0, nullptr);
+        }
+
+        if (gxTex) {
+            GxTexSetWrap(gxTex, GxTex_Wrap, GxTex_Wrap);
+            has[i] = 1.0f;
+            params[0] = std::min(CMapRenderChunk::s_heightBlend, 1.0f);
+        }
+
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture10 + i), gxTex);
+    }
+
+    GxShaderConstantsSet(GxSh_Pixel, 13, has, 1);
+    GxShaderConstantsSet(GxSh_Pixel, 14, params, 1);
+}
+
+void TerrainPomUnbind() {
+    for (uint32_t i = 0; i < 4; i++) {
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture10 + i), static_cast<CGxTex*>(nullptr));
+    }
+}
+
+}
+
 #if defined(_MSC_VER)
 #include <malloc.h>
 #else
@@ -91,6 +267,11 @@ CGxBatch CMapRenderChunk::s_chunkBatch;
 
 // STATIC: 0x00D1D058
 int32_t CMapRenderChunk::s_bPoolsDirty;
+#if defined(_WIN64)
+uint32_t CMapRenderChunk::s_poolMaxMB = 0;     // 64-bit: no address-space pressure, keep stock sizing
+#else
+uint32_t CMapRenderChunk::s_poolMaxMB = 128;   // wraithhost-lite terrain_pool_max_mb default
+#endif
 
 // STATIC: 0x00D1D05C
 uint32_t CMapRenderChunk::s_pnEstimateIndex;
@@ -251,6 +432,7 @@ void CMapRenderChunk::FreeLayers() {
     for (uint32_t i = 0; i < this->m_layersCount; i++) {
         CMapRenderChunkLayer& layer = this->m_layers[i];
         layer.m_texture = nullptr;
+        layer.m_heightTexture = nullptr;
         layer.m_textureId = -1;
         layer.m_flags = 0;
 
@@ -359,6 +541,7 @@ void CMapRenderChunk::CreateLayer(CMapArea* area, SMLayer* layer, int32_t checkD
     }
 
     renderLayer->m_texture = areaTexture->m_texture;
+    renderLayer->m_heightTexture = TerrainHeightTexture(areaTexture->m_textureName, areaTexture->m_texture);
     renderLayer->m_textureId = layer->m_textureId;
     renderLayer->m_layerTexture = nullptr;
     renderLayer->m_owner = this;
@@ -590,13 +773,23 @@ void CMapRenderChunk::UpdatePools() {
     CMap::ClearAllRenderChunks();
     CMapRenderChunk::Destroy();
 
-    int32_t radius = 1 - static_cast<int32_t>(World::s_farClip * -0.03f);
+    int32_t radius = 1 - static_cast<int32_t>(World::s_farClip * -OO_COORD_TO_CHUNK);
+    uint32_t stride = CMapRenderChunk::s_gxBufVertexFormat == GxVBF_PNC ? sizeof(CGxVertexPNC) : sizeof(CGxVertexPN);
+
+    // BACKLOG F3 (wraithhost-lite, 0x007BA600): the pools grow with farclip^2 (about 0.9 GB at 10000 yd).
+    // Cap them to terrainPoolMaxMB; chunks that find no free block are skipped by AllocBuf, as in stock.
+    // Bytes per radius^2: 2 blocks of 145 verts and 768 u16 indices.
+    if (CMapRenderChunk::s_poolMaxMB) {
+        double perRadius2 = 2.0 * (145.0 * stride + 768.0 * 2.0);
+        int32_t maxRadius = static_cast<int32_t>(std::floor(std::sqrt(CMapRenderChunk::s_poolMaxMB * 1048576.0 / perRadius2)));
+        radius = std::min(radius, std::max(maxRadius, 1));
+    }
+
     uint32_t count = (2 * radius * radius + 1) & ~1u;
 
     CMapRenderChunk::s_pnEstimateVertex = 145 * count;
     CMapRenderChunk::s_pnEstimateIndex = 768 * count;
 
-    uint32_t stride = CMapRenderChunk::s_gxBufVertexFormat == GxVBF_PNC ? sizeof(CGxVertexPNC) : sizeof(CGxVertexPN);
     CMapRenderChunk::s_gxVertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, CMapRenderChunk::s_pnEstimateVertex * stride, GxPoolHintBit_Unk3, "CMapRenderChunk_vtx");
     CMapRenderChunk::s_gxIndexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, CMapRenderChunk::s_pnEstimateIndex * 2, GxPoolHintBit_Unk3, "CMapRenderChunk_idx");
 
@@ -693,6 +886,24 @@ void CMapRenderChunk::RenderSetup(int32_t a2) {
     this->m_lastUpdateTime = 0.0f;
     this->AllocLayerTextures();
 
+    // LIVESHADOW (not in 12340): the baked MCSH shadow rides the alpha textures' alpha; a loaded chunk made under the
+    // other answer (mapShadows toggled, the cascades switched on or off) regenerates them through their callbacks
+    int8_t baked = CMapRenderChunk::BakedShadows() ? 1 : 0;
+
+    if (this->m_bakedShadows != baked) {
+        if (this->m_bakedShadows >= 0) {
+            CTexture* textures[5] = { this->m_terrainBlendTexture, this->m_layers[0].m_layerTexture, this->m_layers[1].m_layerTexture, this->m_layers[2].m_layerTexture, this->m_layers[3].m_layerTexture };
+
+            for (CTexture* texture : textures) {
+                if (CGxTex* gxTex = texture ? TextureGetGxTex(texture, 1, nullptr) : nullptr) {
+                    GxTexUpdate(gxTex, 0, 0, gxTex->m_width, gxTex->m_height, 1);
+                }
+            }
+        }
+
+        this->m_bakedShadows = baked;
+    }
+
     if (!a2 || !CMap::enableTerrainShaderVertex) {
         C44Matrix world;
         C3Vector translation = this->m_vec1 - CWorldScene::s_activeWorldView;
@@ -702,8 +913,10 @@ void CMapRenderChunk::RenderSetup(int32_t a2) {
         GxXformSet(GxXform_World, world);
 
         CM2Lighting lighting(this->m_sphere);
+        g_m2SkipPointLights = LegionLights::LightsWorldGeometry();   // POINTLIGHT: lit per pixel instead
         World::s_m2Scene->SelectLights(&lighting);
         this->SelectLights(&lighting);
+        g_m2SkipPointLights = false;
         lighting.SetupGxLights(&CWorldScene::s_activeWorldView);
         lighting.SetupGxFog();
     }
@@ -854,6 +1067,7 @@ CMapRenderChunkLayer::CMapRenderChunkLayer() {
     this->m_textureId = -1;
     this->m_layerTexture = nullptr;
     this->m_owner = nullptr;
+    this->m_heightTexture = nullptr;
 }
 
 // VERIFY: d15abdb3 auto
@@ -1621,7 +1835,7 @@ void CMapRenderChunk::CreateChunkLayerTex(CMapRenderChunkLayer* layer) {
     uint32_t chunkFlags = chunk->m_header->m_flags;
     uint8_t* shadowMap = nullptr;
 
-    if ((chunkFlags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunkFlags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap = chunk->m_shadowMap;
     }
 
@@ -1683,7 +1897,7 @@ void CMapRenderChunk::CreateShaderTexture() {
 
     uint32_t chunkFlags = chunk->m_header->m_flags;
 
-    if ((chunkFlags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunkFlags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap = chunk->m_shadowMap;
     }
 
@@ -1740,7 +1954,7 @@ void CMapRenderChunk::CreateShaderTexture() {
     uint32_t chunk2Flags = header->m_flags;
     uint8_t* shadowMap2 = nullptr;
 
-    if ((chunk2Flags & 0x1) && (CWorld::enables & Enable_Shadow)) {
+    if ((chunk2Flags & 0x1) && CMapRenderChunk::BakedShadows()) {
         shadowMap2 = this->m_mapChunks[1]->m_shadowMap;
     }
 
@@ -1849,6 +2063,18 @@ void CMapRenderChunk::AllocLayerTexture(CMapRenderChunkLayer* layer) {
 
     layer->m_layerTexture = texture;
     GxTexUpdate(TextureGetGxTex(texture, 1, nullptr), 0, 0, width, height, 1);
+}
+
+// LIVESHADOW (not in 12340): the baked ADT shadow (MCSH, painted on the land in a fixed direction) under mapShadows,
+// except while the live sun/moon shadows run on D3D11/Vulkan (shadow value >= 2: the cascades and the shadow mask),
+// which it would double. D3D9 and the low shadow qualities keep it.
+bool CMapRenderChunk::BakedShadows() {
+    if (!(CWorld::enables & Enable_Shadow)) {
+        return false;
+    }
+
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+    return (api != GxApi_D3d11 && api != GxApi_Vulkan) || CShadowCache::GetShadowValue() < 2;
 }
 
 // VERIFY: 20e9adae auto
@@ -2007,7 +2233,7 @@ void CMapRenderChunk::InitializeVertexShaderConstants(const C44Matrix& world, co
         consts.m_sunDir.y = dir.y;
         consts.m_sunDir.z = dir.z;
         consts.m_sunDir.w = 1.0f;
-        consts.m_sunSpecularW = 20.0f;
+        consts.m_sunSpecularW = TERRAIN_SPEC_EXP;
     } else {
         consts.m_sunAmbient = C3Vector(1.0f, 1.0f, 1.0f);
         consts.m_sunAmbientW = 1.0f;
@@ -2049,8 +2275,10 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
     int32_t vertexColor = CMapRenderChunk::s_gxBufVertexFormat == GxVBF_PNC;
 
     CM2Lighting lighting(renderChunk->m_sphere);
+    g_m2SkipPointLights = LegionLights::LightsWorldGeometry();   // POINTLIGHT: lit per pixel instead
     World::s_m2Scene->SelectLights(&lighting);
     renderChunk->SelectLights(&lighting);
+    g_m2SkipPointLights = false;
 
     C3Vector position(0.0f, 0.0f, 0.0f);
     int32_t pointLights = 0;
@@ -2101,7 +2329,7 @@ void CMapRenderChunk::SetVertexShader(CMapRenderChunk* renderChunk, int32_t laye
 
     consts.m_texScale[layerCount] = alphaScale;
 
-    CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::GetShadowValue());
+    CGxShader* shader = CMapRenderChunk::GetVertexShader(pointLights, layerCount - 1, specular, vertexColor, a3, CShadowCache::ReceiverValue(CShadowCache::GetShadowValue()));
     g_theGxDevicePtr->RsSet(GxRs_VertexShader, shader);
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&consts), sizeof(SVertexShaderConstants) / sizeof(C4Vector));
 }
@@ -2202,7 +2430,7 @@ void CMapRenderChunk::RenderMultiPassAdditive(CMapRenderChunk* renderChunk) {
         g_theGxDevicePtr->Draw(&renderChunk->m_batch, 1);
 
         if (i == 0 && specular) {
-            GxRsSet(GxRs_TexGen0, GxTexGen_EyeLinear);
+            GxRsSet(GxRs_TexGen0, GxTexGen_World);
             GxRsSet(GxRs_TextureShader0, 1);
         }
 
@@ -2273,7 +2501,7 @@ void CMapRenderChunk::RenderMultiPassAlpha(CMapRenderChunk* renderChunk) {
         g_theGxDevicePtr->Draw(&renderChunk->m_batch, 1);
 
         if (i == 0 && specular) {
-            GxRsSet(GxRs_TexGen0, GxTexGen_EyeLinear);
+            GxRsSet(GxRs_TexGen0, GxTexGen_World);
             GxRsSet(GxRs_TextureShader0, 1);
         }
 
@@ -2286,7 +2514,7 @@ void CMapRenderChunk::RenderMultiPassAlpha(CMapRenderChunk* renderChunk) {
         }
     }
 
-    if (renderChunk->m_shadowTexture && (CWorld::enables & Enable_Shadow)) {
+    if (renderChunk->m_shadowTexture && CMapRenderChunk::BakedShadows()) {
         GxRsSet(GxRs_BlendingMode, GxBlend_Alpha);
         GxUpdateAlphaRef(GxRs_AlphaRef);
         g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(CWorld::shadowModTexture, 1, nullptr));
@@ -2367,7 +2595,7 @@ void CMapRenderChunk::RenderMultiPassPixelShaderBigAlpha(CMapRenderChunk* render
         g_theGxDevicePtr->Draw(&renderChunk->m_batch, 1);
 
         if (i == 0 && specular) {
-            GxRsSet(GxRs_TexGen0, GxTexGen_EyeLinear);
+            GxRsSet(GxRs_TexGen0, GxTexGen_World);
             GxRsSet(GxRs_TextureShader0, 1);
         }
 
@@ -2445,7 +2673,7 @@ void CMapRenderChunk::RenderMultiPassPixelShader(CMapRenderChunk* renderChunk) {
         g_theGxDevicePtr->Draw(&renderChunk->m_batch, 1);
 
         if (i == 0 && specular) {
-            GxRsSet(GxRs_TexGen0, GxTexGen_EyeLinear);
+            GxRsSet(GxRs_TexGen0, GxTexGen_World);
             GxRsSet(GxRs_TextureShader0, 1);
         }
 
@@ -2676,6 +2904,8 @@ void CMapRenderChunk::RenderSinglePassPixelShader() {
 
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), TextureGetGxTex(this->m_terrainBlendTexture, 1, nullptr));
     GxXformSet(static_cast<EGxXform>(GxXform_Tex0 + i), alphaMatrix);
+    static const float s_noPom[4] = { 0.0f, 0.0f, 0.0f, 0.0f };   // TERRAINPOM: no height maps bound here: stock
+    GxShaderConstantsSet(GxSh_Pixel, 14, s_noPom, 1);
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
 
     for (; i >= 0; i--) {
@@ -2724,7 +2954,9 @@ void CMapRenderChunk::RenderSinglePassVertexPixelShader() {
     g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), blendTex);
 
     CMapRenderChunk::SetVertexShader(this, this->m_layersCount + 1, specular);
+    TerrainPomBind(this);   // TERRAINPOM
     g_theGxDevicePtr->Draw(&this->m_batch, 1);
+    TerrainPomUnbind();
 
     for (uint32_t j = 0; j < this->m_layersCount; j++) {
         if (this->m_layers[j].m_flags & 0x40) {
@@ -2764,7 +2996,7 @@ void CMapRenderChunk::SetShaders(int32_t a1, int32_t a2) {
     }
 
     int32_t bigAlpha = (CMap::header.m_flags >> 2) & 1;
-    int32_t shadowMode = CShadowCache::GetShadowValue();
+    int32_t shadowMode = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified: Terrain1 + the mask
     CMapRenderChunk::s_pixelShader[1] = CMap::GetPixelShader(bigAlpha, true, a1);
     CMapRenderChunk::s_pixelShader[0] = CMap::GetPixelShader(bigAlpha, false, a1);
 

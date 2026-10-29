@@ -1,8 +1,10 @@
 #include <cfloat>
 #include "CWorldSceneRender.h"
+#include "Engine/Source/Base/FrameProfile.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gx/GxUpscale.h"
 #include "Engine/Source/Gxu/GxuScene.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Scene.h"
@@ -15,6 +17,7 @@
 #include "WoW/Source/Ui/WorldFrame.h"
 #include "WoW/Source/WorldClient/CPortalView.h"
 #include "WoW/Source/WorldClient/CWorldOcclusion.h"
+#include "WoW/Source/WorldClient/CataWater.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/DetailDoodad.h"
@@ -23,11 +26,16 @@
 #include "WoW/Source/WorldClient/MapObjDef.h"
 #include "WoW/Source/WorldClient/MapRenderChunk.h"
 #include "WoW/Source/WorldClient/MapWeather.h"
+#include "WoW/Source/WorldClient/OcclusionCull.h"
 #include "WoW/Source/WorldClient/ShadowQuery.h"
 #include "WoW/Source/WorldClient/SortTable.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
+#include "WoW/Source/WorldClient/WorldParam.h"
 #include "Engine/Source/Gx/CGxMatrixStack.h"
 #include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
+#include "WoW/Source/Ui/WorldLighting.h"   // LIGHTING
+#include "WoW/Source/WorldClient/FarTrees.h"   // FARTREES
 
 // VERIFY: 78b69e1a manual
 // OFFSET: 0x007D5610
@@ -69,11 +77,15 @@ void CWorldScene::RenderCollisionDebug() {
 // VERIFY: cd492c82 manual
 // OFFSET: 0x0079A870
 void CWorldScene::Render(const C3Vector& cameraPos, float time) {
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h), the FrameProfileSwitch calls below
+    FrameProfileSwitch(FRAMEPROFILE_CULL);
+
     if (!CWorldScene::s_viewerMapObjDef) {
         CWorldScene::ComputeExteriorSortDistances();
     }
 
     CWorldScene::UpdateViewerLiquid();
+    VolumetricFog::OnViewerLiquid();   // VFOG: not in 12340
     g_theGxDevicePtr->RsPush();
     g_theGxDevicePtr->XformPush(GxXform_World);
 
@@ -87,6 +99,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
 
     CGCamera* camera = CGWorldFrame::GetActiveCamera();
     CWorldScene::s_fogFovPadding = CWorld::farFog / cosf(camera->FOV() * 0.5f) - CWorld::farFog;
+    // LEGION objcull: pixels of projected height per (radius / distance), for AddDoodadDefModelToModelScene.
+    CWorldParam::s_lodObjectPixScale = (g_theGxDevicePtr->DeviceCurWindow().maxY - g_theGxDevicePtr->DeviceCurWindow().minY) / tanf(camera->FOV() * 0.5f);
 
     World::UpdateObjectFadeouts();
     CMapRenderChunk::UpdatePools();
@@ -100,6 +114,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
 
     CWorldOcclusion::ClearVolumes();
     CWorldScene::AddWorldOccluders();
+    // OCCLUSION: last frames' query answers, read before this frame's culling.
+    OcclusionCull::BeginFrame();
 
     if (CWorldScene::s_viewerMapObjDef) {
         CWorldScene::s_cullPassStamp++;
@@ -171,7 +187,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         clearColor.a = 0x00;
     }
 
-    GxSceneClear(3, clearColor);
+    GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
     CWorldScene::s_unk_B2EB68.Render();
 
     if (CWorldScene::camTargetEntity) {
@@ -182,6 +198,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
     }
 
     CM2Scene* scene = World::s_m2Scene;
+    // Animate times its own parts
+    FrameProfileSwitch(FRAMEPROFILE_NONE);
 
     if (scene) {
         scene->m_flags |= 0x1;
@@ -190,13 +208,34 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         scene->m_flags &= ~0x1;
     }
 
+    FrameProfileSwitch(FRAMEPROFILE_WORLD_OTHER);
     CGUnit_C::UpdateMissileTrajectoryTargeting();
+    FrameProfileSwitch(FRAMEPROFILE_SHADOWS);
     CShadowQuery::Update();
+    FrameProfileSwitch(FRAMEPROFILE_WORLD_OTHER);
     CShaderEffect::UpdateProjMatrix();
     CWorldScene::ApplyFogState();
+    WorldLightingSetupView(cameraPos);   // LIGHTING: not in 12340 (the view the post passes use)
+
+    if (g_gxUpscale) {
+        g_gxUpscale->SetupView(CWorldScene::s_activeWorldView);   // FSR: not in 12340 (the view the motion vectors use)
+    }
+
+    CataWater::RenderReflection();   // CATAREFL: not in 12340 (Cata p = 1 planar reflection, before the lists are consumed)
+    // shadowUnified: the exterior receivers drawn from here to the shadow mask (VolumetricFog::OnSolidDone) leave their
+    // cascade term to it, when last frame's mask could take it (after the reflection: the mask does not cover that).
+    CShadowCache::s_receiversUnified = CShadowCache::s_unifiedNext;
+    FrameProfileSwitch(FRAMEPROFILE_TERRAIN);
     CWorldScene::RenderChunks();
+    FrameProfileSwitch(FRAMEPROFILE_WMO);
     CWorldScene::RenderMapObjDefGroups();
+    // OCCLUSION: depth now holds terrain and WMO groups; test this frame's candidates against it.
+    OcclusionCull::IssueQueries();
+    WorldLightingFarSeam();   // BENILLA far view seam: not in 12340 (the detailed world dithers into the far land)
+    FarTrees::Draw();   // FARTREES: not in 12340 (far tree impostors, before every M2 pass)
+    FrameProfileSwitch(FRAMEPROFILE_TERRAIN);
     CWorldScene::RenderHorizon();
+    FrameProfileSwitch(FRAMEPROFILE_WMO);
 
     if (CWorldScene::s_unk_ADF570.m_maxViewDepth >= 0.0f) {
         if (CWorldScene::s_exteriorPortalViews.Count()) {
@@ -218,6 +257,7 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         }
     }
 
+    FrameProfileSwitch(FRAMEPROFILE_WORLD_OTHER);
     CWorldScene::RenderEntitys();
     Liquid::UpdateProceduralTextures();
     CWorldScene::PrepareLiquidInstances();
@@ -248,6 +288,8 @@ void CWorldScene::Render(const C3Vector& cameraPos, float time) {
         CMap::debugVertexArray.SetCount(0);
         CMap::debugIndexArray.m_count = 0;
     }
+
+    FrameProfileSwitch(FRAMEPROFILE_NONE);
 }
 
 

@@ -188,13 +188,13 @@ const char* CGTaxiMap::TaxiNodeType(uint32_t index) {
 // VERIFY: dec4ac64 manual
 // OFFSET: 0x00591350
 int32_t TaxiNodeCost(uint32_t index) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
     }
 
-    CGUnit_C* taxiUnit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGTaxiMap::m_unit, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* taxiUnit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGTaxiMap::m_unit, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!taxiUnit) {
         return 0;
@@ -211,14 +211,14 @@ int32_t TaxiNodeCost(uint32_t index) {
         return 0;
     }
 
-    int32_t reaction = taxiUnit->UnitReaction(player);
+    UNIT_REACTION reaction = taxiUnit->UnitReaction(player);
     FactionTemplateRec* factionTemplate = g_factionTemplateDB.GetRecord(taxiUnit->m_unit->m_unitFieldFactiontemplate);
 
     if (factionTemplate && !CGUnit_C::FactionHasReputation(factionTemplate->m_faction)) {
-        reaction = 3;
+        reaction = UNIT_REACTION_NEUTRAL;
     }
 
-    if (reaction > 3) {
+    if (reaction > UNIT_REACTION_NEUTRAL) {
         return node.m_costs[reaction - 3];
     }
 
@@ -232,7 +232,7 @@ void CGTaxiMap::TakeTaxiNode(uint32_t index) {
         return;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (player->m_mountDisplayId > 0 && !(player->m_clientFlags & 0x10000000)) {
         CGGameUI::DisplayError(ERR_TAXIPLAYERALREADYMOUNTED);
@@ -374,7 +374,7 @@ float CGTaxiMap::CalculateAccurateDistance(uint32_t index, uint32_t parent) {
 // VERIFY: 48c16c0c manual
 // OFFSET: 0x005926C0
 void CGTaxiMap::RecursePath(uint32_t index, uint32_t parent, int32_t cost) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
     TaxiNodesRec* node = CGTaxiMap::m_nodes.m_data[index].m_rec;
 
     if (node && player) {
@@ -601,14 +601,14 @@ void CGTaxiMap::SetupMap(const WOWGUID& unit, int32_t currentNode, const uint64_
         return;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
     }
 
     if (player->GetClientStandState()) {
-        player->ChangeStandState(0);
+        player->ChangeStandState(UNIT_STANDING);
     }
 
     if (player->m_mountDisplayId > 0 && !(player->m_clientFlags & 0x10000000)) {

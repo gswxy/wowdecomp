@@ -4,6 +4,8 @@
 #include <windows.h>
 #include "Engine/Source/Storm/H/storm.h"
 
+// Debug builds only: the original Release client compiles this out (0x005EEB70 is a bare RET) and so does
+// storm.h's inline stub; calls sit in per-batch M2 draw paths.
 #ifndef NDEBUG
 void DebugLog(const char* format, ...) {
     char buffer[1024];

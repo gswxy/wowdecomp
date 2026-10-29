@@ -73,6 +73,7 @@ const char* CSimpleTexture::s_imageModePixelShaderNames[2] = { "UI", "Desaturate
 
 // STATIC: 0x00AC0F00
 EGxTexFilter CSimpleTexture::s_textureFilterMode = GxTex_Linear;
+void (*CSimpleTexture::s_destroyCallback)(CSimpleTexture* texture);   // not stock (portraitLive)
 
 // STATIC: 0x00B47930
 int32_t CSimpleTexture::s_count;
@@ -1753,8 +1754,8 @@ void CSimpleFontString::SetJustifyV(uint8_t justify) {
 // VERIFY: e9a340b1 auto
 // OFFSET: 0x00487210
 void CSimpleFontString::SetNonWordWrap(int32_t noWrap) {
-    this->m_settableStyleFlags &= ~0x40u;
-    uint32_t styleFlags = noWrap ? this->m_styleFlags | 0x40 : this->m_styleFlags & ~0x40u;
+    this->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP;
+    uint32_t styleFlags = noWrap ? this->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP : this->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NO_WORD_WRAP;
 
     if (styleFlags != this->m_styleFlags) {
         this->m_styleFlags = styleFlags;
@@ -1768,8 +1769,8 @@ void CSimpleFontString::SetNonWordWrap(int32_t noWrap) {
 // VERIFY: eb8e3134 auto
 // OFFSET: 0x00487250
 void CSimpleFontString::SetNonSpaceWrap(int32_t wrap) {
-    this->m_settableStyleFlags &= ~0x1000u;
-    uint32_t styleFlags = wrap ? this->m_styleFlags | 0x1000 : this->m_styleFlags & ~0x1000u;
+    this->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP;
+    uint32_t styleFlags = wrap ? this->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP : this->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_NON_SPACE_WRAP;
 
     if (styleFlags != this->m_styleFlags) {
         this->m_styleFlags = styleFlags;
@@ -1783,8 +1784,8 @@ void CSimpleFontString::SetNonSpaceWrap(int32_t wrap) {
 // VERIFY: 8f4f99c8 auto
 // OFFSET: 0x004872A0
 void CSimpleFontString::SetIndented(int32_t indented) {
-    this->m_settableStyleFlags &= ~0x20000u;
-    uint32_t styleFlags = indented ? this->m_styleFlags | 0x20000 : this->m_styleFlags & ~0x20000u;
+    this->m_settableStyleFlags &= ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
+    uint32_t styleFlags = indented ? this->m_styleFlags | TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED : this->m_styleFlags & ~TEXTBLOCK_WRAP_FLAGS::TEXTBLOCK_INDENTED;
 
     if (styleFlags != this->m_styleFlags) {
         this->m_styleFlags = styleFlags;
@@ -2205,6 +2206,10 @@ int32_t CSimpleTexture::GetScriptMetaTable() {
 // VERIFY: ec4a9c07 auto
 // OFFSET: [0x00482860, 0x00483010]
 CSimpleTexture::~CSimpleTexture() {
+    if (CSimpleTexture::s_destroyCallback) {   // not stock (portraitLive)
+        CSimpleTexture::s_destroyCallback(this);
+    }
+
     if (this->m_texture) {
         HandleClose(reinterpret_cast<HOBJECT>(this->m_texture));
     }

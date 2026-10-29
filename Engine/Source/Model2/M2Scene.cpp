@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include "Engine/Source/Base/FrameProfile.h"
 #include <xmmintrin.h>
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Cache.h"
+#include "Engine/Source/Model2/M2GroundDecal.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Shared.h"
@@ -23,13 +25,68 @@
 #include "Engine/Source/Tempest/NTempest.h"
 
 // STATIC: 0x00A45374
-const uint32_t s_localLighting[7] = { 1, 1, 1, 1, 1, 0, 0 };
+const uint32_t s_localLighting[M2BLEND_COUNT] = { 1, 1, 1, 1, 1, 0, 0 };
 
 // STATIC: 0x00A453B0
-const uint32_t s_blendModes[3][7] = { { 0, 1, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 } };
+const uint32_t s_blendModes[3][M2BLEND_COUNT] = { { 0, 1, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 } };
 
 // STATIC: 0x00AF5898
 uint32_t CM2Scene::s_optFlags = 0xFFFFFFFF;
+int32_t CM2Scene::s_groundDecals = 1;
+int32_t CM2Scene::s_animLod = 1;
+
+// BENILLA: not in 12340 (M2GroundDecal.h). A single-texture, non-env batch of a Spells\ model that is
+// world-planted or on the Base (19) or root attachment, one bone at full weight that is not billboarded,
+// whose 4 vertices are a flat ground rectangle. Chest-anchored quads (ProtectionFrom*) stay geometry.
+// Most ground spell quads (Consecration, Flamestrike, Blizzard, Death and Decay) already carry the stock
+// projected flag 4; DrawBatchProj asks this again so they get the decal slab too, not the stock +-2.
+int32_t CM2Scene::IsGroundDecalBatch(CM2Model* model, const M2Batch* batch, const M2SkinSection* section) {
+    if (section->m_vertexCount != 4 || batch->m_textureCount != 1 || (!(batch->m_shader & 0x8000) && (batch->m_shader & 0x80))) {
+        return 0;
+    }
+
+    if (model->m_attachParent && model->m_attachmentId != 19 && model->m_attachmentIndex != 0xFFFF) {
+        return 0;
+    }
+
+    const char* name = model->m_shared->m_fileName;
+    const char* spells = "spells";
+
+    for (int32_t i = 0; i < 6; i++) {
+        if ((name[i] | 0x20) != spells[i]) {
+            return 0;
+        }
+    }
+
+    if (name[6] != '\\' && name[6] != '/') {
+        return 0;
+    }
+
+    M2Data* data = model->m_shared->m_data;
+    M2SkinProfile* skin = model->m_shared->m_skinData;
+    const C3Vector* positions[4];
+    uint8_t bone = 0;
+
+    for (uint32_t i = 0; i < 4; i++) {
+        const M2Vertex* vertex = &data->m_vertices[skin->m_vertices[section->m_vertexStart + i]];
+
+        if (i == 0) {
+            bone = vertex->m_indices.b[0];
+        }
+
+        if (vertex->m_indices.b[0] != bone || vertex->m_weights.b[0] != 255) {
+            return 0;
+        }
+
+        positions[i] = &vertex->m_position;
+    }
+
+    if (bone >= data->m_bones.m_count || (data->m_bones[bone].m_flags & 0x78)) {
+        return 0;
+    }
+
+    return M2GroundDecal::IsGroundQuad(positions);
+}
 
 // STATIC: 0x00AF58A0
 static const float s_lightGridScale = 0.05f;
@@ -78,19 +135,19 @@ void CM2Scene::SetFloat18(float value) {
 uint32_t ParticleBlendToM2Blend(uint32_t blend) {
     switch (blend) {
         case 1:
-            return 1;
+            return M2BLEND_ALPHA_KEY;
         case 2:
-            return 2;
+            return M2BLEND_ALPHA;
         case 3:
-            return 4;
+            return M2BLEND_ADD;
         case 4:
-            return 5;
+            return M2BLEND_MOD;
         case 5:
-            return 6;
+            return M2BLEND_MOD2X;
         case 10:
-            return 3;
+            return M2BLEND_NO_ALPHA_ADD;
         default:
-            return 0;
+            return M2BLEND_OPAQUE;
     }
 }
 
@@ -188,7 +245,7 @@ int32_t CM2Scene::SortHitNear(uint32_t a, uint32_t b, const void* param) {
 
 // VERIFY: 31f1f896 auto
 // OFFSET: 0x0081CC30
-void CM2Scene::SetProjectTextureCallback(void (*callback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t), void* param) {
+void CM2Scene::SetProjectTextureCallback(int32_t (*callback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t), void* param) {
     this->m_projectTextureCallback = callback;
     this->m_projectTextureParam = param;
 }
@@ -230,26 +287,68 @@ CM2Model* CM2ModelHeap::New() {
     return model;
 }
 
+// Not stock: snapshot of the root models (no m_attachParent) that CM2Scene::Animate shares out across the Model2
+// worker pool, a few at a time. Attachments animate inside their root's AnimateMT, so parent/child order holds.
+static TSGrowableArray<CM2Model*> s_animateRoots;
+static volatile LONG s_animateNextRoot;
+static const uint32_t ANIMATE_CHUNK = 4;
+static const uint32_t ANIMATE_MIN_PARALLEL = 8;
+
+// Not stock: AnimateST is lighter per root than AnimateMT (most roots have no emitters), so it takes bigger chunks and
+// a higher threshold. s_animateSTDone[i] marks roots whose emitters a worker already updated (AnimateST pass 1).
+static TSGrowableArray<uint8_t> s_animateSTDone;
+static const uint32_t ANIMATE_ST_CHUNK = 8;
+static const uint32_t ANIMATE_ST_MIN_PARALLEL = 16;
+
+static void AnimateSTThread(void* param) {
+    uint32_t count = s_animateRoots.Count();
+
+    while (true) {
+        uint32_t begin = static_cast<uint32_t>(InterlockedExchangeAdd(&s_animateNextRoot, ANIMATE_ST_CHUNK));
+
+        if (begin >= count) {
+            break;
+        }
+
+        uint32_t end = begin + ANIMATE_ST_CHUNK < count ? begin + ANIMATE_ST_CHUNK : count;
+
+        for (uint32_t i = begin; i < end; i++) {
+            CM2Model* model = s_animateRoots.m_data[i];
+            s_animateSTDone.m_data[i] = model->CanAnimateSTThreaded();
+
+            if (s_animateSTDone.m_data[i]) {
+                model->AnimateST(1);
+            }
+        }
+    }
+}
+
+static void AnimateRoot(CM2Model* model, const C44Matrix* view) {
+    if (model->m_fFlags & 0x1000) {
+        model->AnimateMTSimple(view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+    } else {
+        model->AnimateMT(view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+    }
+}
+
 // VERIFY: f41c995e auto
 // OFFSET: 0x0081CE70
 void CM2Scene::AnimateThread(void* param) {
     CM2Scene* scene = static_cast<CM2Scene*>(param);
+    uint32_t count = s_animateRoots.Count();
 
-    for (CM2Model* model = scene->m_animateList; model; model = model->m_animateNext) {
-        model = model->m_animateNext;
+    // Not stock: stock animates every other list entry; we pull chunks off the shared snapshot until it runs out
+    while (true) {
+        uint32_t begin = static_cast<uint32_t>(InterlockedExchangeAdd(&s_animateNextRoot, ANIMATE_CHUNK));
 
-        if (!model) {
+        if (begin >= count) {
             break;
         }
 
-        if (model->m_attachParent) {
-            continue;
-        }
+        uint32_t end = begin + ANIMATE_CHUNK < count ? begin + ANIMATE_CHUNK : count;
 
-        if (model->m_fFlags & 0x1000) {
-            model->AnimateMTSimple(&scene->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
-        } else {
-            model->AnimateMT(&scene->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+        for (uint32_t i = begin; i < end; i++) {
+            AnimateRoot(s_animateRoots.m_data[i], &scene->m_view);
         }
     }
 }
@@ -603,7 +702,7 @@ M2HitRec* CM2Scene::HitTestGeometry(const CM2Model* model, uint32_t pass, const 
 
         M2Material* material = &data->m_materials[batch->m_materialIndex];
 
-        if (model->m_hitTestMode == 2 && !material->m_blendMode) {
+        if (model->m_hitTestMode == 2 && material->m_blendMode == M2BLEND_OPAQUE) {
             continue;
         }
 
@@ -873,11 +972,10 @@ void CM2Scene::SelectLights(CM2Lighting* lighting) {
             while (light) {
                 CM2Light* next = light->m_lightNext;
 
-                if (!light->m_scene || light->m_stamp == this->m_frameStamp) {
-                    lighting->AddLight(light);
-                } else {
-                    light->SetVisible(0);
-                }
+                // Not stock (lightstay, 0x81E548 je -> jmp, as St0ny's patch 70 / Luxvelum): a stale light (its model not
+                // animated this frame, e.g. culled behind the camera) still lights its neighbours instead of being
+                // SetVisible(0) -> Unlink()ed from the grid, which switched lamps off whenever their model left the view.
+                lighting->AddLight(light);
 
                 light = next;
             }
@@ -1464,9 +1562,9 @@ void __stdcall CM2Scene::ComputeElementShaders(M2Element* element) {
     uint32_t boneInfluences = element->m_skinSection->m_boneInfluences;
     int32_t alphaTest;
 
-    if (!material->m_blendMode) {
+    if (material->m_blendMode == M2BLEND_OPAQUE) {
         alphaTest = 0;
-    } else if (material->m_blendMode == 1) {
+    } else if (material->m_blendMode == M2BLEND_ALPHA_KEY) {
         alphaTest = static_cast<int32_t>(element->m_alpha * 224.0f);
     } else {
         alphaTest = 1;
@@ -1564,7 +1662,7 @@ void CM2Scene::SortAdditiveParticleElements(uint32_t pass) {
     for (uint32_t i = 0; i < list.m_count; i++) {
         M2Element* element = &this->m_elements.m_data[list.m_data[i]];
         M2Data* data = element->m_model->m_shared->m_data;
-        uint32_t blend = 0;
+        uint32_t blend = M2BLEND_OPAQUE;
 
         switch (element->m_type) {
             case 0:
@@ -1576,7 +1674,7 @@ void CM2Scene::SortAdditiveParticleElements(uint32_t pass) {
                 blend = data->m_materials[data->m_ribbons[element->m_index].m_materialIndices[0]].m_blendMode;
                 break;
             case 4:
-                blend = (this->m_cache->m_flags & 0x100) ? 4 : ParticleBlendToM2Blend(element->m_emitter->m_params.m_materialBlend);
+                blend = (this->m_cache->m_flags & 0x100) ? M2BLEND_ADD : ParticleBlendToM2Blend(element->m_emitter->m_params.m_materialBlend);
                 break;
             default:
                 break;
@@ -1641,7 +1739,7 @@ CM2Scene::~CM2Scene() {
 // VERIFY: 7bb79c57 manual
 // OFFSET: 0x00821930
 M2Element* CM2Scene::AddParticleElement(CParticleEmitter2* emitter, CM2Model* model, float depth, float alpha, int32_t split, uint32_t& index, uint32_t& additiveCount) {
-    if (!emitter->HasLiveParticles() || emitter->m_params.m_hasModel == 1) {
+    if (!emitter->HasLiveParticles() || emitter->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         return nullptr;
     }
 
@@ -1699,45 +1797,56 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
     this->m_view.Translate(move);
     this->m_viewInv = this->m_view.Inverse(this->m_view.Determinant());
 
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h)
+    uint64_t animStart = FrameProfileNow();
+
+    // Not stock: stock splits the list between the main thread and one worker. We snapshot the root models and
+    // share them out over the worker pool; short lists (portraits, glue scenes) stay on this thread.
+    s_animateRoots.SetCount(0);
+
     if (this->m_cache->m_flags & 4) {
-        this->m_cache->BeginThread(&CM2Scene::AnimateThread, this);
-
-        for (CM2Model* model = this->m_animateList; model; ) {
+        for (CM2Model* model = this->m_animateList; model; model = model->m_animateNext) {
             if (!model->m_attachParent) {
-                if (model->m_fFlags & 0x1000) {
-                    model->AnimateMTSimple(&this->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
-                } else {
-                    model->AnimateMT(&this->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
-                }
+                *s_animateRoots.New() = model;
             }
-
-            CM2Model* next = model->m_animateNext;
-
-            if (!next) {
-                break;
-            }
-
-            model = next->m_animateNext;
         }
+    }
 
-        this->m_cache->WaitThread();
+    if (s_animateRoots.Count() >= ANIMATE_MIN_PARALLEL) {
+        uint32_t chunks = (s_animateRoots.Count() + ANIMATE_CHUNK - 1) / ANIMATE_CHUNK;
+        s_animateNextRoot = 0;
+        this->m_cache->RunThreads(&CM2Scene::AnimateThread, this, chunks - 1);
     } else {
         for (CM2Model* model = this->m_animateList; model; model = model->m_animateNext) {
             if (model->m_attachParent) {
                 continue;
             }
 
-            if (model->m_fFlags & 0x1000) {
-                model->AnimateMTSimple(&this->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
-            } else {
-                model->AnimateMT(&this->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
-            }
+            AnimateRoot(model, &this->m_view);
         }
     }
 
-    for (CM2Model* model = this->m_animateList; model; model = model->m_animateNext) {
-        if (!model->m_attachParent) {
-            model->AnimateST();
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h)
+    uint64_t serialStart = FrameProfileNow();
+    FrameProfileAdd(FRAMEPROFILE_ANIM_PARALLEL, animStart, serialStart);
+    FrameProfileCount(FRAMEPROFILE_MODELS_ANIMATED, s_animateRoots.Count());
+
+    // Not stock: emitters of thread-safe root trees update on the worker pool first; the rest of AnimateST (lights,
+    // draw/particle list links, unsafe trees in full) then runs here in the stock list order.
+    if (s_animateRoots.Count() >= ANIMATE_ST_MIN_PARALLEL) {
+        uint32_t chunks = (s_animateRoots.Count() + ANIMATE_ST_CHUNK - 1) / ANIMATE_ST_CHUNK;
+        s_animateSTDone.SetCount(s_animateRoots.Count());
+        s_animateNextRoot = 0;
+        this->m_cache->RunThreads(&AnimateSTThread, this, chunks - 1);
+
+        for (uint32_t i = 0; i < s_animateRoots.Count(); i++) {
+            s_animateRoots.m_data[i]->AnimateST(s_animateSTDone.m_data[i] ? 2 : 0);
+        }
+    } else {
+        for (CM2Model* model = this->m_animateList; model; model = model->m_animateNext) {
+            if (!model->m_attachParent) {
+                model->AnimateST();
+            }
         }
     }
 
@@ -1748,6 +1857,15 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
         model->m_animateNext = nullptr;
         model->SetupLighting();
     }
+
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h)
+    uint64_t batchStart = FrameProfileNow();
+    FrameProfileAdd(FRAMEPROFILE_ANIM_SERIAL, serialStart, batchStart);
+    // the batch build has early returns; charge it whichever way it leaves
+    struct BatchTimer {
+        uint64_t m_start;
+        ~BatchTimer() { FrameProfileAdd(FRAMEPROFILE_ANIM_BATCH, this->m_start, FrameProfileNow()); }
+    } batchTimer = { batchStart };
 
     this->m_doodadElements.m_count = 0;
 
@@ -1839,8 +1957,13 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
 
             M2Material* material = &data->m_materials[batch->m_materialIndex];
             int32_t projected = (batch->m_flags & 4) && this->m_projectTextureCallback;
+
+            // BENILLA: ground spell quads drape the terrain through the projected element
+            if (!projected && !optimized && CM2Scene::s_groundDecals && this->m_projectTextureCallback && IsGroundDecalBatch(model, batch, section)) {
+                projected = 1;
+            }
             M2Material* baseMaterial = batch->m_materialLayer ? &data->m_materials[batch->m_materialIndex - batch->m_materialLayer] : material;
-            int32_t transparent = baseMaterial->m_blendMode > 1 || alpha < 0.99998999f;
+            int32_t transparent = baseMaterial->m_blendMode > M2BLEND_ALPHA_KEY || alpha < 0.99998999f;
             CShaderEffect* effect = optimized ? model->m_optGeo->m_effects[i] : model->m_shared->m_effects[i];
 
             if (!effect) {
@@ -2018,7 +2141,7 @@ int32_t CM2Scene::Animate(const C3Vector& cameraPos) {
             element->m_pixelPermute = 0xFFFFFFFF;
             element->m_shadowValue = 0;
 
-            if (material->m_blendMode > 1 || alpha < 0.99998999f) {
+            if (material->m_blendMode > M2BLEND_ALPHA_KEY || alpha < 0.99998999f) {
                 if (above) {
                     this->m_passElements[1].New(elementIndex);
                 } else {

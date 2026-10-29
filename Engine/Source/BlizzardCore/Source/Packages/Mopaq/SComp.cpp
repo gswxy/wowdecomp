@@ -9,6 +9,7 @@ extern "C" {
 #include "ThirdParty/zlib/contrib/blast/blast.h"
 }
 #include "ThirdParty/bzip2/bzlib.h"
+#include "ThirdParty/libdeflate/libdeflate.h"
 #include "ThirdParty/zlib/zlib.h"
 
 extern "C" {
@@ -17,6 +18,37 @@ extern "C" {
 
 // STATIC: 0x00B38324
 Blizzard::Thread::LocalObject<System_SComp::ZlibAllocBuffer> System_SComp::s_zlibAllocBuffer;
+
+// Not stock: libdeflate inflate in front of zlib (CVar mpqFastInflate). One decompressor per thread, since the
+// Mopaq worker pool inflates sectors on several threads at once.
+std::atomic<bool> System_SComp::s_fastInflate(true);
+
+namespace {
+
+struct FastInflater {
+    libdeflate_decompressor* m_decompressor = libdeflate_alloc_decompressor();
+    ~FastInflater() { libdeflate_free_decompressor(m_decompressor); }
+};
+
+thread_local FastInflater s_fastInflater;
+
+// libdeflate picks its CPU-specific inflate and Adler-32 routines on the first call, and that first call races when
+// several MPQ workers make it at once. One decompress here, during static initialization (single threaded, long
+// before the worker pool runs), settles both.
+[[maybe_unused]] const bool s_fastInflateWarm = [] {
+    static const uint8_t stream[] = {
+        0x78, 0xDA, 0x2B, 0xCF, 0x2F, 0x4F, 0x49, 0x4D, 0xCE, 0xCF, 0x2D, 0x50, 0xC8, 0xC9, 0x4C, 0x4A, 0x49, 0x4D,
+        0xCB, 0x49, 0x2C, 0x49, 0x55, 0x28, 0x4F, 0x2C, 0xCA, 0xD5, 0x2D, 0x2D, 0x00, 0x00, 0xA1, 0x8E, 0x0A, 0xEB
+    };
+    uint8_t out[64];
+    size_t outSize = 0;
+    libdeflate_decompressor* decompressor = libdeflate_alloc_decompressor();
+    bool ok = decompressor && libdeflate_zlib_decompress(decompressor, stream, sizeof(stream), out, sizeof(out), &outSize) == LIBDEFLATE_SUCCESS;
+    libdeflate_free_decompressor(decompressor);
+    return ok;
+}();
+
+}
 
 // VERIFY: 07c244c0 manual
 // OFFSET: 0x00463FD0
@@ -175,6 +207,17 @@ bool __stdcall System_SComp::DecompressBlock(void* dst, uint32_t* dstSize, const
 // VERIFY: 6959d98d auto
 // OFFSET: 0x00453B20
 int System_SComp::zlib_decompress(uint8_t* dest, uint32_t* destLen, const uint8_t* source, uint32_t sourceLen) {
+    // Not stock: libdeflate first; on any libdeflate error (or no decompressor) zlib below decodes the sector as before.
+    if (s_fastInflate.load(std::memory_order_relaxed)) {
+        libdeflate_decompressor* decompressor = s_fastInflater.m_decompressor;
+        size_t size = 0;
+
+        if (decompressor && libdeflate_zlib_decompress(decompressor, source, sourceLen, dest, *destLen, &size) == LIBDEFLATE_SUCCESS) {
+            *destLen = static_cast<uint32_t>(size);
+            return Z_OK;
+        }
+    }
+
     z_stream stream;
     stream.next_in = const_cast<Bytef*>(source);
     stream.avail_in = sourceLen;

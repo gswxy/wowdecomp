@@ -323,16 +323,16 @@ int32_t CVar::LogCvar(const char* name, const char* value, void* arg) {
 // OFFSET: 0x00766700
 void CVar::SetReadOnly(bool readOnly) {
     if (readOnly) {
-        this->m_flags |= 0x4;
+        this->m_flags |= CVAR_FLAGS::CVAR_READ_ONLY;
     } else {
-        this->m_flags &= ~0x4;
+        this->m_flags &= ~CVAR_FLAGS::CVAR_READ_ONLY;
     }
 }
 
 // VERIFY: e41a25fd manual
 // OFFSET: 0x00766720
 void CVarIntListWrapper::AddNextValue(uint32_t value) {
-    this->m_state = 2;
+    this->m_state = CVarIntListWrapper::STATE::WRITE;
 
     if (value <= 93 * 93 * 93 - 1 && this->m_pos < 0xFD) {
         this->m_buffer[this->m_pos++] = static_cast<char>(value / (93 * 93) + 35);
@@ -346,7 +346,7 @@ void CVarIntListWrapper::AddNextValue(uint32_t value) {
 void CVar::InternalSet(const char* value, bool setValue, bool setReset, bool setDefault, bool setNeedsSave) {
     bool changed = false;
 
-    if ((this->m_flags & 0x4) || !value) {
+    if ((this->m_flags & CVAR_FLAGS::CVAR_READ_ONLY) || !value) {
         return;
     }
 
@@ -398,7 +398,7 @@ bool CVar::Set(const char* value, bool setValue, bool setReset, bool setDefault,
 
         this->m_modified++;
 
-        if (this->m_flags & 0x2) {
+        if (this->m_flags & CVAR_FLAGS::CVAR_LATCH) {
             this->m_latchedValue.Copy(value);
             CVar::m_needsSave = true;
 
@@ -471,7 +471,7 @@ void CVar::Default() {
 // VERIFY: 0165142c manual
 // OFFSET: 0x00766AB0
 bool CVar::Update() {
-    if (!(this->m_flags & 0x2) || !this->m_latchedValue.m_str) {
+    if (!(this->m_flags & CVAR_FLAGS::CVAR_LATCH) || !this->m_latchedValue.m_str) {
         return false;
     }
 
@@ -629,7 +629,7 @@ uint32_t CVarIntListWrapper::GetNextValue() {
             this->m_pos = 2;
         }
 
-        this->m_state = 1;
+        this->m_state = CVarIntListWrapper::STATE::READ;
     }
 
     const char* str = this->m_cvar->m_stringValue.m_str + this->m_pos;
@@ -647,7 +647,7 @@ uint32_t CVarIntListWrapper::GetNextValue() {
 // OFFSET: 0x00767030
 int32_t CVar::IterateForArchive(uint32_t category, uint32_t excludeFlags, int32_t (*callback)(const char* name, const char* value, void* arg), void* arg) {
     for (CVar* var = s_registeredCVars.m_fulllist.Head(); var; var = s_registeredCVars.m_fulllist.Next(var)) {
-        if (!(var->m_flags & 0x1) || (var->m_flags & 0x80) || (var->m_flags & 0x30) != category || (var->m_flags & excludeFlags)) {
+        if (!(var->m_flags & CVAR_FLAGS::CVAR_ARCHIVE) || (var->m_flags & 0x80) || (var->m_flags & CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_MASK) != category || (var->m_flags & excludeFlags)) {
             continue;
         }
 
@@ -696,7 +696,7 @@ int32_t CVar::SaveAll() {
     HOSFILE file = OsCreateFile(path, OS_GENERIC_WRITE, 0, OS_CREATE_ALWAYS, OS_FILE_ATTRIBUTE_NORMAL, OS_FILE_TYPE_ANY);
 
     if (file != OS_INVALID_FILE) {
-        result = CVar::IterateForArchive(0, 0, CVar::SaveCvar, file);
+        result = CVar::IterateForArchive(CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_CONFIG, 0, CVar::SaveCvar, file);
         OsCloseFile(file);
     }
 
@@ -719,7 +719,7 @@ void CVar::DeleteCharacterCVars() {
     CVar* var = s_registeredCVars.m_fulllist.Head();
 
     while (var) {
-        if ((var->m_flags & 0x1) && (var->m_flags & 0x30) == 0x20) {
+        if ((var->m_flags & CVAR_FLAGS::CVAR_ARCHIVE) && (var->m_flags & CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_MASK) == CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_CHARACTER) {
             var = s_registeredCVars.DeleteNode(var);
         } else {
             var = s_registeredCVars.Next(var);
@@ -733,7 +733,7 @@ void CVar::DeleteAccountCVars() {
     CVar* var = s_registeredCVars.m_fulllist.Head();
 
     while (var) {
-        if ((var->m_flags & 0x1) && (var->m_flags & 0x30) == 0x10) {
+        if ((var->m_flags & CVAR_FLAGS::CVAR_ARCHIVE) && (var->m_flags & CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_MASK) == CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_ACCOUNT) {
             var = s_registeredCVars.DeleteNode(var);
         } else {
             var = s_registeredCVars.Next(var);
@@ -790,7 +790,7 @@ CVar* CVar::Register(const char* name, const char* help, uint32_t flags, const c
 
     if (var) {
         bool setReset = var->m_resetValue.m_str == nullptr;
-        var->m_flags = flags | (var->m_flags & ~0x30);
+        var->m_flags = flags | (var->m_flags & ~CVAR_ARCHIVE_SCOPE::CVAR_SCOPE_MASK);
         bool setDefault = var->m_defaultValue.m_str == nullptr;
         var->m_callback = callback;
         var->m_arg = arg;
@@ -834,10 +834,10 @@ CVar* CVar::Register(const char* name, const char* help, uint32_t flags, const c
         var->Set(value, true, false, true, false);
     }
 
-    var->m_flags = flags | 0x1;
+    var->m_flags = flags | CVAR_FLAGS::CVAR_ARCHIVE;
 
     if (!setCommand) {
-        var->m_flags = flags | 0x80000001;
+        var->m_flags = flags | (0x80000000 | CVAR_FLAGS::CVAR_ARCHIVE);
     }
 
     if (unk && !(var->m_flags & 0x80000000)) {

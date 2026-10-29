@@ -14,6 +14,8 @@ class CMovementGlobals;
 class CPassenger;
 
 void MovementAddTransport(CGGameObject_C* transport);
+// New (not in the original): walk the transports MovementAddTransport linked, nullptr = the first.
+CGGameObject_C* MovementNextTransport(CGGameObject_C* after);
 int32_t MovementAddToTransport(CPassenger* passenger, WOWGUID transport, int32_t reason);
 CMovementGlobals* MovementGetGlobals();
 uint32_t MovementGetIdleTime();

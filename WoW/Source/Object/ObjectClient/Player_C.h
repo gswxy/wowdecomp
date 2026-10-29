@@ -48,6 +48,8 @@ struct ITEMSWAP {
     /* 0014 */ uint32_t m_dstSlot;
     /* 0018 */ int32_t m_itemId;
     /* 001C */ CGItem_C* m_item;
+
+    ITEMSWAP();
 };
 
 struct TRADESKILLLINE : public TSHashObject<TRADESKILLLINE, HASHKEY_NONE> {
@@ -184,7 +186,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     static void __stdcall HandleActivateTaxiReply(uint32_t reply);
     static void __stdcall ServerBindConfirm(WOWGUID item, uint64_t srcContainer, uint32_t srcSlot, uint64_t dstContainer, uint8_t dstSlot);
     static void SellItem(WOWGUID vendor, WOWGUID item, uint32_t count);
-    static void __stdcall SetLootMethod(uint32_t method, WOWGUID master, uint32_t threshold);
+    static void __stdcall SetLootMethod(LOOT_METHOD method, WOWGUID master, uint32_t threshold);
     static void __stdcall SetPartyAssignment(uint8_t assignment, WOWGUID guid);
     static void __stdcall SilencePlayer(WOWGUID guid, bool silence);
     void StartTaxi(WOWGUID guid, uint32_t source, uint32_t destination);
@@ -225,8 +227,8 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     /* 18E9 */ uint8_t unused_18E9 [3];
     /* 18EC */ uint32_t unused_18EC;
     /* 18F0 */ CGBag_C m_bag;
-    /* 1908 */ CGUnitVirtualItem m_virtualItems [3];
-    /* 1920 */ uint32_t m_clientStandState;
+    /* 1908 */ CGUnitVirtualItem m_virtualItems [NUM_VIRTUAL_MONSTER_SLOTS];
+    /* 1920 */ UNITSTANDSTATE m_clientStandState;
     /* 1924 */ int32_t m_gemCounts [4];
     /* 1934 */ uint32_t m_combatModeTime;
     /* 1938 */ WOWGUID m_combatTarget;
@@ -240,11 +242,11 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     ~CGPlayer_C() override;
     void Disable() override;
     void OnSpellEffectClear(CEffect* effect) override;
-    void PlayUnitSound(uint32_t soundType, int32_t force) override;
+    void PlayUnitSound(UNITSOUNDTYPE soundType, int32_t force) override;
     void PlayFoleySound() override;
-    const CGUnitVirtualItem* GetVirtualItem(uint32_t slot, bool ignoreDisarm) const override;
-    uint32_t GetVirtualItemDisplayID(uint32_t slot) const override;
-    int32_t GetVirtualItemDisplayRec(uint32_t slot, ItemDisplayInfoRec& rec) const override;
+    const CGUnitVirtualItem* GetVirtualItem(VIRTUAL_MONSTER_SLOT slot, bool ignoreDisarm) const override;
+    uint32_t GetVirtualItemDisplayID(VIRTUAL_MONSTER_SLOT slot) const override;
+    int32_t GetVirtualItemDisplayRec(VIRTUAL_MONSTER_SLOT slot, ItemDisplayInfoRec& rec) const override;
     int32_t GetSpellRank(const SpellRec* spell) const override;
     void GetDefenseSkillRank(int32_t& rank, int32_t& bonus) const override;
     void GetAttackSkillRank(int32_t hand, int32_t& rank, int32_t& bonus) const override;
@@ -264,7 +266,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     uint32_t GetImpactType() const override;
     const CGUnitVirtualItem* GetDefendingItem() const override;
     bool IsDeadOrGhost() const override;
-    uint32_t GetClientStandState() const override;
+    UNITSTANDSTATE GetClientStandState() const override;
     void Reenable() override;
     void PostReenable() override;
     void PreAnimate(CGWorldFrame* frame) override;
@@ -350,7 +352,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     void ReadItem(WOWGUID guid, uint8_t slot);
     void SetFarSightFocus(CGObject_C* object);
     void SetPlayedTime(int32_t playedTime);
-    void ChangeStandState(uint32_t standState);
+    void ChangeStandState(UNITSTANDSTATE standState);
     void SendTextEmote(const EmotesTextRec* emote, WOWGUID target);
     void SetAFK(const char* message);
     void UpdateActiveMoverDisplay(uint32_t time);
@@ -374,7 +376,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     void UpdateQuestStatus(CGObject_C* object);
     void UpdateTaxiStatus(CGUnit_C* unit);
     void HandleRepopRequest(bool a2);
-    void SetClientStandState(uint32_t standState);
+    void SetClientStandState(UNITSTANDSTATE standState);
     void SetCombatMode();
     CGUnit_C* GetPossessedUnit();
     int32_t OnLootResponse(uint32_t time, CDataStore* msg);
@@ -440,6 +442,7 @@ class CGPlayer_C : public CGUnit_C, public CGPlayer {
     void SetActiveMirrorHandlers();
     void UnsetActiveMirrorHandlers();
     void MeleeModeLeave();
+    C3Vector& GetAnchorPos() const;
 };
 
 class PlaySpellVisuaKitData {

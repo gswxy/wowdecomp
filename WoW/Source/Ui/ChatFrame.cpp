@@ -226,10 +226,10 @@ TSExplicitList<THROTTLEDCHAT, 0> CGChat::s_throttledChat;
 TSExplicitList<PENDINGCHAT, 0> CGChat::s_pendingChat;
 
 // STATIC: 0x00B759D0
-int32_t s_chatLogging[2];
+int32_t s_chatLogging[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
 // STATIC: 0x00B759D8
-HSLOG s_chatLog[2];
+HSLOG s_chatLog[CGChat::LOG_TYPE::NUM_LOG_TYPES];
 
 // STATIC: 0x00B75A60
 ChatRecord CGChat::m_chatHistory[60];
@@ -327,7 +327,7 @@ const ChatMessageGroup s_chatMessageGroups[46] = {
 uint32_t s_activeVoiceChannel;
 
 // STATIC: 0x00B743D0
-uint8_t s_collapsedHeaders[3];
+uint8_t s_collapsedHeaders[DisplayChannel::HEADER_INDEX::NUM_HEADERS];
 
 // STATIC: 0x00B743D3
 static bool s_pendingUserListActive;
@@ -598,19 +598,19 @@ static void UpdateVoiceMemberFlags(PENDINGUSERLIST* user, uint8_t flags, WOWGUID
     user->m_flags = flags;
 
     if (type && !ComSatClient_IsTalkerSquelchedInChannel(guid, type, name)) {
-        user->m_flags |= 0x10;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_UNSQUELCHED;
     }
 
     if (ComSatClient_IsMemberInVoiceSession(user->m_guid, type, name)) {
-        user->m_flags |= 0x40;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
     }
 
     if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, type, name)) {
-        user->m_flags |= 0x80;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
     }
 
     if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x20;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
     }
 }
 
@@ -1151,7 +1151,7 @@ void CGChat::AddChatMessage(const char* text, int32_t type, const char* senderNa
     }
 
     if (type == CHAT_MSG_SAY || type == CHAT_MSG_YELL || type == CHAT_MSG_PARTY || type == CHAT_MSG_PARTY_LEADER) {
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(senderGuid, TYPEMASK_UNIT, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(senderGuid, TYPE_UNIT, __FILE__, __LINE__));
 
         if (unit && !(unit->m_unit->m_unitFieldFlags & 0x20000000)) {
             char token[32];
@@ -1165,22 +1165,22 @@ void CGChat::AddChatMessage(const char* text, int32_t type, const char* senderNa
                 }
 
                 if (!SStrCmpUTF8I(word, text, STORM_MAX_STR)) {
-                    unit->RequestTalkEmote(4);
+                    unit->RequestTalkEmote(TALKANIM_LAUGH);
                     goto emoteDone;
                 }
             }
 
             if (type == CHAT_MSG_SAY || type == CHAT_MSG_YELL) {
-                int32_t animation = 0;
+                TALKANIMATION animation = TALKANIM_TALK;
                 uint32_t length = SStrLen(text);
 
                 if (type == CHAT_MSG_YELL) {
-                    animation = 3;
+                    animation = TALKANIM_SHOUT;
                 } else if (length) {
                     if (text[length - 1] == '?') {
-                        animation = 1;
+                        animation = TALKANIM_QUESTION;
                     } else if (text[length - 1] == '!') {
-                        animation = 2;
+                        animation = TALKANIM_EXCLAMATION;
                     }
                 }
 
@@ -1308,7 +1308,7 @@ emoteDone:
         CGLCD::OnWhisper(senderName);
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(senderGuid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(senderGuid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         const char* bubble = translated;
@@ -1341,7 +1341,7 @@ emoteDone:
         unit->ChatBubbleShow(type, bubble);
     }
 
-    if (!s_chatLogging[0]) {
+    if (!s_chatLogging[CGChat::LOG_TYPE::CHAT_LOG]) {
         return;
     }
 
@@ -1356,36 +1356,36 @@ emoteDone:
                 channelPrefix[0] = 0;
             }
 
-            SLogWrite(s_chatLog[0], "%s%s", channelPrefix, translated);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], "%s%s", channelPrefix, translated);
             return;
         }
 
         case CHAT_MSG_CHANNEL_NOTICE:
         case CHAT_MSG_CHANNEL_NOTICE_USER: {
             SStrPrintf(token, sizeof(token), "CHAT_%s_NOTICE", translated);
-            SLogWrite(s_chatLog[0], FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), channelString, senderName, targetName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), channelString, senderName, targetName);
             return;
         }
 
         case CHAT_MSG_IGNORED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_IGNORED", -1, GENDER_NOT_APPLICABLE), senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_IGNORED", -1, GENDER_NOT_APPLICABLE), senderName);
             return;
         }
 
         case CHAT_MSG_FILTERED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_FILTERED", -1, GENDER_NOT_APPLICABLE), senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_FILTERED", -1, GENDER_NOT_APPLICABLE), senderName);
             return;
         }
 
         case CHAT_MSG_RESTRICTED: {
-            SLogWrite(s_chatLog[0], FrameScript_GetText("CHAT_RESTRICTED", -1, GENDER_NOT_APPLICABLE));
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText("CHAT_RESTRICTED", -1, GENDER_NOT_APPLICABLE));
             return;
         }
 
         case CHAT_MSG_BN_CONVERSATION_NOTICE: {
             char noticeToken[128];
             SStrPrintf(noticeToken, sizeof(noticeToken), "CHAT_CONVERSATION_%s_NOTICE", translated);
-            SLogWrite(s_chatLog[0], FrameScript_GetText(noticeToken, -1, GENDER_NOT_APPLICABLE), channelString, senderName);
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], FrameScript_GetText(noticeToken, -1, GENDER_NOT_APPLICABLE), channelString, senderName);
             return;
         }
 
@@ -1474,7 +1474,7 @@ emoteDone:
             }
 
             *dest = 0;
-            SLogWrite(s_chatLog[0], line, senderName ? senderName : "");
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], line, senderName ? senderName : "");
             return;
         }
     }
@@ -1490,7 +1490,7 @@ int32_t CGChat::ChatMessageReceived(CDataStore* msg, bool isGM) {
     const char* targetName = nullptr;
     uint8_t chatTag = 0;
     const char* flags = "";
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
     uint32_t achievementID = 0;
     WOWGUID senderGuid = WOWGUID();
     uint32_t senderUnk = 0;
@@ -1734,7 +1734,7 @@ bool ChatParserParseText(const char* text, char* buffer, uint32_t size) {
                     const char* name = nullptr;
 
                     if (focus) {
-                        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(focus, TYPEMASK_UNIT, __FILE__, __LINE__));
+                        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(focus, TYPE_UNIT, __FILE__, __LINE__));
 
                         if (unit) {
                             name = unit->GetUnitName(nullptr, 1);
@@ -1761,7 +1761,7 @@ bool ChatParserParseText(const char* text, char* buffer, uint32_t size) {
                     const char* name = nullptr;
 
                     if (target) {
-                        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(target, TYPEMASK_UNIT, __FILE__, __LINE__));
+                        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(target, TYPE_UNIT, __FILE__, __LINE__));
 
                         if (unit) {
                             name = unit->GetUnitName(nullptr, 1);
@@ -2012,7 +2012,7 @@ void CGChat::TranslateMessage(uint32_t language, uint32_t skill, const char* tex
         return;
     }
 
-    if (!ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__) || skill >= 300) {
+    if (!ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__) || skill >= 300) {
         SStrCopy(buffer, text, size);
         return;
     }
@@ -2358,25 +2358,25 @@ int32_t CGChat::OnRaidInstanceMessage(void* param, NETMESSAGE msgId, uint32_t ti
     CGRaidInfo::GetMapNameWithDifficulty(mapName, sizeof(mapName), mapId, difficulty);
 
     switch (type) {
-        case 1: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_HOURS: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_HOURS", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 3600);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 2: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_MINUTES: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_MIN", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 60);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 3: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WARNING_MINUTES_SOON: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_WARNING_MIN_SOON", -1, GENDER_NOT_APPLICABLE), mapName, seconds / 60);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
         }
 
-        case 4: {
+        case CGChat::RAID_INSTANCE_MESSAGE::WELCOME: {
             uint8_t locked;
             uint8_t extended;
             msg->Get(locked);
@@ -2385,7 +2385,7 @@ int32_t CGChat::OnRaidInstanceMessage(void* param, NETMESSAGE msgId, uint32_t ti
             break;
         }
 
-        case 5: {
+        case CGChat::RAID_INSTANCE_MESSAGE::EXPIRED: {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("RAID_INSTANCE_EXPIRED", -1, GENDER_NOT_APPLICABLE), mapName);
             CGChat::AddChatMessage(text, CHAT_MSG_SYSTEM, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             break;
@@ -2439,9 +2439,9 @@ int32_t CGChat::OnInstanceResetFailed(void* param, NETMESSAGE msgId, uint32_t ti
 
     if (!reason) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED", -1, GENDER_NOT_APPLICABLE), mapName);
-    } else if (reason == 1) {
+    } else if (reason == CGChat::INSTANCE_RESET_FAILURE::OFFLINE) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED_OFFLINE", -1, GENDER_NOT_APPLICABLE), mapName);
-    } else if (reason == 2) {
+    } else if (reason == CGChat::INSTANCE_RESET_FAILURE::ZONING) {
         SStrPrintf(text, sizeof(text), FrameScript_GetText("INSTANCE_RESET_FAILED_ZONING", -1, GENDER_NOT_APPLICABLE), mapName);
     }
 
@@ -2484,7 +2484,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
     int32_t rebuild = 0;
 
     switch (notify) {
-        case 0: {
+        case CGChat::CHANNEL_NOTIFY::JOINED: {
             type = CHAT_MSG_CHANNEL_JOIN;
             msg->Get(guid.m_guid);
 
@@ -2495,7 +2495,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 1: {
+        case CGChat::CHANNEL_NOTIFY::LEFT: {
             type = CHAT_MSG_CHANNEL_LEAVE;
             msg->Get(guid.m_guid);
 
@@ -2506,7 +2506,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 2: {
+        case CGChat::CHANNEL_NOTIFY::YOU_JOINED: {
             msg->Get(flags);
             msg->Get(zoneChannelID);
             msg->Get(channelFlags);
@@ -2534,26 +2534,27 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 3: {
+        case CGChat::CHANNEL_NOTIFY::YOU_LEFT: {
             msg->Get(zoneChannelID);
             msg->Get(suspended);
             type = CHAT_MSG_CHANNEL_NOTICE;
             ChatChannel* channel = zoneChannelID ? CGChat::GetChannelByChatChannelID(zoneChannelID) : GetChannelByName(channelName);
 
-            if (channel) {
-                if (channel->m_unkA0 || !suspended) {
-                    SStrCopy(text, "YOU_LEFT", sizeof(text));
-                    reset = 1;
-                } else {
-                    SStrCopy(text, "SUSPENDED", sizeof(text));
-                }
+            // FORK FIX (DustinHendrickson 764ed1ad): stock bug, the exe (0x50E319) leaves text empty when the client no
+            // longer tracks the channel (left already while changing zones); FrameXML's CHANNEL_NOTICE handler then
+            // formats CHAT__NOTICE (nil) and raises a Lua error. Treat it as left.
+            if (!channel || channel->m_unkA0 || !suspended) {
+                SStrCopy(text, "YOU_LEFT", sizeof(text));
+                reset = 1;
+            } else {
+                SStrCopy(text, "SUSPENDED", sizeof(text));
             }
 
             CGChat::LeftChannel(zoneChannelID, channelName);
             break;
         }
 
-        case 4: {
+        case CGChat::CHANNEL_NOTIFY::WRONG_PASSWORD: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "WRONG_PASSWORD", sizeof(text));
             reset = 1;
@@ -2561,33 +2562,33 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 5: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MEMBER: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_MEMBER", sizeof(text));
             break;
         }
 
-        case 6: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MODERATOR: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_MODERATOR", sizeof(text));
             break;
         }
 
-        case 7: {
+        case CGChat::CHANNEL_NOTIFY::PASSWORD_CHANGED: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "PASSWORD_CHANGED", sizeof(text));
             break;
         }
 
-        case 8: {
+        case CGChat::CHANNEL_NOTIFY::OWNER_CHANGED: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "OWNER_CHANGED", sizeof(text));
             break;
         }
 
-        case 9: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_NOT_FOUND: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2595,13 +2596,13 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 10: {
+        case CGChat::CHANNEL_NOTIFY::NOT_OWNER: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_OWNER", sizeof(text));
             break;
         }
 
-        case 11: {
+        case CGChat::CHANNEL_NOTIFY::CHANNEL_OWNER: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2609,7 +2610,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 12: {
+        case CGChat::CHANNEL_NOTIFY::FLAGS_CHANGED: {
             msg->Get(guid.m_guid);
             msg->Get(oldFlags);
             msg->Get(newFlags);
@@ -2617,41 +2618,41 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             return 1;
         }
 
-        case 13: {
+        case CGChat::CHANNEL_NOTIFY::ANNOUNCEMENTS_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "ANNOUNCEMENTS_ON", sizeof(text));
             break;
         }
 
-        case 14: {
+        case CGChat::CHANNEL_NOTIFY::ANNOUNCEMENTS_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "ANNOUNCEMENTS_OFF", sizeof(text));
             break;
         }
 
-        case 15: {
+        case CGChat::CHANNEL_NOTIFY::MODERATION_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "MODERATION_ON", sizeof(text));
             break;
         }
 
-        case 16: {
+        case CGChat::CHANNEL_NOTIFY::MODERATION_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "MODERATION_OFF", sizeof(text));
             break;
         }
 
-        case 17: {
+        case CGChat::CHANNEL_NOTIFY::MUTED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "MUTED", sizeof(text));
             break;
         }
 
-        case 18: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_KICKED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2659,14 +2660,14 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 19: {
+        case CGChat::CHANNEL_NOTIFY::BANNED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "BANNED", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 20: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_BANNED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2674,7 +2675,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 21: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_UNBANNED: {
             msg->Get(guid.m_guid);
             msg->Get(targetGuid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2682,7 +2683,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 22: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_NOT_BANNED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2690,14 +2691,14 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 23: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_ALREADY_MEMBER: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "PLAYER_ALREADY_MEMBER", sizeof(text));
             break;
         }
 
-        case 24: {
+        case CGChat::CHANNEL_NOTIFY::INVITE: {
             msg->Get(guid.m_guid);
 
             if ((FriendList::s_friendList && FriendList::s_friendList->IsIgnored(guid, true)) || (guid.m_guid & 0xF000000000000000ULL) || !(guid.m_guid & 0xF07FFFFFFFFFFFFFULL) || s_inviteChannelName[0]) {
@@ -2717,33 +2718,33 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 25: {
+        case CGChat::CHANNEL_NOTIFY::INVITE_WRONG_FACTION: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "INVITE_WRONG_FACTION", sizeof(text));
             break;
         }
 
-        case 26: {
+        case CGChat::CHANNEL_NOTIFY::WRONG_FACTION: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "WRONG_FACTION", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 27: {
+        case CGChat::CHANNEL_NOTIFY::INVALID_NAME: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "INVALID_NAME", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 28: {
+        case CGChat::CHANNEL_NOTIFY::NOT_MODERATED: {
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "NOT_MODERATED", sizeof(text));
             break;
         }
 
-        case 29: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_INVITED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2751,7 +2752,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 30: {
+        case CGChat::CHANNEL_NOTIFY::PLAYER_INVITE_BANNED: {
             msg->GetString(extra, sizeof(extra));
             senderName = extra;
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
@@ -2759,27 +2760,27 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 31: {
+        case CGChat::CHANNEL_NOTIFY::THROTTLED: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "THROTTLED", sizeof(text));
             break;
         }
 
-        case 32: {
+        case CGChat::CHANNEL_NOTIFY::NOT_IN_AREA: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_IN_AREA", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 33: {
+        case CGChat::CHANNEL_NOTIFY::NOT_IN_LFG: {
             type = CHAT_MSG_CHANNEL_NOTICE;
             SStrCopy(text, "NOT_IN_LFG", sizeof(text));
             reset = 1;
             break;
         }
 
-        case 34: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_ON: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "VOICE_ON", sizeof(text));
@@ -2793,7 +2794,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 35: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_OFF: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             SStrCopy(text, "VOICE_OFF", sizeof(text));
@@ -2807,7 +2808,7 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
             break;
         }
 
-        case 36: {
+        case CGChat::CHANNEL_NOTIFY::VOICE_ON_SILENT: {
             msg->Get(guid.m_guid);
             type = CHAT_MSG_CHANNEL_NOTICE_USER;
             ChatChannel* channel = zoneChannelID ? CGChat::GetChannelByChatChannelID(zoneChannelID) : GetChannelByName(channelName);
@@ -2825,13 +2826,16 @@ int32_t CGChat::OnChannelNotify(void* param, NETMESSAGE msgId, uint32_t time, CD
         }
     }
 
-    CGChat::AddChatMessage(text, type, senderName, 0, displayName, nullptr, nullptr, guid, 0, targetGuid, 0, false, nullptr);
+    // FORK FIX (DustinHendrickson 764ed1ad): an empty notice name is a nil-format Lua error in FrameXML
+    if (text[0]) {
+        CGChat::AddChatMessage(text, type, senderName, 0, displayName, nullptr, nullptr, guid, 0, targetGuid, 0, false, nullptr);
+    }
 
     if (reset) {
         CGChat::ResetChannel(zoneChannelID, channelName);
     }
 
-    if (notify == 2 && extra[0]) {
+    if (notify == CGChat::CHANNEL_NOTIFY::YOU_JOINED && extra[0]) {
         CGChat::AddChatMessage(extra, type, nullptr, 0, channelName, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 
@@ -2972,13 +2976,13 @@ void CGChat::InitializeGame() {
 void CGChat::OnLogXPGain(int32_t amount) {
     char text[3000];
     SStrPrintf(text, sizeof(text), FrameScript_GetText("COMBATLOG_XPLOSS_FIRSTPERSON_UNNAMED", -1, GENDER_NOT_APPLICABLE), -amount);
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // VERIFY: d2c71361 manual
 // OFFSET: 0x0050B0F0
 void CGChat::InformTargetIcon(WOWGUID setter, WOWGUID target, int32_t index) {
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(target, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(target, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!unit) {
         return;
@@ -2995,7 +2999,7 @@ void CGChat::InformTargetIcon(WOWGUID setter, WOWGUID target, int32_t index) {
     if (name) {
         char buffer[3000];
         SStrPrintf(buffer, sizeof(buffer), FrameScript_GetText("TARGET_ICON_SET", -1, GENDER_NOT_APPLICABLE), name->m_name, name->m_name, index + 1, unitName);
-        CGChat::AddChatMessage(buffer, 52, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+        CGChat::AddChatMessage(buffer, CHAT_MSG_TARGETICONS, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 }
 
@@ -3005,7 +3009,7 @@ static void UnitCombatLogShowXPGained(CGUnit_C* unit, int32_t amount, float grou
     char text[3000];
     int32_t base = static_cast<int32_t>(amount / groupMult);
 
-    if (unit && (unit->m_obj->m_type & TYPEMASK_UNIT)) {
+    if (unit && (unit->m_obj->m_type & TYPE_UNIT)) {
         if (base == amount) {
             SStrPrintf(text, sizeof(text), FrameScript_GetText("COMBATLOG_XPGAIN_FIRSTPERSON", -1, GENDER_NOT_APPLICABLE), unit->GetUnitName(nullptr, 1), amount);
         } else {
@@ -3019,7 +3023,7 @@ static void UnitCombatLogShowXPGained(CGUnit_C* unit, int32_t amount, float grou
         SStrPrintf(text, sizeof(text), FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), amount, abs(amount - base));
     }
 
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // STATIC: 0x00AC7FB4
@@ -3028,7 +3032,7 @@ static const char* s_exhaustionTokens[7] = { nullptr, "COMBATLOG_XPGAIN_EXHAUSTI
 // VERIFY: 610143a3 manual
 // OFFSET: 0x0050B300
 void CGChat::LogXPGain(CGUnit_C* unit, int32_t amount, int32_t type, int32_t bonus, float groupMult, bool referAFriend) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (player) {
         player->AddWorldXPGainText(amount);
@@ -3073,7 +3077,7 @@ void CGChat::LogXPGain(CGUnit_C* unit, int32_t amount, int32_t type, int32_t bon
                 SStrPrintf(text, sizeof(text), FrameScript_GetText(token, -1, GENDER_NOT_APPLICABLE), unit->GetUnitName(nullptr, 1), amount, bonusText, exhaustion->m_name, abs(bonus - base));
             }
 
-            CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+            CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
             return;
         }
 
@@ -3092,7 +3096,7 @@ void CGChat::LogXPGain(CGUnit_C* unit, int32_t amount, int32_t type, int32_t bon
     ExhaustionRec* exhaustion = g_exhaustionDB.GetRecord(6);
     char text[3000];
     SStrPrintf(text, sizeof(text), FrameScript_GetText("COMBATLOG_XPGAIN_QUEST", -1, GENDER_NOT_APPLICABLE), amount, bonusText, exhaustion->m_name, rafBonus);
-    CGChat::AddChatMessage(text, 33, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
+    CGChat::AddChatMessage(text, CHAT_MSG_COMBAT_XP_GAIN, nullptr, 0, nullptr, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
 }
 
 // VERIFY: 294836e5 manual
@@ -3114,7 +3118,7 @@ int32_t Packet_SMSG_LOG_XPGAIN(void* param, NETMESSAGE msgId, uint32_t time, CDa
 
     uint8_t referAFriend = 0;
     msg->Get(referAFriend);
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (guid == ClntObjMgrGetActivePlayer()) {
         CGChat::OnLogXPGain(amount);
@@ -3225,7 +3229,7 @@ void CGChat::AddTextEmoteMessage(const WOWGUID& guid, uint32_t emote, const char
         return;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -3306,12 +3310,12 @@ void CGChat::AddTextEmoteMessage(const WOWGUID& guid, uint32_t emote, const char
 
         FrameScript_SignalEvent(SCRIPT_EVENT_CHAT_MSG_TEXT_EMOTE, "%s%s%s%s%s%s%d%d%s%d%d%s%u", buffer, sender->m_name, languageName, "", "", "", 0, 0, "", 0, 0, guidString, 0);
 
-        if (s_chatLogging[0]) {
-            SLogWrite(s_chatLog[0], "%s", buffer);
+        if (s_chatLogging[CGChat::LOG_TYPE::CHAT_LOG]) {
+            SLogWrite(s_chatLog[CGChat::LOG_TYPE::CHAT_LOG], "%s", buffer);
         }
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         unit->PlayTextEmoteSound(emote, emoteNum);
@@ -3407,10 +3411,10 @@ const char* CGChat::GetChannelStringForDisplay(int32_t session, int32_t* type) {
         return nullptr;
     }
 
-    int32_t displayType = CGChat::s_displayChannels[session].m_type;
+    DisplayChannel::TYPE displayType = CGChat::s_displayChannels[session].m_type;
 
     if (displayType) {
-        if (displayType == 2 || displayType == 3 || displayType == 1) {
+        if (displayType == DisplayChannel::TYPE::PARTY || displayType == DisplayChannel::TYPE::RAID || displayType == DisplayChannel::TYPE::BATTLEGROUND) {
             *type = displayType;
             return "";
         }
@@ -3436,7 +3440,7 @@ const char* CGChat::GetChannelStringForDisplay(int32_t session, int32_t* type) {
         return nullptr;
     }
 
-    *type = 0;
+    *type = DisplayChannel::TYPE::CHANNEL;
     return channel->m_name;
 }
 
@@ -3623,7 +3627,7 @@ void SetCurrentActiveDisplayChannel(const char* name, int32_t type) {
 // VERIFY: 0d38fbc2 manual
 // OFFSET: 0x005045C0
 uint32_t BuildPartyDisplayList() {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
@@ -3659,7 +3663,7 @@ uint32_t BuildPartyDisplayList() {
 // VERIFY: c259157e manual
 // OFFSET: 0x00504720
 uint32_t BuildRaidDisplayList(int32_t type) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
@@ -3683,9 +3687,9 @@ uint32_t BuildRaidDisplayList(int32_t type) {
         PENDINGUSERLIST* user = &s_pendingUsers.m_data[i];
         uint8_t flags = 4;
 
-        if (member->m_rank == 2) {
+        if (member->m_rank == CGRaidMember::RANK::LEADER) {
             flags = 7;
-        } else if (member->m_rank == 1) {
+        } else if (member->m_rank == CGRaidMember::RANK::ASSISTANT) {
             flags = 6;
         }
 
@@ -3706,7 +3710,7 @@ void RebuildDisplayChannelList(int32_t signal) {
     memset(CGChat::s_displayChannels, 0, sizeof(CGChat::s_displayChannels));
 
     for (uint32_t i = 0; i < sizeof(CGChat::s_displayChannels) / sizeof(CGChat::s_displayChannels[0]); i++) {
-        CGChat::s_displayChannels[i].m_headerIndex = -1;
+        CGChat::s_displayChannels[i].m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
     }
 
     int32_t battleground;
@@ -3715,8 +3719,8 @@ void RebuildDisplayChannelList(int32_t signal) {
 
     if (CGRaidInfo::m_numMembers && CGRaidInfo::IsPVPRaid()) {
         battleground = 1;
-        party = ComSatClient_HasSession(2, "") || CGPartyInfo::m_members[0];
-        raid = ComSatClient_HasSession(3, "");
+        party = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::PARTY, "") || CGPartyInfo::m_members[0];
+        raid = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::RAID, "");
     } else {
         battleground = 0;
         party = CGPartyInfo::m_members[0].m_guid != 0;
@@ -3726,10 +3730,10 @@ void RebuildDisplayChannelList(int32_t signal) {
     uint32_t count = 1;
     DisplayChannel* group = &CGChat::s_displayChannels[0];
     group->m_channelIndex = 0;
-    group->m_headerIndex = 0;
-    group->m_collapsed = s_collapsedHeaders[0];
-    group->m_flags = 0;
-    group->m_type = 4;
+    group->m_headerIndex = DisplayChannel::HEADER_INDEX::GROUP_HEADER;
+    group->m_collapsed = s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER];
+    group->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
+    group->m_type = DisplayChannel::TYPE::HEADER;
     group->m_voiceEnabled = 0;
     group->m_count = party;
 
@@ -3741,35 +3745,35 @@ void RebuildDisplayChannelList(int32_t signal) {
         group->m_count++;
     }
 
-    if (!s_collapsedHeaders[0]) {
+    if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
         if (party && !raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
-            entry->m_channelIndex = -1;
-            entry->m_headerIndex = -1;
+            entry->m_channelIndex = DisplayChannel::PARTY_INDEX;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
-            entry->m_flags = 0;
+            entry->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
             entry->m_enabled = 1;
-            entry->m_type = 2;
-            entry->m_voiceEnabled = ComSatClient_HasSession(2, "");
+            entry->m_type = DisplayChannel::TYPE::PARTY;
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::PARTY, "");
             entry->m_count = CGPartyInfo::GetNumPartyMembers() + 1;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
             count = 2;
         } else if (raid) {
             DisplayChannel* entry = &CGChat::s_displayChannels[1];
-            entry->m_channelIndex = -2;
-            entry->m_headerIndex = -1;
+            entry->m_channelIndex = DisplayChannel::RAID_INDEX;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
-            entry->m_flags = 0;
+            entry->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
             entry->m_enabled = 1;
-            entry->m_type = 3;
-            entry->m_voiceEnabled = ComSatClient_HasSession(3, "");
+            entry->m_type = DisplayChannel::TYPE::RAID;
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::RAID, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
@@ -3778,16 +3782,16 @@ void RebuildDisplayChannelList(int32_t signal) {
 
         if (battleground) {
             DisplayChannel* entry = &CGChat::s_displayChannels[count];
-            entry->m_channelIndex = -3;
-            entry->m_headerIndex = -1;
+            entry->m_channelIndex = DisplayChannel::BATTLEGROUND_INDEX;
+            entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
             entry->m_collapsed = 0;
-            entry->m_flags = 0;
+            entry->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
             entry->m_enabled = 1;
-            entry->m_type = 1;
-            entry->m_voiceEnabled = ComSatClient_HasSession(1, "");
+            entry->m_type = DisplayChannel::TYPE::BATTLEGROUND;
+            entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::BATTLEGROUND, "");
             entry->m_count = CGRaidInfo::m_numMembers;
 
-            if (!s_collapsedHeaders[0]) {
+            if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::GROUP_HEADER]) {
                 group->m_collapsed = 0;
             }
 
@@ -3798,20 +3802,20 @@ void RebuildDisplayChannelList(int32_t signal) {
     int32_t zoneHeader = -1;
     int32_t customHeader = -1;
 
-    for (uint32_t header = 1; header < 3; header++) {
+    for (uint32_t header = DisplayChannel::HEADER_INDEX::WORLD_HEADER; header < DisplayChannel::HEADER_INDEX::NUM_HEADERS; header++) {
         DisplayChannel* entry = &CGChat::s_displayChannels[count];
         entry->m_channelIndex = 0;
-        entry->m_headerIndex = header;
+        entry->m_headerIndex = static_cast<DisplayChannel::HEADER_INDEX>(header);
         entry->m_collapsed = s_collapsedHeaders[header];
-        entry->m_flags = 0;
+        entry->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
         entry->m_enabled = 0;
-        entry->m_type = 4;
+        entry->m_type = DisplayChannel::TYPE::HEADER;
         entry->m_voiceEnabled = 0;
         entry->m_count = 0;
 
-        if (header == 1) {
+        if (header == DisplayChannel::HEADER_INDEX::WORLD_HEADER) {
             zoneHeader = count;
-        } else if (header == 2) {
+        } else if (header == DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
             customHeader = count;
         }
 
@@ -3826,15 +3830,15 @@ void RebuildDisplayChannelList(int32_t signal) {
 
             int32_t parent;
 
-            if (channel->m_zoneChannelID && header == 1) {
-                if (!s_collapsedHeaders[1]) {
+            if (channel->m_zoneChannelID && header == DisplayChannel::HEADER_INDEX::WORLD_HEADER) {
+                if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::WORLD_HEADER]) {
                     entry = &CGChat::s_displayChannels[count++];
-                    entry->m_flags |= 1;
+                    entry->m_flags = static_cast<DisplayChannel::FLAGS>(entry->m_flags | DisplayChannel::FLAGS::WORLD_CHANNEL);
                     entry->m_collapsed = 0;
                     entry->m_channelIndex = i;
-                    entry->m_headerIndex = -1;
+                    entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
                     entry->m_enabled = channel->m_unk9C == 0;
-                    entry->m_type = 0;
+                    entry->m_type = DisplayChannel::TYPE::CHANNEL;
                     entry->m_voiceEnabled = 0;
                     entry->m_count = 0;
 
@@ -3847,11 +3851,11 @@ void RebuildDisplayChannelList(int32_t signal) {
 
                 parent = zoneHeader;
             } else {
-                if (channel->m_zoneChannelID || header != 2) {
+                if (channel->m_zoneChannelID || header != DisplayChannel::HEADER_INDEX::CUSTOM_HEADER) {
                     continue;
                 }
 
-                if (!s_collapsedHeaders[2]) {
+                if (!s_collapsedHeaders[DisplayChannel::HEADER_INDEX::CUSTOM_HEADER]) {
                     if (channel->m_unkA0 == 1) {
                         continue;
                     }
@@ -3859,11 +3863,11 @@ void RebuildDisplayChannelList(int32_t signal) {
                     entry = &CGChat::s_displayChannels[count++];
                     entry->m_channelIndex = i;
                     entry->m_collapsed = 0;
-                    entry->m_headerIndex = -1;
-                    entry->m_flags = 0;
+                    entry->m_headerIndex = DisplayChannel::HEADER_INDEX::NO_HEADER;
+                    entry->m_flags = DisplayChannel::FLAGS::NO_FLAGS;
                     entry->m_enabled = channel->m_unkA0 == 0;
-                    entry->m_type = 0;
-                    entry->m_voiceEnabled = ComSatClient_HasSession(0, channel->m_name);
+                    entry->m_type = DisplayChannel::TYPE::CHANNEL;
+                    entry->m_voiceEnabled = ComSatClient_HasSession(COMSATDATA::SESSION_TYPE::CHANNEL, channel->m_name);
                     entry->m_count = 0;
 
                     if (customHeader < 0) {
@@ -3946,21 +3950,21 @@ void CGChat::HandleFlagsChanged(WOWGUID guid, uint8_t oldFlags, uint8_t newFlags
         s_activeDisplayChannelFlags = newFlags;
     }
 
-    if (!(oldFlags & 0x2) && (newFlags & 0x2)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR)) {
         CGChat::AddChatMessage("SET_MODERATOR", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x2) && !(newFlags & 0x2)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR)) {
         CGChat::AddChatMessage("UNSET_MODERATOR", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 
-    if (!(oldFlags & 0x4) && (newFlags & 0x4)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
         CGChat::AddChatMessage("SET_VOICE", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x4) && !(newFlags & 0x4)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
         CGChat::AddChatMessage("UNSET_VOICE", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 
-    if (!(oldFlags & 0x10) && (newFlags & 0x10)) {
+    if (!(oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK) && (newFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK)) {
         CGChat::AddChatMessage("SET_SPEAK", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
-    } else if ((oldFlags & 0x10) && !(newFlags & 0x10)) {
+    } else if ((oldFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK) && !(newFlags & CGChat::CHANNEL_MEMBER_FLAGS::SPEAK)) {
         CGChat::AddChatMessage("UNSET_SPEAK", CHAT_MSG_CHANNEL_NOTICE_USER, record->m_name, 0, channel, nullptr, nullptr, WOWGUID(), 0, WOWGUID(), 0, false, nullptr);
     }
 }
@@ -4034,7 +4038,7 @@ void CGChat::ProcessPendingChatQueue() {
 // VERIFY: d5d65c21 manual
 // OFFSET: 0x0050DF80
 void CGChat::EnterWorld() {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
     CGChat::m_afk = player && (player->m_player->m_playerFlags & 0x2) ? 1 : 0;
     s_queueChat = 0;
     CGChat::ProcessPendingChatQueue();
@@ -4042,14 +4046,14 @@ void CGChat::EnterWorld() {
 
 // VERIFY: bff5dc80 manual
 // OFFSET: 0x0050BA10
-void CGChat::LogReactionChanged(int32_t faction, int32_t reaction) {
+void CGChat::LogReactionChanged(int32_t faction, UNIT_REACTION reaction) {
     FactionRec* rec = g_factionDB.GetRecord(faction);
 
     if (!rec) {
         return;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -4115,8 +4119,8 @@ void CGChat::AddCombatMessage(const char* text) {
         return;
     }
 
-    if (s_chatLogging[1]) {
-        SLogWrite(s_chatLog[1], "%s", text);
+    if (s_chatLogging[CGChat::LOG_TYPE::COMBAT_LOG]) {
+        SLogWrite(s_chatLog[CGChat::LOG_TYPE::COMBAT_LOG], "%s", text);
     }
 }
 
@@ -4371,7 +4375,7 @@ void CGChat::UpdateGuildStatus() {
         return;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player || !FindGuildRecruitmentChannel()) {
         return;
@@ -4998,7 +5002,7 @@ const char* CGChat::GetChannelShortName(int32_t number, bool includeInactive) {
 // OFFSET: 0x004FF4F0
 uint32_t CGChat::FindDisplayChannelIndex(const char* name, int32_t type) {
     for (uint32_t i = 0; i < s_numDisplayChannels; i++) {
-        if (static_cast<uint32_t>(CGChat::s_displayChannels[i].m_channelIndex) > CGChat::s_channels.m_count || CGChat::s_displayChannels[i].m_headerIndex >= 0) {
+        if (static_cast<uint32_t>(CGChat::s_displayChannels[i].m_channelIndex) > CGChat::s_channels.m_count || CGChat::s_displayChannels[i].m_headerIndex >= DisplayChannel::HEADER_INDEX::GROUP_HEADER) {
             continue;
         }
 
@@ -5120,12 +5124,12 @@ void CGChat::JoiningParty(bool raid, int32_t pvp) {
     }
 
     if (pvp) {
-        if (g_autojoinBGVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == 4) {
-            CGChat::SetActiveVoiceSession("", 1, -1);
+        if (g_autojoinBGVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == COMSATDATA::SESSION_TYPE::NONE) {
+            CGChat::SetActiveVoiceSession("", COMSATDATA::SESSION_TYPE::BATTLEGROUND, -1);
             RebuildDisplayChannelList(0);
         }
-    } else if (g_autojoinPartyVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == 4) {
-        CGChat::SetActiveVoiceSession("", raid ? 3 : 2, -1);
+    } else if (g_autojoinPartyVoiceCVar->m_intValue && ComSatClient_GetCurrentSessionType() == COMSATDATA::SESSION_TYPE::NONE) {
+        CGChat::SetActiveVoiceSession("", raid ? COMSATDATA::SESSION_TYPE::RAID : COMSATDATA::SESSION_TYPE::PARTY, -1);
         RebuildDisplayChannelList(0);
     }
 }
@@ -5133,7 +5137,7 @@ void CGChat::JoiningParty(bool raid, int32_t pvp) {
 // VERIFY: 9faa2cc3 manual
 // OFFSET: 0x005072B0
 void CGChat::ShutdownGame() {
-    for (uint32_t i = 0; i < 2; i++) {
+    for (uint32_t i = CGChat::LOG_TYPE::CHAT_LOG; i < CGChat::LOG_TYPE::NUM_LOG_TYPES; i++) {
         if (s_chatLog[i]) {
             SLogClose(s_chatLog[i]);
         }
@@ -5236,16 +5240,16 @@ int32_t CGChat::OnUserListUpdate(void* param, NETMESSAGE msgId, uint32_t time, C
 
         user->m_flags = memberFlags;
 
-        if (ComSatClient_IsMemberInVoiceSession(user->m_guid, 0, channelName)) {
-            user->m_flags |= 0x40;
+        if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
         }
 
-        if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, 0, channelName)) {
-            user->m_flags |= 0x80;
+        if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
         }
 
-        if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, 0, channelName)) {
-            user->m_flags |= 0x20;
+        if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, channelName)) {
+            user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
         }
 
         if (displayIndex) {
@@ -5397,7 +5401,7 @@ int32_t CGChat::GetActiveVoiceSession() {
 // VERIFY: 838b84c3 manual
 // OFFSET: 0x00500030
 int32_t CGChat::SetActiveVoiceSession(const char* name, int32_t type, int32_t index) {
-    if (type == 4) {
+    if (type == COMSATDATA::SESSION_TYPE::NONE) {
         if (CGChat::s_displayChannels[s_activeVoiceChannel].m_voiceEnabled) {
             FrameScript_SignalEvent(SCRIPT_EVENT_CHANNEL_VOICE_UPDATE, "%d%d", s_activeVoiceChannel + 1, CGChat::s_displayChannels[s_activeVoiceChannel].m_voiceEnabled);
         } else {
@@ -5523,16 +5527,16 @@ int32_t CGChat::OnDisplayChannelList(CDataStore* msg) {
             user->m_guid = guid;
             user->m_flags = userFlags;
 
-            if (ComSatClient_IsMemberInVoiceSession(user->m_guid, 0, name)) {
-                user->m_flags |= 0x40;
+            if (ComSatClient_IsMemberInVoiceSession(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
             }
 
-            if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, 0, name)) {
-                user->m_flags |= 0x80;
+            if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
             }
 
-            if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, 0, name)) {
-                user->m_flags |= 0x20;
+            if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, COMSATDATA::SESSION_TYPE::CHANNEL, name)) {
+                user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
             }
         }
 
@@ -5606,57 +5610,57 @@ void CGChat::LeaveWorld() {
 
 // VERIFY: 32bfa443 manual
 // OFFSET: 0x004FB240
-static uint32_t GetComplaintPriority(int32_t type, uint32_t channel) {
+static CGChat::COMPLAINT_PRIORITY GetComplaintPriority(int32_t type, uint32_t channel) {
     switch (type) {
         case CHAT_MSG_WHISPER:
         case CHAT_MSG_BATTLENET:
-            return 0;
+            return CGChat::COMPLAINT_PRIORITY::WHISPER_OR_BATTLENET;
 
         case CHAT_MSG_CHANNEL:
-            return channel ? 1 : 2;
+            return channel ? CGChat::COMPLAINT_PRIORITY::CHANNEL_NONZERO : CGChat::COMPLAINT_PRIORITY::CHANNEL_ZERO;
 
         case CHAT_MSG_BATTLEGROUND_LEADER:
-            return 3;
+            return CGChat::COMPLAINT_PRIORITY::BATTLEGROUND_LEADER;
 
         case CHAT_MSG_BATTLEGROUND:
-            return 4;
+            return CGChat::COMPLAINT_PRIORITY::BATTLEGROUND;
 
         case CHAT_MSG_RAID_LEADER:
-            return 5;
+            return CGChat::COMPLAINT_PRIORITY::RAID_LEADER;
 
         case CHAT_MSG_RAID_WARNING:
-            return 6;
+            return CGChat::COMPLAINT_PRIORITY::RAID_WARNING;
 
         case CHAT_MSG_RAID:
-            return 7;
+            return CGChat::COMPLAINT_PRIORITY::RAID;
 
         case CHAT_MSG_PARTY_LEADER:
-            return 8;
+            return CGChat::COMPLAINT_PRIORITY::PARTY_LEADER;
 
         case CHAT_MSG_PARTY:
-            return 9;
+            return CGChat::COMPLAINT_PRIORITY::PARTY;
 
         case CHAT_MSG_YELL:
-            return 10;
+            return CGChat::COMPLAINT_PRIORITY::YELL;
 
         case CHAT_MSG_SAY:
-            return 11;
+            return CGChat::COMPLAINT_PRIORITY::SAY;
 
         case CHAT_MSG_EMOTE:
-            return 12;
+            return CGChat::COMPLAINT_PRIORITY::EMOTE;
 
         case CHAT_MSG_AFK:
-            return 13;
+            return CGChat::COMPLAINT_PRIORITY::AFK;
     }
 
-    return type != CHAT_MSG_DND ? 0xFFFFFFFF : 14;
+    return type != CHAT_MSG_DND ? CGChat::COMPLAINT_PRIORITY::UNSUPPORTED : CGChat::COMPLAINT_PRIORITY::DND;
 }
 
 // VERIFY: 75e6d3dd auto
 // OFFSET: 0x004FB300
 ChatRecord* GetChatRecordEx(const char* name, const char* text, uint32_t lineID) {
     ChatRecord* best = nullptr;
-    uint32_t bestPriority = 0xFFFFFFFF;
+    CGChat::COMPLAINT_PRIORITY bestPriority = CGChat::COMPLAINT_PRIORITY::UNSUPPORTED;
 
     for (uint32_t i = 0; i < 60; i++) {
         ChatRecord* record = &CGChat::m_chatHistory[(i + CGChat::m_currentChatIndex) % 60];
@@ -5665,7 +5669,7 @@ ChatRecord* GetChatRecordEx(const char* name, const char* text, uint32_t lineID)
             continue;
         }
 
-        uint32_t priority = GetComplaintPriority(record->m_type, record->m_unk17B0);
+        CGChat::COMPLAINT_PRIORITY priority = GetComplaintPriority(record->m_type, record->m_unk17B0);
 
         if (priority < bestPriority && (!name || !SStrCmpI(name, record->m_senderName, STORM_MAX_STR)) && (!text || !SStrCmpI(text, record->m_text, STORM_MAX_STR)) && (!lineID || lineID == record->m_lineID)) {
             best = record;
@@ -5707,22 +5711,22 @@ static void RebuildDisplayListMember(PENDINGUSERLIST* user, int32_t type, const 
         return;
     }
 
-    user->m_flags &= 0xF;
+    user->m_flags &= PENDINGUSERLIST::VOICE_FLAGS::BASE_FLAGS_MASK;
 
     if (!ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x10;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_UNSQUELCHED;
     }
 
     if (ComSatClient_IsMemberInVoiceSession(user->m_guid, type, name)) {
-        user->m_flags |= 0x40;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_SESSION_MEMBER;
     }
 
     if (ComSatClient_GetChannelMemberVoiceStatus(user->m_guid, type, name)) {
-        user->m_flags |= 0x80;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MEMBER_STATUS;
     }
 
     if (ComSatClient_IsPlayerMuted(user->m_guid) || ComSatClient_IsTalkerSquelchedInChannel(user->m_guid, type, name)) {
-        user->m_flags |= 0x20;
+        user->m_flags |= PENDINGUSERLIST::VOICE_FLAGS::VOICE_MUTED_OR_SQUELCHED;
     }
 }
 
@@ -5849,7 +5853,7 @@ void CGChat::SilencePartyMember(bool silence, const char* name) {
         return;
     }
 
-    WOWGUID guid = CGGameUI::ClosestObjectMatch(name, TYPEMASK_PLAYER, CGRaidInfo::m_numMembers ? 6 : 5, 0, 3.4028235e38f, 0);
+    WOWGUID guid = CGGameUI::ClosestObjectMatch(name, TYPE_PLAYER, CGRaidInfo::m_numMembers ? 6 : 5, 0, 3.4028235e38f, 0);
 
     if (!guid) {
         CGGameUI::DisplayError(ERR_TARGET_NOT_IN_GROUP_S, name);
@@ -5927,11 +5931,11 @@ void CGChat::DisplayPendingUserList(ChatChannel* channel) {
 
         const char* prefix = "";
 
-        if (user->m_flags & 0x1) {
+        if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::OWNER) {
             prefix = "*";
-        } else if (user->m_flags & 0x2) {
+        } else if (user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::MODERATOR) {
             prefix = "@";
-        } else if (!(user->m_flags & 0x4)) {
+        } else if (!(user->m_flags & CGChat::CHANNEL_MEMBER_FLAGS::VOICE)) {
             prefix = "#";
         }
 
@@ -6087,7 +6091,7 @@ void CGChat::LogHonorGain(CGUnit_C* unit, const WOWGUID& victim, int32_t rank, i
         return;
     }
 
-    CGUnit_C* target = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(victim, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* target = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(victim, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!target || honor <= 0) {
         return;
@@ -6209,7 +6213,7 @@ int32_t CGChat::OnTitleEarned(void* param, NETMESSAGE msgId, uint32_t time, CDat
         void* memory = SMemAlloc(sizeof(CEffect), __FILE__, __LINE__, 0);
         CEffect* effect = memory ? new (memory) CEffect() : nullptr;
         WOWGUID guid = player->m_obj->m_guid;
-        effect->AddSpecialEffect(9, guid, CGObject_C::EffectOnceHandler);
+        effect->AddSpecialEffect(SPECIALEFFECT_REPUTATION, guid, CGObject_C::EffectOnceHandler);
         effect->m_flags |= 0x20;
         effect->Release();
         SStrPrintf(text, sizeof(text), FrameScript_GetText("NEW_TITLE_EARNED", -1, GENDER_NOT_APPLICABLE), name);
@@ -6313,16 +6317,16 @@ void CombatLog::GetSpellLogLinkInfo(const WOWGUID& source, const WOWGUID& dest, 
         return;
     }
 
-    CGObject_C* object = ClntObjMgrObjectPtr(dest, TYPEMASK_OBJECT, __FILE__, __LINE__);
+    CGObject_C* object = ClntObjMgrObjectPtr(dest, TYPE_OBJECT, __FILE__, __LINE__);
 
     if (!object) {
         return;
     }
 
-    if (object->m_obj->m_type & TYPEMASK_ITEM) {
+    if (object->m_obj->m_type & TYPE_ITEM) {
         ItemStats_C* stats = g_itemDBCache.GetRecord(object->m_obj->m_entryID, WOWGUID(), nullptr, nullptr, false);
         CGChat::LogOpenLock(source, &spell, stats);
-    } else if (object->m_obj->m_type & TYPEMASK_GAMEOBJECT) {
+    } else if (object->m_obj->m_type & TYPE_GAMEOBJECT) {
         GameObjectStats_C* stats = g_gameObjectDBCache.GetRecord(object->m_obj->m_entryID, WOWGUID(), nullptr, nullptr, false);
         CGChat::LogOpenLock(source, &spell, stats);
     }

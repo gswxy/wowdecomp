@@ -1,4 +1,9 @@
+#include "WoW/Source/WorldClient/TerrainSunShadow.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
+#include "WoW/Source/WorldClient/FarLand.h"
+#include "WoW/Source/WorldClient/SkyClouds.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
+#include "Engine/Source/ShaderEffect/ShadowCache.h"
 #include <cmath>
 #include <new>
 #include <typeinfo>
@@ -32,6 +37,18 @@
 #include "WoW/Source/WorldClient/WorldParam.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "WoW/Source/Ui/WorldFrame.h"
+#include "Engine/Source/ShaderEffect/Types.h"
+
+static const float SUNRISE = 0.22916667f;
+static const float NOON = 0.5f;
+static const float SUNSET = 0.89583331f;
+static const float MOONRISE = 0.91666669f;
+static const float DAYEND = 1.0f;
+static const float MIDNIGHT = 0.0f;
+static const float MOONSET = 0.16666667f;
+static const float VALUE_SCALE = 1.25f;
+static const float SATURATION_SCALE = 0.33f;
+static const float DEFAULT_FOG_SCALER = 0.5f;
 
 // STATIC: 0x00AF4C20
 static C2Vector s_starFadeTable[4] = { C2Vector(0.125f, 1.0f), C2Vector(0.1875f, 0.0f), C2Vector(0.9375f, 0.0f), C2Vector(1.0f, 1.0f) };
@@ -77,6 +94,33 @@ DayNight::DNClouds DayNight::g_clouds;
 
 // STATIC: 0x00D38E28
 DayNight::DNPlanets DayNight::g_planets;
+
+// Not stock: toward the sun and moon discs (unit), as SetPlanets placed them, for CShadowQuery (gfxSunShadows).
+C3Vector DayNight::g_sunToward(0.0f, 0.0f, 1.0f);
+C3Vector DayNight::g_moonToward(0.0f, 0.0f, -1.0f);
+
+// Not stock: gfxSunArc, wxl-light's Sun.cpp (arc + handover) as it shipped in wxl-pack. The sun and moon cross the
+// sky east-south-west and the world's light is taken from the disc that is up, so the shading, the disc, the
+// shadows (CShadowQuery) and the fog's light (VolumetricFog) all come from one place: SetPlanets' g_sunToward /
+// g_moonToward and the body chosen here. 0 is the stock sky and light, exactly.
+static CVar* s_cvSunArc;
+static CVar* s_cvSunArcMatch;       // not stock: gfxSunArcMatch (PickLightBody)
+static CVar* s_cvSunArcDawnRamp;    // not stock: gfxSunArcDawnRamp (PickLightBody)
+static CVar* s_cvSunArcSkybox;      // not stock: gfxSunArcSkybox (end of SetColors)
+static CVar* s_cvDebugHour;         // not stock: debugHour (DayNight::DebugHour)
+static CVar* s_cvShadowFade;
+float DayNight::g_shadowFade = 1.0f;
+float DayNight::g_lightStrength = 1.0f;
+int32_t DayNight::g_lightBody;   // 0 the sun, 1 the moon: the body the light, the shadows and the fog come from
+
+bool DayNight::SunArc() {
+    return s_cvSunArc && s_cvSunArc->m_intValue;
+}
+
+// Not stock: debugHour, the hour (0-24) the sky, light and skyboxes are drawn for, or -1 for the game clock.
+float DayNight::DebugHour() {
+    return s_cvDebugHour && s_cvDebugHour->m_floatValue >= 0.0f ? fmodf(s_cvDebugHour->m_floatValue, 24.0f) : -1.0f;
+}
 
 // STATIC: 0x00D38EA8
 DayNight::DNSunGlare DayNight::g_sunGlare;
@@ -165,8 +209,12 @@ static C2Vector s_highlightCurve[6] = { C2Vector(0.125f, 0.0f), C2Vector(0.27083
 // STATIC: 0x00AF4BAC
 static C2Vector s_skyFaceCurve[6] = { C2Vector(0.125f, 1.0f), C2Vector(0.375f, 0.0f), C2Vector(0.5f, -0.5f), C2Vector(0.625f, -0.69999999f), C2Vector(0.75f, -0.5f), C2Vector(0.875f, 0.0f) };
 
+enum SKY_CONSTANTS : int32_t {
+    SKY_NUMBANDS = 7,
+};
+
 // STATIC: 0x00A41A90
-static const float s_skyThetaTable[7] = { 0.0f, 0.17f, 0.2f, 0.23f, 0.24f, 0.25f, 1.0f };
+static const float s_skyThetaTable[SKY_NUMBANDS] = { 0.0f, 0.17f, 0.2f, 0.23f, 0.24f, 0.25f, 1.0f };
 
 // STATIC: 0x00AF4DAC
 static const uint16_t s_planetIndices[4] = { 0, 1, 2, 3 };
@@ -290,6 +338,12 @@ void DayNight::LoadLightingBands(int32_t time, CurrentLight* light, const LightP
     light->m_skyColors[3] = DayNight::LoadLightIntBand(time, params, 5);
     light->m_skyColors[4] = DayNight::LoadLightIntBand(time, params, 6);
     light->m_skyColors[5] = DayNight::LoadLightIntBand(time, params, 7);
+
+    // not stock: foreverSky = Forever's own dome stops for the params ids VFog\\ForeverSky.bin lists (Lights.cpp)
+    if (const float forever = VolumetricFog::ForeverSkyStrength(); forever > 0.0f) {
+        DayNight::ForeverSkyStops(time, params, forever, light->m_skyColors);
+    }
+
     light->m_shadowOpacity = DayNight::LoadLightIntBand(time, params, 8);
     light->m_sunCloudColors[0] = DayNight::LoadLightIntBand(time, params, 9);
     light->m_sunCloudColors[1] = DayNight::LoadLightIntBand(time, params, 10);
@@ -1136,8 +1190,8 @@ void DayNight::SetLightColors() {
     C3Vector rgb(bands.m_ambient.r * (1.0f / 255.0f), bands.m_ambient.g * (1.0f / 255.0f), (1.0f / 255.0f) * bands.m_ambient.b);
     C3Vector hsv(0.0f, 0.0f, 0.0f);
     RGBtoHSV(rgb, hsv);
-    hsv.y = hsv.y * 0.33f;
-    hsv.z = hsv.z * 1.25f;
+    hsv.y = hsv.y * SATURATION_SCALE;
+    hsv.z = hsv.z * VALUE_SCALE;
     HSVtoRGB(hsv, rgb);
     info.m_light1.m_desatR = rgb.x;
     info.m_light1.m_desatG = rgb.y;
@@ -1184,20 +1238,31 @@ void DayNight::SetDirection() {
 // VERIFY: 3766e44c manual
 // OFFSET: 0x007EECC0
 void DayNight::SetPlanets() {
-    static C2Vector s_sunTheta[5] = { C2Vector(0.22916667f, 1.7453293f), C2Vector(0.49652779f, 0.087266468f), C2Vector(0.5f, 0.087266468f), C2Vector(0.50347221f, 0.087266468f), C2Vector(0.89583331f, 1.7453293f) };
-    static C2Vector s_sunPhi[3] = { C2Vector(0.22916667f, 0.78539819f), C2Vector(0.5f, 0.78539819f), C2Vector(0.89583331f, 0.78539819f) };
-    static C2Vector s_moonTheta[5] = { C2Vector(0.0f, 0.61086524f), C2Vector(0.0034722222f, 0.61086524f), C2Vector(0.16666667f, 1.7453293f), C2Vector(0.91666669f, 1.7453293f), C2Vector(0.99652779f, 0.61086524f) };
-    static C2Vector s_moonPhi[3] = { C2Vector(0.0f, 0.78539819f), C2Vector(0.16666667f, 0.78539819f), C2Vector(0.91666669f, 0.78539819f) };
-    static C2Vector s_moon2Theta[5] = { C2Vector(0.0f, 0.61086524f), C2Vector(0.0034722222f, 0.61086524f), C2Vector(0.16666667f, 1.7453293f), C2Vector(0.91666669f, 1.7453293f), C2Vector(0.99652779f, 0.61086524f) };
-    static C2Vector s_moon2Phi[3] = { C2Vector(0.0f, 2.3561945f), C2Vector(0.16666667f, 2.6179938f), C2Vector(0.91666669f, 2.8797934f) };
+    static C2Vector s_sunTheta[5] = { C2Vector(SUNRISE, 1.7453293f), C2Vector(0.49652779f, 0.087266468f), C2Vector(NOON, 0.087266468f), C2Vector(0.50347221f, 0.087266468f), C2Vector(SUNSET, 1.7453293f) };
+    static C2Vector s_sunPhi[3] = { C2Vector(SUNRISE, 0.78539819f), C2Vector(NOON, 0.78539819f), C2Vector(SUNSET, 0.78539819f) };
+    static C2Vector s_moonTheta[5] = { C2Vector(MIDNIGHT, 0.61086524f), C2Vector(0.0034722222f, 0.61086524f), C2Vector(MOONSET, 1.7453293f), C2Vector(MOONRISE, 1.7453293f), C2Vector(0.99652779f, 0.61086524f) };
+    static C2Vector s_moonPhi[3] = { C2Vector(MIDNIGHT, 0.78539819f), C2Vector(MOONSET, 0.78539819f), C2Vector(MOONRISE, 0.78539819f) };
+    static C2Vector s_moon2Theta[5] = { C2Vector(MIDNIGHT, 0.61086524f), C2Vector(0.0034722222f, 0.61086524f), C2Vector(MOONSET, 1.7453293f), C2Vector(MOONRISE, 1.7453293f), C2Vector(0.99652779f, 0.61086524f) };
+    static C2Vector s_moon2Phi[3] = { C2Vector(MIDNIGHT, 2.3561945f), C2Vector(MOONSET, 2.6179938f), C2Vector(MOONRISE, 2.8797934f) };
     static C2Vector s_sunScale[4] = { C2Vector(0.25f, 2.0f), C2Vector(0.28125f, 1.0f), C2Vector(0.84375f, 1.0f), C2Vector(0.875f, 2.0f) };
-    static C2Vector s_moonScale[4] = { C2Vector(0.041666672f, 1.0f), C2Vector(0.16666667f, 1.5f), C2Vector(0.91666669f, 1.5f), C2Vector(0.99930561f, 1.0f) };
+    static C2Vector s_moonScale[4] = { C2Vector(0.041666672f, 1.0f), C2Vector(MOONSET, 1.5f), C2Vector(MOONRISE, 1.5f), C2Vector(0.99930561f, 1.0f) };
+
+    // gfxSunArc (wxl-light Sun.cpp WriteTables): the key TIMES stay (sunrise, noon, sunset; moonrise, midnight,
+    // moonset), the angles change: the sun rises in the east, passes through the south 62 degrees up and sets in
+    // the west; the moon takes the same path at night, 55 degrees up. (x is north, y is west, so east is 270.)
+    // The moon's horizon keys move from 04:00/22:00 to 07:18/19:36 so it crosses the horizon within minutes of
+    // the sun (about 06:10 and 20:15), not two and three hours apart with no body in the sky.
+    static C2Vector s_arcSunTheta[5] = { C2Vector(0.22916667f, 1.7453293f), C2Vector(0.49652779f, 0.48869219f), C2Vector(0.5f, 0.48869219f), C2Vector(0.50347221f, 0.48869219f), C2Vector(0.89583331f, 1.7453293f) };
+    static C2Vector s_arcSunPhi[3] = { C2Vector(0.22916667f, 4.712389f), C2Vector(0.5f, 3.1415927f), C2Vector(0.89583331f, 1.5707964f) };
+    static C2Vector s_arcMoonTheta[5] = { C2Vector(0.0f, 0.61086524f), C2Vector(0.0034722222f, 0.61086524f), C2Vector(7.3f / 24.0f, 1.7453293f), C2Vector(19.6f / 24.0f, 1.7453293f), C2Vector(0.99652779f, 0.61086524f) };
+    static C2Vector s_arcMoonPhi[3] = { C2Vector(0.0f, 3.1415927f), C2Vector(7.3f / 24.0f, 1.5707964f), C2Vector(19.6f / 24.0f, 4.712389f) };
 
     DNInfo& info = DayNight::g_dnInfo;
     DNPlanets& planets = DayNight::g_planets;
+    const bool arc = DayNight::SunArc();
 
-    float theta = DayNight::InterpTable(s_sunTheta, 5, info.m_dayProgression);
-    float phi = DayNight::InterpTable(s_sunPhi, 3, info.m_dayProgression);
+    float theta = DayNight::InterpTable(arc ? s_arcSunTheta : s_sunTheta, 5, info.m_dayProgression);
+    float phi = DayNight::InterpTable(arc ? s_arcSunPhi : s_sunPhi, 3, info.m_dayProgression);
     float sinTheta = CMath::sin_(theta);
     float cosTheta = CMath::cos_(theta);
     float sinPhi = CMath::sin_(phi);
@@ -1208,11 +1273,12 @@ void DayNight::SetPlanets() {
     planets.m_sun.m_position.x = x * scale + info.m_cameraPos.x;
     planets.m_sun.m_position.y = y * scale + info.m_cameraPos.y;
     planets.m_sun.m_position.z = cosTheta * scale + info.m_cameraPos.z;
+    DayNight::g_sunToward = C3Vector(x, y, cosTheta);   // not stock (gfxSunShadows): before the camera is added
     planets.m_sun.m_scale = DayNight::InterpTable(s_sunScale, 4, info.m_dayProgression) * planets.m_sun.m_baseScale;
     DayNight::g_sunGlare.m_position = planets.m_sun.m_position;
 
-    theta = DayNight::InterpTable(s_moonTheta, 5, info.m_dayProgression);
-    phi = DayNight::InterpTable(s_moonPhi, 3, info.m_dayProgression);
+    theta = DayNight::InterpTable(arc ? s_arcMoonTheta : s_moonTheta, 5, info.m_dayProgression);
+    phi = DayNight::InterpTable(arc ? s_arcMoonPhi : s_moonPhi, 3, info.m_dayProgression);
     sinTheta = CMath::sin_(theta);
     cosTheta = CMath::cos_(theta);
     sinPhi = CMath::sin_(phi);
@@ -1223,6 +1289,7 @@ void DayNight::SetPlanets() {
     planets.m_moon.m_position.x = x * scale + info.m_cameraPos.x;
     planets.m_moon.m_position.y = y * scale + info.m_cameraPos.y;
     planets.m_moon.m_position.z = cosTheta * scale + info.m_cameraPos.z;
+    DayNight::g_moonToward = C3Vector(x, y, cosTheta);  // not stock (gfxSunShadows)
     planets.m_moon.m_scale = DayNight::InterpTable(s_moonScale, 4, info.m_dayProgression) * planets.m_moon.m_baseScale;
     DayNight::g_moonGlare.m_scaleMin = planets.m_moon.m_scale;
     DayNight::g_moonGlare.m_position = planets.m_moon.m_position;
@@ -1254,16 +1321,16 @@ void DayNight::SetPlanets() {
 
     float time = info.m_dayProgression;
 
-    if (time >= 0.22916667f && time < 0.5f) {
-        info.m_sunMoonPath = (time - 0.22916667f) * 3.6923077f;
+    if (time >= SUNRISE && time < NOON) {
+        info.m_sunMoonPath = (time - SUNRISE) * 3.6923077f;
         return;
     }
 
-    if (time >= 0.5f && time < 0.89583331f) {
-        info.m_sunMoonPath = 1.0f - (time - 0.5f) * 2.5263159f;
-    } else if (time >= 0.91666669f && time < 1.0f) {
-        info.m_sunMoonPath = (time - 0.91666669f) * 12.000003f;
-    } else if (time >= 0.0f && time < 0.16666667f) {
+    if (time >= NOON && time < SUNSET) {
+        info.m_sunMoonPath = 1.0f - (time - NOON) * 2.5263159f;
+    } else if (time >= MOONRISE && time < DAYEND) {
+        info.m_sunMoonPath = (time - MOONRISE) * 12.000003f;
+    } else if (time >= MIDNIGHT && time < MOONSET) {
         info.m_sunMoonPath = 1.0f - time * 6.0f;
     } else {
         info.m_sunMoonPath = 0.0f;
@@ -1335,7 +1402,7 @@ void DayNight::DNClouds::SetupBumpMap(C3Vector* shadeColor, C3Vector* sunColor, 
     DNInfo& info = DayNight::g_dnInfo;
     C3Vector light;
 
-    if (info.m_dayProgression < 0.2013889f || info.m_dayProgression > 0.9236111f) {
+    if (DayNight::SunArc() ? DayNight::g_lightBody == 1 : (info.m_dayProgression < 0.2013889f || info.m_dayProgression > 0.9236111f)) {
         light = DayNight::g_planets.m_moon.m_position;
     } else {
         light = DayNight::g_planets.m_sun.m_position;
@@ -1672,6 +1739,25 @@ void DayNight::DNSky::SetColors() {
         }
     }
 
+    // not stock: foreverSky = BENILLA sky.rs dome_stops: the five dome stops x the zone look's sky_tint and the horizon
+    // fog colour x its fog_tint, in gamma (quant255, clamped to the byte), for the dome only: the bands are restored at
+    // the end, so the world fog and everything else read the untinted colours (the stops are Forever's own since
+    // LoadLightingBands, the fog colour stays stock).
+    CImVector stockSky[6];
+    float skyTint[3], fogTint[3];
+    const bool foreverSky = VolumetricFog::ForeverSkyTint(skyTint, fogTint);
+    if (foreverSky) {
+        auto tint = [](uint8_t v, float t) { return static_cast<uint8_t>(std::fmin(std::floor(v * t + 0.5f), 255.0f)); };
+        for (int32_t i = 0; i < 6; i++) {
+            stockSky[i] = info.m_bands.m_skyColors[i];
+            const float* t = i < 5 ? skyTint : fogTint;
+            CImVector& c = info.m_bands.m_skyColors[i];
+            c.r = tint(c.r, t[0]);
+            c.g = tint(c.g, t[1]);
+            c.b = tint(c.b, t[2]);
+        }
+    }
+
     for (int32_t i = 0; i < 5; i++) {
         CImVector color;
         DayNight::ColorLerpBytes(&color, &info.m_bands.m_skyColors[1 + i], &info.m_bands.m_skyColors[1], highlight);
@@ -1734,6 +1820,12 @@ void DayNight::DNSky::SetColors() {
     }
 
     *colors = fog;
+
+    if (foreverSky) {
+        for (int32_t i = 0; i < 6; i++) {
+            info.m_bands.m_skyColors[i] = stockSky[i];
+        }
+    }
 }
 
 // VERIFY: 3e4634ac manual
@@ -1828,13 +1920,28 @@ void DayNight::RenderSky(CPortalView* view) {
         }
     }
 
+    // Not stock (skyClouds): wxl-light's sky and clouds in the sheet's slot; under the arc its disc stands in for the
+    // stock sun and moon.
+    const bool ourClouds = drawObjects && SkyClouds::Active();
+
     if (drawObjects) {
         DayNight::g_stars.Render();
-        DayNight::g_planets.m_sun.Render();
-        DayNight::g_planets.m_moon.Render();
-        DayNight::g_planets.m_moon2.Render();
+        if (!ourClouds || !SkyClouds::Disc()) {
+            DayNight::g_planets.m_sun.Render();
+            DayNight::g_planets.m_moon.Render();
+        }
+        // Not stock (gfxSunArc): the second moon keeps the stock tables (SetPlanets' s_moon2Theta/Phi, 135-165 degrees),
+        // so it is the old path's moon left in the sky; only the arc's sun and moon are drawn. (Its colour is never
+        // set but for the storm alpha, so stock shows it as a dark disc in rain and snow.)
+        if (!DayNight::SunArc()) {
+            DayNight::g_planets.m_moon2.Render();
+        }
         DayNight::g_sky.Render();
-        DayNight::g_clouds.Render();
+        if (ourClouds) {
+            SkyClouds::Draw();
+        } else {
+            DayNight::g_clouds.Render();
+        }
     }
 
     if (s_skyScene) {
@@ -1842,7 +1949,7 @@ void DayNight::RenderSky(CPortalView* view) {
         s_skyScene->AdvanceTime(elapsed);
         s_skySceneTimeMs += elapsed;
 
-        int32_t minutes = g_clientGameTime.GetHourAndMinutes();
+        int32_t minutes = DayNight::DebugHour() >= 0.0f ? static_cast<int32_t>(info.m_timeOfDay) : g_clientGameTime.GetHourAndMinutes();   // not stock: debugHour
 
         for (int32_t i = 0; i < 3; i++) {
             DayNight::SyncSkyAnimWithTime(info.m_blendSkybox[i], minutes);
@@ -2130,8 +2237,15 @@ void DayNight::UpdateFog() {
         info.m_fog.m_start = end * s_overrideFogStart;
         info.m_fog.m_density = s_overrideFogRate;
     } else {
-        if (info.m_bands.m_fogEnd < end) {
-            end = info.m_bands.m_fogEnd;
+        // FARVIEW: not in 12340. With far land drawing, the zone's curve is stretched by as much as the land reaches
+        // past the view distance (wxl-farfield game_fog: end = min(E * reach / farclip, reach)), so it fades into the
+        // haze instead of being fog colour past farclip. FogCap(end) == end when farLand is off (vfogaudit: stretched to 2.5 x, not the full reach).
+        const float cap = FarLand::FogCap(end);
+        const float bandsEnd = end > 0.0f ? info.m_bands.m_fogEnd * (cap / end) : info.m_bands.m_fogEnd;
+        end = cap;
+
+        if (bandsEnd < end) {
+            end = bandsEnd;
         }
 
         info.m_fog.m_end = end;
@@ -2465,7 +2579,7 @@ void DayNight::DNSky::GenSphere(float sphRadius) {
     uint16_t prevRowStart = 0;
     float prevTheta = 0.0f;
 
-    for (int32_t row = 0; row < 7; row++) {
+    for (int32_t row = 0; row < SKY_NUMBANDS; row++) {
         float theta = s_skyThetaTable[row] * 3.1415927f;
         float cosTheta = CMath::cos_(theta);
         float sinTheta = CMath::sin_(theta);
@@ -2568,8 +2682,19 @@ void DayNight::LoadMap(int32_t mapId) {
     info.m_flashBlend = 0;
     DayNight::s_lightFlags = 0;
     s_cvSkyCloudLOD = CVar::Register("SkyCloudLOD", nullptr, 0, "0", CWorldParam::CloudLODCallback, 1, false, nullptr, false);
+    s_cvSunArc = CVar::Register("gfxSunArc", "Sun and moon cross the sky and the world's light comes from them (0 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvSunArcMatch = CVar::Register("gfxSunArcMatch", "Under gfxSunArc, light the ground no steeper than the stock light for the hour (0 = full arc height, 1 = stock)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvSunArcSkybox = CVar::Register("gfxSunArcSkybox", "Under gfxSunArc, outdoor skybox models: 0 = none, 1 = stock, 2 = only the overlays drawn over the sky (auroras)", 1, "2", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    SkyClouds::RegisterCVars();
+    s_cvSunArcDawnRamp = CVar::Register("gfxSunArcDawnRamp", "Under gfxSunArc, degrees of sun/moon height over which its direct light fades in at dawn and out at dusk (4 = old ramp)", 1, "15", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvDebugHour = CVar::Register("debugHour", "Draw the sky, light, sun, moon, shadows and skyboxes for this hour (0-24); -1 = the game clock", 0, "-1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    s_cvShadowFade = CVar::Register("gfxShadowFade", "Shadows fade out as the sun or moon nears the horizon (0 = always full)", 1, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
     ConsoleCommandRegister("SkySunGlare", SkySunGlare, CATEGORY_GRAPHICS, "0, 1");
     DayNight::g_forceFullUpdate = 1;
+}
+
+// INLINED
+DayNight::DNOverrideSky::DNOverrideSky() : m_model(nullptr), m_animLengthMs(0), m_lastTimeOfDay(static_cast<uint32_t>(-2)), m_flags(0) {
 }
 
 // VERIFY: a23a774f manual
@@ -2674,7 +2799,7 @@ void DayNight::SetColors() {
         memset(&info.m_bands, 0xFF, sizeof(info.m_bands));
         info.m_bands.m_fogEnd = 1.0e10f;
         *reinterpret_cast<uint32_t*>(&info.m_bands.m_ambient) = 0xFF404040;
-        info.m_bands.m_fogStartMul = 0.5f;
+        info.m_bands.m_fogStartMul = DEFAULT_FOG_SCALER;
         info.m_bands.m_cloudTypeId = 0;
         info.m_bands.m_skyboxes[0].m_id = 0;
         info.m_bands.m_fogRate = 4.0f;
@@ -2794,8 +2919,140 @@ void DayNight::SetColors() {
         info.m_blendSkyboxWeight[count] = 0.0f;
     }
 
+    // Not stock (gfxSunArcSkybox): under the arc a skybox model's own sun, moon and sky disagree with the arc's light,
+    // so the outdoor ones go (mode 2 keeps the flag-2 overlays, auroras, drawn over the procedural sky). Here, at
+    // the source, every reader agrees: RenderSky draws the procedural sky, DNGlare and DNClouds see no skybox. The
+    // interior (WMO) skybox is set after this (SetBlendSky) and stays.
+    const int32_t skyboxMode = s_cvSunArcSkybox ? s_cvSunArcSkybox->m_intValue : 1;
+    if (DayNight::SunArc() && skyboxMode != 1) {
+        info.m_skybox = nullptr;
+        info.m_skyboxWeight = 0.0f;
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            if (skyboxMode == 2 && info.m_blendSkyboxFlags[i] && info.m_blendSkyboxWeight[i] > 0.0f) {
+                info.m_blendSkybox[kept] = info.m_blendSkybox[i];
+                info.m_blendSkyboxWeight[kept] = info.m_blendSkyboxWeight[i];
+                info.m_blendSkyboxFlags[kept] = info.m_blendSkyboxFlags[i];
+                kept++;
+            }
+        }
+        for (uint32_t i = kept; i < 3; i++) {
+            info.m_blendSkybox[i] = nullptr;
+            info.m_blendSkyboxWeight[i] = 0.0f;
+            info.m_blendSkyboxFlags[i] = 0;
+        }
+    }
+
     info.m_curve0 = DayNight::InterpTable(s_curveTable0, 4, info.m_dayProgression);
     info.m_curve1 = DayNight::InterpTable(s_curveTable1, 2, info.m_dayProgression);
+}
+
+/// How much of its light a body gives by its own height: all of it from 4 degrees up, none a degree under.
+static float BodyWeight(float elevDeg, float topDeg = 4.0f) {
+    float t = (elevDeg + 1.0f) / (topDeg + 1.0f);
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// gfxShadowFade: the shadows' share, wxl-light Sun.cpp's g_shadowK curve (the light body's BodyWeight), less the other
+// body's weight and the swap margin, so it is 0 on the frame g_lightBody changes and the shadows change sides unseen.
+static float ShadowFade(float wLight, float wOther) {
+    if (!s_cvShadowFade || !s_cvShadowFade->m_intValue) {
+        return 1.0f;
+    }
+
+    const float f = (wLight - wOther - 0.02f) / 0.98f;
+    return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+}
+
+// Not stock: picks DayNight::g_lightBody and, under gfxSunArc, makes the world's light that body's (wxl-light Sun.cpp
+// Handover). One light at a time: each body is worth BodyWeight of its height, the larger is the light (with a
+// margin, so they do not swap back and forth). The light comes from the body's own bearing, no lower than 10
+// degrees, and the weight is how much of the direct light is left; the rest, by the sine of the light's height,
+// goes to the ambient. So at dusk the sun's light sinks and fades where it sets, the sky alone lights the world for
+// a few minutes, then the moon's comes up from the moon's side: the change of side happens with both weights near
+// nothing. The shadows and the fog follow g_lightBody, so they change sides on the same frame.
+// Without gfxSunArc only the body is picked (the sun while it is up, else the moon, else the last), the light stock.
+static void PickLightBody() {
+    const C3Vector dir[2] = { DayNight::g_sunToward, DayNight::g_moonToward };   // unit (SetPlanets)
+    float elev[2];
+
+    for (int32_t b = 0; b < 2; b++) {
+        if (!std::isfinite(dir[b].z)) {
+            return;
+        }
+
+        float z = dir[b].z < -1.0f ? -1.0f : (dir[b].z > 1.0f ? 1.0f : dir[b].z);
+        elev[b] = asinf(z) * 57.29578f;
+    }
+
+    int32_t& body = DayNight::g_lightBody;
+
+    if (!DayNight::SunArc()) {
+        if (elev[0] > 0.0f) {
+            body = 0;
+        } else if (elev[1] > 0.0f) {
+            body = 1;
+        }
+
+        DayNight::g_shadowFade = ShadowFade(BodyWeight(elev[body]), BodyWeight(elev[1 - body]));
+        DayNight::g_lightStrength = 1.0f;
+        CShadowCache::SetShadowFade(DayNight::g_shadowFade);
+        return;
+    }
+
+    const float w[2] = { BodyWeight(elev[0]), BodyWeight(elev[1]) };
+
+    // The larger weight is the light (0.02 margin), so the handover falls with both weights near 0 (06:20, 20:14 on the
+    // arc tables) and the light crossfades through the sky alone. The discs do not follow it: SkyClouds draws each body
+    // that is up (7a38d7b7's -7.3 degree hold kept the set moon the light to 07:00, then the sun popped in at full).
+    if (w[1 - body] > w[body] + 0.02f) {
+        body = 1 - body;
+    }
+
+    DayNight::g_shadowFade = ShadowFade(w[body], w[1 - body]);
+    CShadowCache::SetShadowFade(DayNight::g_shadowFade);
+
+    // gfxSunArcDawnRamp (not wxl-light): the direct light comes in over -1..ramp degrees instead of -1..4, so the dawn and
+    // dusk colours do not hit sun-facing walls at full strength from 4 degrees up. The pick and the shadows keep -1..4.
+    const float ramp = s_cvSunArcDawnRamp ? s_cvSunArcDawnRamp->m_floatValue : 0.0f;
+    const float k = ramp > 4.0f ? BodyWeight(elev[body], ramp) : w[body];
+    DayNight::g_lightStrength = k < 0.0f ? 0.0f : (k > 1.0f ? 1.0f : k);
+
+    // gfxSunArcMatch (not wxl-light): the DBC colours were authored for the stock light's 20-37 degrees, so the shading
+    // height is capped at the stock light's this hour (SetDirection just wrote it); the bearing still follows the body.
+    float m = s_cvSunArcMatch ? s_cvSunArcMatch->m_floatValue : 0.0f;
+    m = m < 0.0f ? 0.0f : (m > 1.0f ? 1.0f : m);
+    float zs = -DayNight::g_dnInfo.m_light1.m_dir.z;
+    zs = zs < -1.0f ? -1.0f : (zs > 1.0f ? 1.0f : zs);
+    const float elStock = asinf(zs) * 57.29578f;
+    float elCap = elStock + (1.0f - m) * (elev[body] > elStock ? elev[body] - elStock : 0.0f);
+    elCap = elCap > 10.0f ? elCap : 10.0f;
+    const float elDeg = elev[body] < 10.0f ? 10.0f : (elev[body] > elCap ? elCap : elev[body]);
+    const float el = elDeg * 0.017453292f;
+    const float h = sqrtf(dir[body].x * dir[body].x + dir[body].y * dir[body].y);
+    DNLightState& light = DayNight::g_dnInfo.m_light1;
+
+    if (h > 1e-4f) {
+        light.m_dir.x = -dir[body].x / h * cosf(el);
+        light.m_dir.y = -dir[body].y / h * cosf(el);
+        light.m_dir.z = -sinf(el);
+    }
+
+    if (k >= 0.999f) {
+        return;
+    }
+
+    const float share = sinf(el) * (0.6f + 0.4f * m) + 0.1f * (1.0f - m);   // gfxSunArcMatch: what flat ground lost, sin(el)
+    uint8_t* d[3] = { &light.m_diffuse.r, &light.m_diffuse.g, &light.m_diffuse.b };
+    uint8_t* a[3] = { &light.m_ambient.r, &light.m_ambient.g, &light.m_ambient.b };
+
+    for (int32_t i = 0; i < 3; i++) {
+        const float dc = *d[i], ac = *a[i];
+        const float na = ac + dc * (1.0f - k) * share;
+        *d[i] = static_cast<uint8_t>(dc * k + 0.5f);
+        *a[i] = static_cast<uint8_t>((na < 255.0f ? na : 255.0f) + 0.5f);
+    }
 }
 
 // VERIFY: d95f0d18 auto
@@ -2828,6 +3085,7 @@ void DayNight::UpdateLighting() {
     DayNight::SetColors();
     DayNight::SetDirection();
     DayNight::SetPlanets();
+    PickLightBody();   // not stock: gfxSunArc
 }
 
 // VERIFY: dbc89d6c auto
@@ -2882,6 +3140,10 @@ void DayNight::SetFlashColor(CImVector color, float blend) {
 // OFFSET: 0x007F0870
 void DayNight::RenderGlares() {
     if (!DayNight::g_dnInfo.m_showSky) {
+        return;
+    }
+
+    if (SkyClouds::HidesGlares()) {   // not stock (skyClouds): our disc stands in for the sun and moon, glares too
         return;
     }
 
@@ -3024,8 +3286,8 @@ void DayNight::DNGlare::Render() {
     GxRsSet(GxRs_Culling, 0);
     GxRsSet(GxRs_DepthTest, 0);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex);
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     GxPrimVertexPtr(4, s_glareVertices, sizeof(C3Vector), nullptr, 0, &this->m_color, 0, s_glareTexCoords, sizeof(C2Vector), nullptr, 0);
     GxPrimIndexPtr(4, s_glareIndices);
     CGxBatch batch;
@@ -3061,6 +3323,13 @@ float DayNight::DNGlare::GetPointOcclusion() {
     end.y = ny * info->m_farClip + info->m_cameraPos.y;
     end.z = nz * info->m_farClip + info->m_cameraPos.z;
     float distance = 1.0f;
+    // Not stock (gfxTerrainShadow): the land past the loaded ADTs, which World::Intersect does not see.
+    const float from[3] = { start.x, start.y, start.z };
+    const float toward[3] = { nx, ny, nz };
+
+    if (TerrainSunShadow::Visibility(from, toward) == 0.0f) {
+        return 0.0f;
+    }
 
     if (World::Intersect(start, end, &hit, &distance, 0x200112, nullptr)) {
         return 0.0f;
@@ -3074,7 +3343,7 @@ float DayNight::DNGlare::GetPointOcclusion() {
 float DayNight::DNGlare::GetQueryOcclusion() {
     uint32_t pixels = 0;
     uint32_t available;
-    GxQueryGetParam(this->m_occlusionQuery, GxQueryParam_Unk1, &available);
+    GxQueryGetParam(this->m_occlusionQuery, GxQueryParam_ResultAvailable, &available);
 
     if (!available || !GxQueryGetData(this->m_occlusionQuery, &pixels)) {
         pixels = this->m_occlusionPixels;

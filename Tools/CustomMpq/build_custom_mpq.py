@@ -1,0 +1,238 @@
+"""Packs everything our own exes (Wow32.exe / Wow64.exe) need and stock Wow.exe does not into one
+archive, Data/custom.MPQ. The exes open it above every patch MPQ (Client.cpp OpenArchives); stock
+Wow.exe never opens it (its patch search is patch-*.MPQ).
+
+    python3 -I Tools/CustomMpq/build_custom_mpq.py --client <client> --out <client>/Data/custom.MPQ
+    python3 -I Tools/CustomMpq/build_custom_mpq.py --list <archive.MPQ>
+
+Contents:
+  VulkanShaders\\...      the Vulkan backend's translated shaders (manifest.txt, index.txt,
+                          vertex\\*.spv, pixel\\*.spv), from <client>/VulkanShaders as
+                          Tools/VulkanShaders/translate_shaders.py --deploy leaves them (--vulkan
+                          to take another folder, e.g. Tools/VulkanShaders/translated).
+  Shaders\\*\\?s_4_0\\...   the D3D11 backend's SM4 pack, copied out of <client>/Data/patch-R.MPQ
+                          (--d3d11-mpq to take another archive).
+  Textures\\...           every file in Tools/CustomMpq/Textures beside this script (the
+                          selection-circle styles from wxl-aoeindicators, selectionCircleStyle).
+  XTextures\\...          every file in Tools/CustomMpq/XTextures (Cata water's ocean\\newoceanbump.blp and
+                          foam\\waterchop7bw.blp from Cataclysm 4.3.4, waterStyle 1, WorldClient/CataWater.cpp).
+  Shaders\\...            our own shaders, Tools/CustomMpq/Shaders (ps_3_0 for D3D9, ps_4_0 for D3D11),
+                          built from ShaderSrc/*.hlsl by ShaderSrc/build_shaders.py (VFog*: volumetric
+                          fog, docs/VFOG_PORT.md), plus the stock Terrain2/3[_pcf] patched by
+                          ShaderSrc/terrain_fade.py (gfxShadowFade; generated, not committed). Tools/VulkanShaders translates the ps_3_0 ones with the client's.
+  Shaders\\...            gxNormalBuffer's world shaders writing the view-space normal to oC1 (vs/ps_3_0 for D3D9,
+                          vs/ps_4_0 for D3D11), Tools/CustomMpq/Normals from ShaderSrc/normal_pack.py (generated,
+                          not committed; packed above our shaders; without it D3D9/D3D11 light from depth normals).
+  VFog\\...               every file in Tools/CustomMpq/VFog (fogdata.bin: the Classic/Forever fog layers,
+                          coa-vfog data/fogdata.bin, read by VolumetricFogData.cpp; waterdata.bin: the Forever
+                          water presets, FFT tiles and foam masks, coa-vfog data/waterdata.bin, read by
+                          VolumetricFogWater.cpp; cloudnoise.bin: wxl-light's 64^3 BGRA cloud noise, src/CloudNoise.bin,
+                          read by SkyClouds.cpp; ForeverSky.bin: Wowhead Forever's sky colours per LightParams id, foreverSky,
+                          read by DB/DBClient/Lights.cpp, baked by the forever_sky scratchpad bake_forever_sky.py).
+  Interface\\...         every file in Tools/CustomMpq/Interface (FrameXML\\VideoOptionsAdvanced.lua: the Video
+                          Options > Advanced page, run by GameUI.cpp after the stock FrameXML.toc).
+Cache/vkpipelines.bin is a runtime cache and stays loose.
+
+Needs StormLib (libstorm.so, Debian package libstorm9). Python 3.8+, standard library only.
+"""
+import argparse
+import ctypes
+import hashlib
+import os
+import struct
+import sys
+
+MPQ_CREATE_LISTFILE = 0x00100000
+MPQ_CREATE_ATTRIBUTES = 0x00200000
+MPQ_CREATE_ARCHIVE_V2 = 0x01000000
+MPQ_OPEN_READ_ONLY = 0x00000100
+MPQ_FILE_COMPRESS = 0x00000200
+MPQ_FILE_REPLACEEXISTING = 0x80000000
+MPQ_COMPRESSION_ZLIB = 0x02
+
+DWORD = ctypes.c_uint32
+HANDLE = ctypes.c_void_p
+
+
+class FindData(ctypes.Structure):
+    _fields_ = [('cFileName', ctypes.c_char * 1024), ('szPlainName', ctypes.c_char_p),
+                ('dwHashIndex', DWORD), ('dwBlockIndex', DWORD), ('dwFileSize', DWORD),
+                ('dwFileFlags', DWORD), ('dwCompSize', DWORD), ('dwFileTimeLo', DWORD),
+                ('dwFileTimeHi', DWORD), ('lcLocale', DWORD)]
+
+
+def storm():
+    for name in ('libstorm.so.9', 'libstorm.so', 'StormLib.dll'):
+        try:
+            lib = ctypes.CDLL(name)
+            break
+        except OSError:
+            continue
+    else:
+        sys.exit('StormLib not found (apt install libstorm9)')
+    lib.SFileFindFirstFile.restype = HANDLE
+    lib.SFileGetFileSize.restype = DWORD
+    return lib
+
+
+def mpq_files(lib, path):
+    """{name: bytes} of every file in an archive, the internal (listfile)/(attributes) left out."""
+    h = HANDLE()
+    if not lib.SFileOpenArchive(path.encode(), 0, MPQ_OPEN_READ_ONLY, ctypes.byref(h)):
+        sys.exit('cannot open %s' % path)
+    out = {}
+    fd = FindData()
+    f = lib.SFileFindFirstFile(h, b'*', ctypes.byref(fd), None)
+    ok = bool(f)
+    while ok:
+        name = fd.cFileName.decode()
+        if not name.startswith('('):
+            hf = HANDLE()
+            if not lib.SFileOpenFileEx(h, fd.cFileName, 0, ctypes.byref(hf)):
+                sys.exit('cannot open %s in %s' % (name, path))
+            size = lib.SFileGetFileSize(hf, None)
+            buf = ctypes.create_string_buffer(size)
+            got = DWORD()
+            if size and not lib.SFileReadFile(hf, buf, size, ctypes.byref(got), None) or got.value != size:
+                sys.exit('short read of %s in %s' % (name, path))
+            lib.SFileCloseFile(hf)
+            out[name] = buf.raw
+        ok = lib.SFileFindNextFile(HANDLE(f), ctypes.byref(fd))
+    if f:
+        lib.SFileFindClose(HANDLE(f))
+    lib.SFileCloseArchive(h)
+    return out
+
+
+def folder_files(prefix, folder):
+    out = {}
+    for root, _, names in os.walk(folder):
+        for n in names:
+            p = os.path.join(root, n)
+            rel = os.path.relpath(p, folder).replace('/', '\\')
+            with open(p, 'rb') as fh:
+                out[prefix + '\\' + rel] = fh.read()
+    return out
+
+
+def untranslated(files):
+    """'<bls>:<perm> <md5>' of every vs_3_0 / ps_3_0 permutation packed here with no record in the packed
+    Vulkan manifest (the device looks records up by the md5 of the bytes it loads, so such a shader draws
+    fixed-function). Catches a manifest translated from other shader files than the ones packed beside it."""
+    man = files.get('VulkanShaders\\manifest.txt', b'').decode('utf-8', 'replace')
+    known = {(t[1], t[2]) for t in (l.split() for l in man.splitlines()) if len(t) > 2 and t[0] == 'record'}
+    out = []
+    for name, data in sorted(files.items()):
+        low = name.lower()
+        if not low.endswith('.bls') or not ('\\ps_3_0\\' in low or '\\vs_3_0\\' in low) or data[:4] != b'HSXG':
+            continue
+        kind = 'pixel' if '\\pixel\\' in low else 'vertex'
+        off = 12
+        for i in range(struct.unpack_from('<I', data, 8)[0]):
+            size = struct.unpack_from('<I', data, off + 12)[0]
+            md5 = hashlib.md5(data[off + 16:off + 16 + size]).hexdigest()
+            off = (off + 16 + size + 3) & ~3
+            if size and (md5, kind) not in known:
+                out.append('%s:%d %s' % (name, i, md5))
+    return out
+
+
+def write_mpq(lib, path, files):
+    if os.path.exists(path):
+        os.remove(path)
+    slots = 1 << max(10, (len(files) * 2).bit_length())  # hash table: power of two, half full at most
+    h = HANDLE()
+    if not lib.SFileCreateArchive(path.encode(), MPQ_CREATE_ARCHIVE_V2 | MPQ_CREATE_LISTFILE | MPQ_CREATE_ATTRIBUTES,
+                                  slots, ctypes.byref(h)):
+        sys.exit('cannot create %s' % path)
+    for name in sorted(files):
+        data = files[name]
+        hf = HANDLE()
+        if not lib.SFileCreateFile(h, name.encode(), ctypes.c_uint64(0), DWORD(len(data)), DWORD(0),
+                                   DWORD(MPQ_FILE_COMPRESS | MPQ_FILE_REPLACEEXISTING), ctypes.byref(hf)):
+            sys.exit('cannot add %s' % name)
+        if data and not lib.SFileWriteFile(hf, data, DWORD(len(data)), DWORD(MPQ_COMPRESSION_ZLIB)):
+            sys.exit('cannot write %s' % name)
+        lib.SFileFinishFile(hf)
+    lib.SFileCompactArchive(h, None, 0)
+    lib.SFileCloseArchive(h)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    ap.add_argument('--client', help='the client folder (VulkanShaders/ and Data/patch-R.MPQ are read from it)')
+    ap.add_argument('--vulkan', help='the translated Vulkan shader folder (default <client>/VulkanShaders)')
+    ap.add_argument('--d3d11-mpq', help='the archive holding the SM4 pack (default <client>/Data/patch-R.MPQ)')
+    ap.add_argument('--out', help='the archive to write')
+    ap.add_argument('--list', metavar='MPQ', help='only list an archive')
+    a = ap.parse_args(argv)
+    lib = storm()
+
+    if a.list:
+        files = mpq_files(lib, a.list)
+        for n in sorted(files):
+            print('%10d  %s' % (len(files[n]), n))
+        print('%d file(s)' % len(files))
+        return 0
+    if not a.out or not (a.client or (a.vulkan and a.d3d11_mpq)):
+        ap.error('--out and --client (or both --vulkan and --d3d11-mpq) are required')
+
+    vulkan = a.vulkan or os.path.join(a.client, 'VulkanShaders')
+    d3d11 = a.d3d11_mpq or os.path.join(a.client, 'Data', 'patch-R.MPQ')
+    if not os.path.isfile(os.path.join(vulkan, 'manifest.txt')):
+        sys.exit('no manifest.txt in %s (run Tools/VulkanShaders/translate_shaders.py first)' % vulkan)
+
+    files = folder_files('VulkanShaders', vulkan)
+    sm4 = {n: d for n, d in mpq_files(lib, d3d11).items()
+           if n.lower().split('\\')[2:3] in (['vs_4_0'], ['ps_4_0'])}
+    if not sm4:
+        sys.exit('no Shaders\\*\\vs_4_0 / ps_4_0 files in %s' % d3d11)
+    files.update(sm4)
+    textures = folder_files('Textures', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Textures'))
+    textures.update(folder_files('XTextures', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'XTextures')))
+    files.update(textures)
+    ours = folder_files('Shaders', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Shaders'))
+    # gfxShadowFade's terrain shaders are generated from the client's, not committed (ShaderSrc/terrain_fade.py)
+    missing = ['%s\\%s.bls' % (p, f) for p in ('ps_3_0', 'ps_4_0') for f in ('terrain2', 'terrain2_pcf', 'terrain3', 'terrain3_pcf')
+               if ('shaders\\pixel\\%s\\%s.bls' % (p, f)) not in {n.lower() for n in ours}]
+    if missing:
+        sys.exit('missing %s: run Tools/CustomMpq/ShaderSrc/terrain_fade.py first' % ', '.join(missing))
+    # ours replace a stock SM4 file of the same name (DetailDoodad.bls); MPQ names are case-insensitive
+    replaced = {n.lower() for n in ours}
+    for n in [n for n in files if n.lower() in replaced]:
+        del files[n]
+        sm4.pop(n, None)
+    files.update(ours)
+    # gxNormalBuffer (ShaderSrc/normal_pack.py, generated): above ours and the stock SM4 pack
+    normals = folder_files('Shaders', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Normals'))
+    if not normals:
+        print('warning: no Tools/CustomMpq/Normals (run ShaderSrc/normal_pack.py): D3D9/D3D11 get no normal buffer')
+    replaced = {n.lower() for n in normals}
+    for n in [n for n in files if n.lower() in replaced]:
+        del files[n]
+        sm4.pop(n, None)
+        ours.pop(n, None)
+    files.update(normals)
+    vfog = folder_files('VFog', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VFog'))
+    files.update(vfog)
+    ui = folder_files('Interface', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Interface'))
+    files.update(ui)
+
+    missing = untranslated(files)
+    if missing:
+        sys.exit('%d packed shader permutation(s) have no Vulkan manifest record, first %s: translate '
+                 '(Tools/VulkanShaders/translate_shaders.py) from this tree\'s Tools/CustomMpq/Shaders and Normals'
+                 % (len(missing), missing[0]))
+    write_mpq(lib, a.out, files)
+    back = mpq_files(lib, a.out)
+    bad = [n for n in files if back.get(n) != files[n]]
+    if bad:
+        sys.exit('verify failed for %d file(s), first %s' % (len(bad), bad[0]))
+    print('%s: %d file(s) (%d Vulkan, %d D3D11, %d textures, %d own shaders, %d normal shaders, %d vfog data, %d interface), %d bytes, verified' %
+          (a.out, len(back), len(files) - len(sm4) - len(textures) - len(ours) - len(normals) - len(vfog) - len(ui), len(sm4),
+           len(textures), len(ours), len(normals), len(vfog), len(ui), os.path.getsize(a.out)))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

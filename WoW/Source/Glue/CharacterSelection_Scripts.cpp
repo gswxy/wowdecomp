@@ -1,4 +1,5 @@
 #include "CharacterSelection.h"
+#include "WoW/Common/Types.h"
 #include <cstdint>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Frame/CScriptObject.h"
@@ -249,8 +250,8 @@ static int32_t Script_GetSelectBackgroundModel(lua_State* L) {
     if (index >= 0 && index < static_cast<int32_t>(CCharacterSelection::s_characterList.Count())) {
         CharacterSelectionDisplay* display = CCharacterSelection::GetCharacterDisplay(index);
 
-        if (display->m_characterInfo.m_classID == 6) {
-            ChrClassesRec* classRec = g_chrClassesDB.GetRecord(6);
+        if (display->m_characterInfo.m_classID == CLASS_DEATH_KNIGHT) {
+            ChrClassesRec* classRec = g_chrClassesDB.GetRecord(CLASS_DEATH_KNIGHT);
 
             if (classRec) {
                 lua_pushstring(L, classRec->m_filename);
@@ -263,15 +264,15 @@ static int32_t Script_GetSelectBackgroundModel(lua_State* L) {
 
         uint32_t raceID = display->m_characterInfo.m_raceID;
 
-        if (raceID == 7) {
-            raceID = 3;
-        } else if (raceID == 8) {
-            raceID = 2;
+        if (raceID == RACE_GNOME) {
+            raceID = RACE_DWARF;
+        } else if (raceID == RACE_TROLL) {
+            raceID = RACE_ORC;
         }
 
         raceRec = g_chrRacesDB.GetRecord(raceID);
     } else {
-        raceRec = g_chrRacesDB.GetRecord(2);
+        raceRec = g_chrRacesDB.GetRecord(RACE_ORC);
     }
 
     if (raceRec) {

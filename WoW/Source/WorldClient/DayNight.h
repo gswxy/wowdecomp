@@ -74,6 +74,8 @@ struct DNOverrideSky : public TSHashObject<DNOverrideSky, HASHKEY_STRI> {
     /* 001C */ uint32_t m_animLengthMs;
     /* 0020 */ uint32_t m_lastTimeOfDay;
     /* 0024 */ uint32_t m_flags;
+
+    DNOverrideSky();
 };
 }
 
@@ -346,6 +348,13 @@ extern DNStars g_stars;
 extern DNSky g_sky;
 extern DNClouds g_clouds;
 extern DNPlanets g_planets;
+extern C3Vector g_sunToward;    // not stock: unit, toward the sun disc (SetPlanets)
+extern C3Vector g_moonToward;   // not stock: unit, toward the moon disc
+extern int32_t g_lightBody;      // not stock: 0 the sun, 1 the moon is the light (shadows, fog follow it)
+bool SunArc();                  // not stock: gfxSunArc
+float DebugHour();              // not stock: debugHour, 0..24 or -1 (the game clock)
+extern float g_lightStrength;    // not stock: 0..1 of the body's direct light left after PickLightBody's handover (k)
+extern float g_shadowFade;       // not stock: gfxShadowFade, 0..1 how much of the sun/moon shadow is shown (PickLightBody)
 extern DNSunGlare g_sunGlare;
 extern DNMoonGlare g_moonGlare;
 extern TSGrowableArray<const LightRec*> g_areaLights;

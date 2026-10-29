@@ -7,6 +7,19 @@
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Storm/H/stpl.h"
 
+enum CVAR_FLAGS : uint32_t {
+    CVAR_ARCHIVE = 1,
+    CVAR_LATCH = 2,
+    CVAR_READ_ONLY = 0x4,
+};
+
+enum CVAR_ARCHIVE_SCOPE : uint32_t {
+    CVAR_SCOPE_CONFIG = 0,
+    CVAR_SCOPE_ACCOUNT = 0x10,
+    CVAR_SCOPE_CHARACTER = 0x20,
+    CVAR_SCOPE_MASK = 0x30,
+};
+
 struct CVar;
 
 struct CVarLogBuffer {
@@ -74,10 +87,16 @@ class CVarArrayWrapper {
 
 class CVarIntListWrapper {
     public:
+    enum STATE : uint32_t {
+        INITIAL = 0,
+        READ = 1,
+        WRITE = 2,
+    };
+
     /* 0000 */ CVar* m_cvar;
     /* 0004 */ uint32_t m_pos;
     /* 0008 */ char m_buffer[256];
-    /* 0108 */ uint32_t m_state;
+    /* 0108 */ STATE m_state;
 
     void AddNextValue(uint32_t value);
     uint32_t GetNextValue();

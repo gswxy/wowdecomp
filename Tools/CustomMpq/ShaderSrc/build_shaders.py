@@ -1,0 +1,256 @@
+"""Builds our own shaders (ShaderSrc/*.hlsl) into the client's .bls containers under
+Tools/CustomMpq/Shaders, which build_custom_mpq.py packs as Shaders\\... in Data/custom.MPQ and
+Tools/VulkanShaders translates for the Vulkan device like any client shader.
+
+    python3 -I Tools/CustomMpq/ShaderSrc/build_shaders.py [--xlate /root/d3d11-port/shader-xlate] [name ...]
+
+Per shader: HLSL, preprocessed by vkd3d-compiler -E ($VKD3D_PREFIX or <xlate>/../vkd3d-install), ->
+ps_3_0 bytecode by Microsoft's d3dcompiler_47 under wine (--fxc: the fxc.exe wrapper and DLL of
+/root/wxl-depth/tools, wxl-depth's tools/fxc.cpp; $WINEPREFIX, default /tmp/testprefix, as its bakeps.py) ->
+Shaders/Pixel/ps_3_0/<Name>.bls (D3D9, and the source of the Vulkan translation), then
+shader-xlate's compile_one (imported; s5/s6 compare slots for the fog marches) -> Shaders/Pixel/ps_4_0/<Name>.bls (D3D11). The outputs are committed,
+so building the MPQ needs none of these tools.
+
+Why fxc and not vkd3d's own d3dbc backend (FarBlend's): vkd3d 2.1 allocates the VFog marches 40 to 98
+temps, ps_3_0 has 32. fxc fits them, and its output is what every stock shader the translators already
+handle looks like. A variant is a few #defines plus an #include of its entry file, preprocessed with
+ShaderSrc as the working directory (vkd3d-compiler has no -D; the fxc wrapper resolves no includes).
+
+VFog (docs/VFOG_PORT.md section 5): VFogMarch{Q}[L][N] and VFogComposite{Q}[L][N], Q = 1/2/3 (STEPS
+16/24/32 as coa-vfog CMakeLists.txt), L = LOCAL_LIGHTS, N = VF_NOISE (density variation + authored noise),
+plus VFogTemporal and VFogHistoryDepth, and the god rays VFogRayMask, VFogRayBlur and VFogRayComposite.
+Grading (coa vp_grade): VFogGrade.
+Water (coa vw_*): VFogWaterDepth, VFogWaterMask, VFogWater{1,2,3} (SSR_STEPS 0/16/32), VFogRippleStep and VFogWakeSplat;
+GPU waves VFogWave{Evolve,Fft,Surface,Mip,Pack}.
+Grass wind (wxl-grasswind, MULTI): Shaders/Vertex/vs_3_0|vs_4_0/DetailDoodad.bls, the stock grass VS's 6 permutations.
+Fading models (wxl-vfog 0.6.3): VFogDepthCopy. Legion FFX post: LegionPost{0,1,2}. Legion SSAO: LegionSsao{,Box,Bilateral,Apply}. Legion heat haze (refraction): LegionRefraction. Land shadow mask (shadowMask): VFogShadowMask, VFogShadowMaskPoint. Lamps (lightMode): LegionLights. MSAA sample split (coa): VFogSilhouette and VFogCompositeSplit{Q}[L][N].
+Soft particles (wxl-light Soft.cpp): SoftParticle{0,1}.
+Caustics (wxl-water): VFogCausticsAbove / VFogCausticsUnder.
+Sky and clouds under the sun arc (wxl-light Clouds.cpp, WorldClient/SkyClouds.cpp): SkyClouds.
+Far land (farLand, WorldClient/FarLand.cpp): FarLandVS / FarLandPS.
+Far trees (farTrees, WorldClient/FarTrees.cpp): FarTreesVS / FarTreesPS, and FarTreesShadowVS / FarTreesShadowPS (farTreesShadow).
+"""
+import argparse
+import concurrent.futures
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(os.path.dirname(HERE), 'Shaders')
+
+# Record masks as the stock full-screen FFX pixel shaders carry them (FFXComposite: 0x800, 0x200, 3, 0):
+# a = inputs (0x800 texcoord 0), b = outputs (0x200 colour 0), c = the samplers used, a bit each. The
+# loader (CGxDevice::IShaderLoad / CGxShader::Load) only stores them.
+TEXCOORD0, COLOR0 = 0x800, 0x200
+
+
+def samplers(*regs):
+    return sum(1 << r for r in regs)
+
+
+# name: (profile, a, b, c, d, entry file, defines)
+SHADERS = {
+    'VFogTemporal': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 2, 3), 0, 'VFogTemporal', {}),
+    'VFogHistoryDepth': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogHistoryDepth', {}),
+    # god rays (coa vf_ray_*): mask, radial blur x2, composite after the world
+    'VFogRayMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogRayMask', {}),
+    'VFogRayBlur': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogRayBlur', {}),
+    'VFogRayComposite': ('ps_3_0', TEXCOORD0, COLOR0, samplers(2, 3), 0, 'VFogRayComposite', {}),
+    # colour grading (coa vp_grade): the light's curve over the finished world, before names and the UI
+    'VFogGrade': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogGrade', {}),
+    # modern water (coa vw_*, docs "Water"): linear depth copies, then one shading pass per water class
+    'VFogWaterDepth': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaterDepth', {'MASK': 0}),
+    'VFogWaterMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaterDepth', {'MASK': 1}),
+    # water ripples and wakes (coa vw_ripple_step): one 30 Hz step of the Gr1616F height field
+    'VFogRippleStep': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogRippleStep', {}),
+    # ship wakes (wxl-water SplatHulls): the hull polygons added into the wide level before its step
+    'VFogWakeSplat': ('ps_3_0', TEXCOORD0, COLOR0, 0, 0, 'VFogWakeSplat', {}),
+    # GPU waves (coa vw_fft_*, docs "Waves"): evolve + fold, radix-2 stages, surface moments / foam, moment mips, pack
+    'VFogWaveEvolve': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWaveEvolve', {}),
+    'VFogWaveFft': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaveFft', {}),
+    'VFogWaveSurface': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 2), 0, 'VFogWaveSurface', {}),
+    'VFogWaveMip': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogWaveMip', {}),
+    'VFogWavePack': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'VFogWavePack', {}),
+    # fading models' cross-fade (wxl-vfog 0.6.3, vfogFadeStencil): the scene depth into R32F, behind and with them
+    'VFogDepthCopy': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogDepthCopy', {}),
+    # MSAA silhouette samples marked in the stencil by an oDepth pass (coa vf_silhouette_mask; Vulkan: gl_FragDepth)
+    'VFogSilhouette': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'VFogSilhouette', {}),
+    # Falling leaves (wxl-treewind Leaves.cpp, docs/BACKLOG_PORT.md): a vertex shader over a static PNCT2 buffer + its pixel shader
+    'TreeLeavesVS': ('vs_3_0', 0, 0, 0, 0, 'TreeLeavesVS', {}),
+    'TreeLeavesPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'TreeLeavesPS', {}),
+    # far land (farLand, WorldClient/FarLand.cpp): the WDL horizon with the baked ground colour and normals
+    'FarLandVS': ('vs_3_0', 0, 0, 0, 0, 'FarLandVS', {}),
+    'FarLandPS': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6), 0, 'FarLandPS', {}),
+    # Soft particles (wxl-light Soft.cpp, docs/BACKLOG_PORT.md): Combiners_Mod 0 / 8 (texkill) + the fade; s12 scene depth
+    'SoftParticle0': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 0}),
+    'SoftParticle1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 12), 0, 'SoftParticle', {'ALPHAKILL': 1}),
+    # Cata ProcMagma lava/slime over the stock vsLiquidMagma (backlog #10, liquidProcMagma)
+    'LiquidProcMagma': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 2, 3), 0, 'LiquidProcMagma', {}),
+    # shadowMask (Legion survey 2.7): the land's sun shadow over the opaque world, a multiply; s5/s6 cascades, s7 land, s10/s11 its fine level
+    'VFogShadowMask': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
+    # its D3D11 hwPCF 0 twin: the same ps_3_0, no compare slots in the SM4 pack, so the R32F maps are point-compared
+    'VFogShadowMaskPoint': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4, 5, 6, 7, 8, 9, 10, 11), 0, 'VFogShadowMask', {}),
+    # Legion lights (lightMode, docs/LEGION_PORT.md): the frame's M2 point lights on the surfaces, colour += colour * light
+    'LegionLights': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 4), 0, 'LegionLights', {}),
+    # Legion FFX post (docs/LEGION_PORT.md): colour shift only, FXAA low + colour shift, FXAA high + colour shift
+    'LegionPost0': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'LegionPost', {'FXAA_STEPS': 0}),
+    'LegionPost1': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'LegionPost', {'FXAA_STEPS': 5}),
+    'LegionPost2': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'LegionPost', {'FXAA_STEPS': 12}),
+    # Legion SSAO (docs/LEGION_PORT.md): AO, 4x4 box blur, depth-weighted blur, apply (multiply)
+    'LegionSsao': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 4), 0, 'LegionSsao', {'PASS': 0}),
+    'LegionSsaoBox': ('ps_3_0', TEXCOORD0, COLOR0, samplers(1), 0, 'LegionSsao', {'PASS': 1}),
+    'LegionSsaoBilateral': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'LegionSsao', {'PASS': 2}),
+    'LegionSsaoApply': ('ps_3_0', TEXCOORD0, COLOR0, samplers(1), 0, 'LegionSsao', {'PASS': 3}),
+    # Legion refraction (docs/LEGION_PORT.md): heat haze over tagged fire emitters; s0 scene depth, s1 scene copy
+    'LegionRefraction': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1), 0, 'LegionRefraction', {}),
+    # caustics (wxl-water caustics, docs/BACKLOG_PORT.md): over the shaded water (bed + water depth), and under water
+    # (scene depth, + the tint); s5/s6 the sun shadow bands (vf_shadow.hlsli)
+    'VFogCausticsAbove': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6, 7), 0, 'VFogCaustics', {'UNDER': 0}),
+    'VFogCausticsUnder': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 7), 0, 'VFogCaustics', {'UNDER': 1}),
+    # sky and clouds (wxl-light Clouds.cpp, SKY-CLOUDS-PLAN.md): s0 the cloud noise atlas, s3 the moon, s4 the cloud sheet
+    'SkyClouds': ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 3, 4), 0, 'SkyClouds', {}),
+}
+# Cata water (waterStyle 1, docs/BACKLOG_PORT.md "Cata water"): the ProcWater VS and ProcWaterAbove / Below PS,
+# drawn by the liquid material in place of vsLiquidWater / psLiquidWater (WorldClient/CataWater.cpp).
+SHADERS['CataWater'] = ('vs_3_0', 0, 0, 0, 0, 'CataWater', {})
+SHADERS['CataWaterAbove'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 5, 6, 8, 9, 10, 11, 12, 13, 15), 0, 'CataWaterPs', {})
+SHADERS['CataWaterAboveP'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15), 0, 'CataWaterPs', {'PLANAR': 1})
+SHADERS['CataWaterBelow'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 3, 9, 11, 12, 13), 0, 'CataWaterPs', {'BELOW': 1})
+SHADERS['CataWaterTint'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'CataWaterTint', {})
+# Far tree impostors (WorldClient/FarTrees.cpp, fartrees/FARTREES-PLAN.md).
+SHADERS['FarTreesVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesVS', {})
+SHADERS['FarTreesPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 1, 5, 6), 0, 'FarTreesPS', {})
+# ... and as sun shadow casters (farTreesShadow, FarTrees::DrawShadow).
+SHADERS['FarTreesShadowVS'] = ('vs_3_0', 0, 0, 0, 0, 'FarTreesShadowVS', {})
+SHADERS['FarTreesShadowPS'] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0), 0, 'FarTreesShadowPS', {})
+# VFogWater{1,2,3}: coa ps_vw_shade_low/mid/high (SSR_STEPS 0/16/32, cmake/WaterShaders.cmake)
+for _v, _ssr in ((1, 0), (2, 16), (3, 32)):
+    SHADERS['VFogWater%d' % _v] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(*range(0, 16)), 0, 'VFogWater',
+                                   {'SSR_STEPS': _ssr})
+for _q, _steps in ((1, 16), (2, 24), (3, 32)):
+    for _lights in (0, 1):
+        for _noise in (0, 1):
+            _suffix = '%d%s%s' % (_q, 'L' if _lights else '', 'N' if _noise else '')
+            _defs = {'STEPS': _steps, 'LOCAL_LIGHTS': _lights, 'VF_NOISE': _noise}
+            _march_noise = (9, 10) if _noise else ()
+            _composite_noise = ((9,) if _lights else (9, 10)) if _noise else ()    # VFogComposite.hlsl: L drops s10
+            # s5/s6: the engine's sun shadow bands 1 and 2, s7 the land's lit height (vf_shadow.hlsli, shadowed sun in-scatter)
+            SHADERS['VFogMarch' + _suffix] = ('ps_3_0', TEXCOORD0, COLOR0, samplers(0, 5, 6, 7, *_march_noise), 0,
+                                              'VFogMarch', _defs)
+            SHADERS['VFogComposite' + _suffix] = ('ps_3_0', TEXCOORD0, COLOR0,
+                                                  samplers(0, 1, 3, 4, 5, 6, 7, 8, *_composite_noise), 0, 'VFogComposite',
+                                                  _defs)
+            # s8: the march's depth for the upsample taps (vf_composite sMarchDepth)
+            # MSAA sample split (coa vf_composite_split, vfogMsaaSplit): the same composite per silhouette side
+            SHADERS['VFogCompositeSplit' + _suffix] = ('ps_3_0', TEXCOORD0, COLOR0,
+                                                       samplers(0, 1, 3, 4, 5, 6, 7, 8, *_composite_noise), 0,
+                                                       'VFogComposite',
+                                                       dict(_defs, SPLIT=1))
+
+
+# Containers of several permutations, replacing a stock .bls of the same name: name -> (profile, [(a, b, c, d,
+# entry, defines) per permutation, in the engine's order]). The record masks are the stock ones.
+# DetailDoodad (wxl-grasswind, grassWind): the stock vs_3_0 grass shader plus wind sway and parting; permutation
+# 3 * point lights + shadow (CDetailDoodad::SetupVertexShader), b = the stock output masks per shadow level.
+MULTI = {
+    'DetailDoodad': ('vs_3_0', [(0xA09, b, 0, 0, 'DetailDoodad', {'LIGHTS': lights, 'SHADOW': shadow})
+                                for lights in (0, 1) for shadow, b in enumerate((0xE81, 0x7E81, 0x1FE81))]),
+}
+
+
+# The shadow band slots of vf_shadow.hlsli: hardware-compare samplers in the SM4 pack (D3D11 binds a LESS_EQUAL
+# comparison sampler for a D24X8 target under hwPCF), like the stock _pcf families' (shader-xlate pcf_slots).
+def compare_slots(name):
+    if name == 'VFogShadowMask':
+        return (5, 6, 8, 9)     # + band 0 and the unit map (vfog38)
+    # + the shadowFarReceivers receivers (FarLand::BindSunShadow)
+    return (5, 6) if name.startswith(('VFogMarch', 'VFogComposite', 'VFogCaustics', 'FarLandPS', 'FarTreesPS', 'CataWaterAbove')) else ()
+
+
+def bls(recs):
+    out = struct.pack('<4sII', b'HSXG', 0x10003, len(recs))
+    for code, a, b, c, d in recs:
+        rec = struct.pack('<IIHHI', a, b, c, d, len(code)) + code
+        out += rec + b'\0' * (-len(rec) % 4)
+    return out
+
+
+def compile_sm3(name, prof, entry, defines, a, vk, env):
+    """-> (bytecode, None) or (None, error)."""
+    src = ''.join('#define %s %s\n' % kv for kv in sorted(defines.items())) + '#include "%s.hlsl"\n' % entry
+    r = subprocess.run([os.path.join(vk, 'bin', 'vkd3d-compiler'), '-x', 'hlsl', '-E', '-o', '-', '-'],
+                       input=src.encode(), capture_output=True, env=env, cwd=HERE)
+    if r.returncode or not r.stdout:
+        return None, '%s: preprocess failed: %s' % (name, r.stderr.decode(errors='replace'))
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, name + '.hlsl'), 'wb') as f:
+            f.write(r.stdout)
+        out = os.path.join(tmp, name + '.bin')
+        r = subprocess.run(['wine', os.path.join(a.fxc, 'fxc.exe'), os.path.join(a.fxc, 'd3dcompiler_47.dll'),
+                            os.path.join(tmp, name + '.hlsl'), out, prof], capture_output=True, cwd=tmp,
+                           env=dict(os.environ, WINEPREFIX=os.environ.get('WINEPREFIX', '/tmp/testprefix'),
+                                    WINEDEBUG='-all'))
+        if r.returncode or not os.path.isfile(out):
+            return None, '%s: fxc failed: %s' % (name, r.stdout.decode(errors='replace')[-2000:])
+        with open(out, 'rb') as f:
+            return f.read(), None
+
+
+def build(name, a, vk, env):
+    if name in MULTI:
+        prof, perms = MULTI[name]
+    else:
+        prof, ra, rb, rc, rd, entry, defines = SHADERS[name]
+        perms = [(ra, rb, rc, rd, entry, defines)]
+    recs, sm4recs = [], []
+    for k, (ra, rb, rc, rd, entry, defines) in enumerate(perms):
+        code, err = compile_sm3('%s:%d' % (name, k), prof, entry, defines, a, vk, env)
+        if err:
+            return err
+        recs.append((code, ra, rb, rc, rd))
+        st, why, dx = xlate.compile_one(code, None, compare_slots(name))[:3]
+        if st != 'ok':
+            return '%s:%d: xlate failed: %s %s' % (name, k, st, why)
+        sm4recs.append((ra, rb, rc | rd << 16, dx))
+    kind = 'Pixel' if prof.startswith('ps') else 'Vertex'
+    d3d9 = os.path.join(OUT, kind, prof, name + '.bls')
+    os.makedirs(os.path.dirname(d3d9), exist_ok=True)
+    with open(d3d9, 'wb') as f:
+        f.write(bls(recs))
+    sm4 = os.path.join(OUT, kind, prof[:3] + '4_0', name + '.bls')
+    os.makedirs(os.path.dirname(sm4), exist_ok=True)
+    with open(sm4, 'wb') as f:
+        f.write(xlate.write_bls(sm4recs))
+    print('%s: %s (%d bytes), %s (%d bytes)' % (name, d3d9, os.path.getsize(d3d9), sm4, os.path.getsize(sm4)),
+          flush=True)
+    return None
+
+
+def main(argv):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--xlate', default='/root/d3d11-port/shader-xlate')
+    ap.add_argument('--fxc', default='/root/wxl-depth/tools', help='folder holding fxc.exe and d3dcompiler_47.dll')
+    ap.add_argument('-j', type=int, default=8, help='shaders compiled at once (each is one wine process)')
+    ap.add_argument('names', nargs='*', help='only these shaders (default: all)')
+    a = ap.parse_args(argv)
+    global xlate
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, a.xlate)
+    import xlate
+    vk = os.environ.get('VKD3D_PREFIX', os.path.join(a.xlate, '..', 'vkd3d-install'))
+    env = dict(os.environ, LD_LIBRARY_PATH=os.path.join(vk, 'lib'))
+    for name in a.names:
+        if name not in SHADERS and name not in MULTI:
+            sys.exit('unknown shader %s' % name)
+    with concurrent.futures.ThreadPoolExecutor(a.j) as pool:
+        errors = [e for e in pool.map(lambda n: build(n, a, vk, env), a.names or list(SHADERS) + list(MULTI)) if e]
+    if errors:
+        sys.exit('\n'.join(errors))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

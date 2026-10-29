@@ -71,7 +71,7 @@ class CM2Scene {
     /* 0054 */ TSGrowableArray<uint32_t> m_passElements [3];
     /* 0084 */ C44Matrix m_view;
     /* 00C4 */ C44Matrix m_viewInv;
-    /* 0104 */ void (*m_projectTextureCallback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t);
+    /* 0104 */ int32_t (*m_projectTextureCallback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t);   // BENILLA: returns whether anything was hit (12340: void)
     /* 0108 */ void* m_projectTextureParam;
     /* 010C */ int32_t (*m_projectPositionCallback)(const C3Vector&, float&, void*);
     /* 0110 */ void* m_projectPositionParam;
@@ -87,6 +87,10 @@ class CM2Scene {
     /* 0144 */ uint32_t m_passMask;
 
     static uint32_t s_optFlags;
+    static int32_t s_groundDecals;   // BENILLA: CVar groundDecals, not in 12340
+    static int32_t s_animLod;        // BENILLA: CVar animLod, not in 12340 (far models re-posed every 2nd-4th frame)
+
+    static int32_t IsGroundDecalBatch(CM2Model* model, const M2Batch* batch, const M2SkinSection* section);  // BENILLA
 
     static void AnimateThread(void* param);
     static void __stdcall ComputeElementShaders(M2Element* element);
@@ -121,7 +125,7 @@ class CM2Scene {
     void SelectLights(CM2Lighting* lighting);
     void SetFloat18(float value);
     void SetProjectPositionCallback(int32_t (*callback)(const C3Vector&, float&, void*), void* param);
-    void SetProjectTextureCallback(void (*callback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t), void* param);
+    void SetProjectTextureCallback(int32_t (*callback)(const CAaBox&, const CImVector&, int32_t, void*, int32_t), void* param);
     void SetTime(uint32_t time);
     void SortAdditiveParticleElements(uint32_t pass);
     uint32_t SphereTestModels(const C3Vector& start, const C3Vector& dir, float length, int32_t frameCheck);
@@ -130,8 +134,8 @@ class CM2Scene {
     void TransformHitTestVerticesBlendSSE(const CM2Model* model, const M2SkinProfile* skinData, const M2SkinSection* section, int32_t normals, const C3Vector& dir, float d);
 };
 
-extern const uint32_t s_blendModes[3][7];
-extern const uint32_t s_localLighting[7];
+extern const uint32_t s_blendModes[3][M2BLEND_COUNT];
+extern const uint32_t s_localLighting[M2BLEND_COUNT];
 
 uint32_t ParticleBlendToM2Blend(uint32_t blend);
 uint32_t ParticleFlagsToM2Flags(uint32_t flags);

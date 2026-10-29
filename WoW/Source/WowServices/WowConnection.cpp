@@ -22,7 +22,7 @@ static int32_t s_sendNodeCount;
 static uint64_t s_sendNodeBytes;
 
 // STATIC: 0x00B38D10
-uint64_t WowConnection::s_sendBytes;
+std::atomic<uint64_t> WowConnection::s_sendBytes; // Not stock: atomic
 
 // STATIC: 0x00B38D18
 bool (*WowConnection::s_verifyAddr)(const NETADDR* addr);

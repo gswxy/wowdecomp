@@ -1,0 +1,54 @@
+// BENILLA sky occlusion (Lighting.hlsl SkyOcclusionPs): the frame x mix(floor, 1, open sky) over the world viewport,
+// a 3x3 compare against the top-down map of the world's tops (gxSkyMap, R32F); lightingDebug 6 the factor alone.
+// gxColor2 the scene. Written B, G, R, A as LightingApply.comp.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, GX_SCENE_FORMAT) uniform writeonly image2D gxOut;
+
+// the factor, or w 0: this pixel is left alone (the HLSL's discard)
+vec4 Sky(vec2 pos, float d) {
+    if (!GxIsGeometry(d)) {
+        return vec4(0.0);
+    }
+
+    vec3 pw = (vec4(GxViewPos(pos, d), 1.0) * gxInvView).xyz;
+    vec2 t = (pw.xy - gxSkyRow.xy) * gxSkyRow.z;
+    float size = gxSkyRow.w;
+
+    if (any(lessThan(t, vec2(1.0))) || any(greaterThan(t, vec2(size - 1.0)))) {
+        return vec4(0.0);
+    }
+
+    float z = pw.z + gxSky.w + gxSky.y;
+    float open = 0.0;
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 tap = floor(t) + vec2(x, y);
+            float off = length(tap + 0.5 - t) / gxSkyRow.z;
+            open += texelFetch(gxSkyMap, ivec2(tap), 0).r <= z + off * gxSky.z ? 1.0 : 0.0;
+        }
+    }
+
+    // fades out over the map's outer eighth, so its edge never draws a line
+    vec2 edge = min(t, size - t) / (size * 0.125);
+    float factor = mix(gxSky.x, 1.0, open / 9.0);
+    factor = mix(1.0, factor, clamp(min(edge.x, edge.y), 0.0, 1.0));
+    return vec4(vec3(factor), gxTone.z == 6.0 ? 2.0 : 1.0);
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    if (any(greaterThanEqual(id, ivec2(gxViewportPx.zw)))) {
+        return;
+    }
+
+    ivec2 px = id + ivec2(gxViewportPx.xy);
+    vec4 s = texelFetch(gxColor2, px, 0);
+    vec4 g = Sky(vec2(px) + 0.5, GxDepthAt(px));
+    vec3 c = g.w > 0.5 ? GxMultiply(s.rgb, g.rgb, g.w > 1.5) : s.rgb;
+    imageStore(gxOut, px, vec4(c, s.a).GX_SCENE_ORDER);
+}

@@ -47,7 +47,7 @@ static float s_playerLockRequestTime;
 static float s_partyLockRequestTime;
 
 // STATIC: 0x00ACD644
-static const char* s_lfgTypeTokens[7] = {
+static const char* s_lfgTypeTokens[CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES] = {
     "LFG_TYPE_NONE",
     "LFG_TYPE_DUNGEON",
     "LFG_TYPE_RAID",
@@ -65,10 +65,10 @@ static char s_rewardItemTexture[260];
 static int32_t Script_GetLFGRoles(lua_State* L) {
     if (s_cvLfgSelectedRoles) {
         int32_t roles = s_cvLfgSelectedRoles->m_intValue;
-        lua_pushboolean(L, roles & 1);
-        lua_pushboolean(L, roles & 2);
-        lua_pushboolean(L, roles & 4);
-        lua_pushboolean(L, roles & 8);
+        lua_pushboolean(L, roles & ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, roles & ROLE_FLAGS::TANK);
+        lua_pushboolean(L, roles & ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, roles & ROLE_FLAGS::DAMAGER);
     } else {
         lua_pushnil(L);
         lua_pushnil(L);
@@ -82,7 +82,7 @@ static int32_t Script_GetLFGRoles(lua_State* L) {
 // VERIFY: 8d22b555 manual
 // OFFSET: 0x00558060
 static int32_t Script_GetLFGRandomCooldownExpiration(lua_State* L) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
@@ -101,7 +101,7 @@ static int32_t Script_GetLFGRandomCooldownExpiration(lua_State* L) {
 // VERIFY: 56281bf7 manual
 // OFFSET: 0x005580E0
 static int32_t Script_GetLFGDeserterExpiration(lua_State* L) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
@@ -121,28 +121,28 @@ static int32_t Script_GetLFGDeserterExpiration(lua_State* L) {
 // OFFSET: 0x005548F0
 static int32_t Script_GetAvailableRoles(lua_State* L) {
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
-    uint8_t roles = CGLookingForGroup::GetClassRoles(rec->m_id);
-    lua_pushboolean(L, roles & 0x2);
-    lua_pushboolean(L, roles & 0x4);
-    lua_pushboolean(L, roles & 0x8);
+    ROLE_FLAGS_8 roles = CGLookingForGroup::GetClassRoles(rec->m_id);
+    lua_pushboolean(L, roles & ROLE_FLAGS::TANK);
+    lua_pushboolean(L, roles & ROLE_FLAGS::HEALER);
+    lua_pushboolean(L, roles & ROLE_FLAGS::DAMAGER);
     return 3;
 }
 
 // VERIFY: c1cf44e1 auto
 // OFFSET: 0x00553D60
 static int32_t Script_SetLFGRoles(lua_State* L) {
-    int32_t roles = StringToBOOL(L, 1, 0) != 0;
+    int32_t roles = StringToBOOL(L, 1, 0) ? ROLE_FLAGS::LEADER : ROLE_FLAGS::NONE;
 
     if (StringToBOOL(L, 2, 0)) {
-        roles |= 0x2;
+        roles |= ROLE_FLAGS::TANK;
     }
 
     if (StringToBOOL(L, 3, 0)) {
-        roles |= 0x4;
+        roles |= ROLE_FLAGS::HEALER;
     }
 
     if (StringToBOOL(L, 4, 0)) {
-        roles |= 0x8;
+        roles |= ROLE_FLAGS::DAMAGER;
     }
 
     ChrClassesRec* rec = g_chrClassesDB.GetRecord(ClientServices::GetCharacterClass());
@@ -154,13 +154,13 @@ static int32_t Script_SetLFGRoles(lua_State* L) {
 // VERIFY: 9e5c5761 auto
 // OFFSET: 0x00552DD0
 static int32_t Script_GetLFGTypes(lua_State* L) {
-    lua_checkstack(L, 7);
+    lua_checkstack(L, CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES);
 
-    for (uint32_t i = 0; i < 7; i++) {
+    for (uint32_t i = 0; i < CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES; i++) {
         lua_pushstring(L, FrameScript_GetText(s_lfgTypeTokens[i], -1, GENDER_NOT_APPLICABLE));
     }
 
-    return 7;
+    return CGLookingForGroup::DUNGEON_TYPE::NUM_LFG_TYPES;
 }
 
 // VERIFY: 364604e4 auto
@@ -611,7 +611,7 @@ static int32_t Script_GetLFGDungeonRewardInfo(lua_State* L) {
     int32_t dungeonID = lua_tointeger(L, 1);
     LfgDungeonsRec* rec = g_lfgDungeonsDB.GetRecord(dungeonID);
 
-    if (!rec || (rec->m_typeID != 6 && !(rec->m_flags & 0x4))) {
+    if (!rec || (rec->m_typeID != CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RANDOM_DUNGEON && !(rec->m_flags & 0x4))) {
         return 0;
     }
 
@@ -630,7 +630,7 @@ static int32_t Script_GetLFGDungeonRewardInfo(lua_State* L) {
         name = stats->GetName(0);
     }
 
-    const char* path = ClientDBStringLookup(3);
+    const char* path = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
     SStrPrintf(texture, sizeof(texture), "%s%s%s", path, *path ? "\\" : "", CGItem_C::GetInventoryArt(item->m_displayID));
     lua_pushstring(L, name);
     lua_pushstring(L, texture);
@@ -692,7 +692,7 @@ static int32_t Script_GetLFGCompletionRewardItem(lua_State* L) {
         item = CGLookingForGroup::m_reward.m_items.Next(item);
     }
 
-    const char* path = ClientDBStringLookup(3);
+    const char* path = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
     SStrPrintf(s_rewardItemTexture, sizeof(s_rewardItemTexture), "%s%s%s", path, *path ? "\\" : "", CGItem_C::GetInventoryArt(item->m_displayID));
     lua_pushstring(L, s_rewardItemTexture);
     lua_pushnumber(L, item->m_quantity);
@@ -707,7 +707,7 @@ static int32_t Script_JoinLFG(lua_State* L) {
         return 0;
     }
 
-    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~0x1)) {
+    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~ROLE_FLAGS::LEADER)) {
         CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
         return 0;
     }
@@ -743,7 +743,7 @@ static int32_t Script_GetLFDChoiceLockedState(lua_State* L) {
     if (CGLookingForGroup::m_partyLockInfo.m_valid) {
         for (LFGLockInfo* member = CGLookingForGroup::m_partyLockInfo.m_members.Head(); member; member = CGLookingForGroup::m_partyLockInfo.m_members.Next(member)) {
             for (LFGDungeonEntry* entry = member->m_dungeons.Head(); entry; entry = member->m_dungeons.Next(entry)) {
-                if ((entry->m_slot >> 24) != 2 && entry->m_locked) {
+                if ((entry->m_slot >> 24) != CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RAID && entry->m_locked) {
                     lua_pushnumber(L, entry->m_slot & 0xFFFFFF);
                     lua_pushnumber(L, entry->m_lockReason);
                     lua_settable(L, -3);
@@ -804,7 +804,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     lua_pushstring(L, dungeon->m_name);
     lua_pushstring(L, dungeon->m_textureFilename);
 
-    uint32_t roles = 0;
+    ROLE_FLAGS roles = ROLE_FLAGS::NONE;
     uint32_t accepted = 0;
 
     for (uint32_t i = 0; i < 5; i++) {
@@ -815,11 +815,11 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
         }
     }
 
-    if (roles & 0x2) {
+    if (roles & ROLE_FLAGS::TANK) {
         lua_pushstring(L, "TANK");
-    } else if (roles & 0x4) {
+    } else if (roles & ROLE_FLAGS::HEALER) {
         lua_pushstring(L, "HEALER");
-    } else if (roles & 0x8) {
+    } else if (roles & ROLE_FLAGS::DAMAGER) {
         lua_pushstring(L, "DAMAGER");
     } else {
         lua_pushstring(L, "UNKNOWN");
@@ -830,7 +830,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     uint32_t total = 0;
     uint32_t completed = 0;
 
-    if (dungeon->m_typeID == 6) {
+    if (dungeon->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RANDOM_DUNGEON) {
         total = 0;
         completed = CGLookingForGroup::m_proposal.m_completedMask != 0;
     } else if (dungeon->m_flags & 0x4) {
@@ -843,7 +843,7 @@ static int32_t PushLFGProposalInfo(lua_State* L) {
     lua_pushnumber(L, total);
     lua_pushnumber(L, completed);
     lua_pushnumber(L, 5.0);
-    lua_pushboolean(L, roles & 0x1);
+    lua_pushboolean(L, roles & ROLE_FLAGS::LEADER);
     lua_pushboolean(L, (dungeon->m_flags >> 2) & 0x1);
     return 12;
 }
@@ -1315,7 +1315,7 @@ static int32_t Script_UnitHasLFGRandomCooldown(lua_State* L) {
         return 0;
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         lua_pushboolean(L, unit->HasAuraBySpellId(71328));
@@ -1353,7 +1353,7 @@ static int32_t Script_UnitHasLFGDeserter(lua_State* L) {
         return 0;
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         lua_pushboolean(L, unit->HasAuraBySpellId(71041));
@@ -1403,10 +1403,10 @@ static float s_teleportTime;
 // OFFSET: 0x005529E0
 static int32_t AddLFGPlayerInfo(lua_State* L, LFGListPlayer* player) {
     if (player) {
-        lua_pushboolean(L, player->m_roles & 0x1);
-        lua_pushboolean(L, player->m_roles & 0x2);
-        lua_pushboolean(L, player->m_roles & 0x4);
-        lua_pushboolean(L, player->m_roles & 0x8);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::LEADER);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::TANK);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::HEALER);
+        lua_pushboolean(L, player->m_roles & ROLE_FLAGS::DAMAGER);
         lua_pushnumber(L, player->unk_0064);
         lua_pushnumber(L, player->m_talents[0]);
         lua_pushnumber(L, player->m_talents[1]);
@@ -1560,12 +1560,12 @@ static int32_t Script_CompleteLFGRoleCheck(lua_State* L) {
         return 0;
     }
 
-    uint8_t roles = 0;
+    ROLE_FLAGS roles = ROLE_FLAGS::NONE;
 
     if (StringToBOOL(L, 1, 0)) {
-        roles = FilterRolesByClass(static_cast<uint8_t>(s_cvLfgSelectedRoles->m_intValue));
+        roles = FilterRolesByClass(static_cast<ROLE_FLAGS_8>(s_cvLfgSelectedRoles->m_intValue));
 
-        if (!(roles & 0xE)) {
+        if (!(roles & ROLE_FLAGS::COMBAT_ROLES)) {
             CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
             lua_pushboolean(L, 0);
             return 1;
@@ -1574,7 +1574,7 @@ static int32_t Script_CompleteLFGRoleCheck(lua_State* L) {
 
     CDataStore msg;
     msg.Put(static_cast<uint32_t>(CMSG_LFG_SET_ROLES));
-    msg.Put(roles);
+    msg.Put(static_cast<uint8_t>(roles));
     msg.Finalize();
     ClientServices::Send2(&msg);
     lua_pushboolean(L, 1);
@@ -1943,7 +1943,7 @@ static int32_t Script_GetLastQueueStatusIndex(lua_State* L) {
 // VERIFY: bf1376c8 auto
 // OFFSET: 0x0055A0C0
 static int32_t Script_PartyLFGStartBackfill(lua_State* L) {
-    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & 0xFFFFFFFE)) {
+    if (!s_cvLfgSelectedRoles || !(s_cvLfgSelectedRoles->m_intValue & ~ROLE_FLAGS::LEADER)) {
         CGGameUI::DisplayError(ERR_LFG_NO_ROLES_SELECTED);
         return 0;
     }
@@ -1975,7 +1975,7 @@ static int32_t Script_SearchLFGSort(lua_State* L) {
         return 0;
     }
 
-    int32_t type = 3;
+    CGLookingForGroup::SORT_COLUMN type = CGLookingForGroup::SORT_COLUMN::NAME;
     const char* name = lua_tolstring(L, 1, nullptr);
 
     if (!SStrCmpI(name, "group", STORM_MAX_STR)) {
@@ -1985,25 +1985,25 @@ static int32_t Script_SearchLFGSort(lua_State* L) {
     }
 
     if (!SStrCmpI(name, "name", STORM_MAX_STR)) {
-        type = 3;
+        type = CGLookingForGroup::SORT_COLUMN::NAME;
     } else if (!SStrCmpI(name, "level", STORM_MAX_STR)) {
-        type = 1;
+        type = CGLookingForGroup::SORT_COLUMN::LEVEL;
     } else if (!SStrCmpI(name, "class", STORM_MAX_STR)) {
-        type = 2;
+        type = CGLookingForGroup::SORT_COLUMN::CLASS;
     } else if (!SStrCmpI(name, "zone", STORM_MAX_STR)) {
-        type = 0;
+        type = CGLookingForGroup::SORT_COLUMN::ZONE;
     } else if (!SStrCmpI(name, "tank", STORM_MAX_STR)) {
-        type = 4;
+        type = CGLookingForGroup::SORT_COLUMN::TANK_ROLE;
     } else if (!SStrCmpI(name, "healer", STORM_MAX_STR)) {
-        type = 5;
+        type = CGLookingForGroup::SORT_COLUMN::HEALER_ROLE;
     } else if (!SStrCmpI(name, "damage", STORM_MAX_STR)) {
-        type = 6;
+        type = CGLookingForGroup::SORT_COLUMN::DAMAGE_ROLE;
     }
 
     int32_t index = 0;
 
     while (CGLookingForGroup::m_unkBEA820[index].m_id != type) {
-        if (++index >= 7) {
+        if (++index >= CGLookingForGroup::SORT_COLUMN::NUM_SORT_COLUMNS) {
             CGLookingForGroup::ResortLFGLists();
             return 0;
         }

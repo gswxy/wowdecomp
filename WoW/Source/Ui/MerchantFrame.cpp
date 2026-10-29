@@ -53,8 +53,8 @@ MerchantItem* CGMerchantInfo::FindItemById(int32_t itemId) {
 // OFFSET: 0x00584B20
 int32_t CGMerchantInfo::GetRepairCost(CGItem_C* item) {
     float multiplier = 1.0f;
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
-    CGUnit_C* merchant = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGMerchantInfo::m_merchant, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
+    CGUnit_C* merchant = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGMerchantInfo::m_merchant, TYPE_UNIT, __FILE__, __LINE__));
 
     if (player && merchant) {
         multiplier = 1.0f - merchant->GetPlayerDiscount(player);
@@ -75,13 +75,13 @@ void CGMerchantInfo::CloseMerchant() {
     CGMerchantInfo::m_numMerchantItems = 0;
     FrameScript_SignalEvent(SCRIPT_EVENT_MERCHANT_CLOSED, nullptr);
 
-    if (CGGameUI::m_cursorItemType == 5 && CGGameUI::GetCursorVirtualItem()) {
+    if (CGGameUI::m_cursorItemType == UICURSOR_MERCHANT && CGGameUI::GetCursorVirtualItem()) {
         CGGameUI::ClearCursor(1, 1);
     }
 
-    if (CursorGetResetMode() == 17) {
-        CursorSetResetMode(1);
-        CursorSetMode(1);
+    if (CursorGetResetMode() == REPAIR_CURSOR) {
+        CursorSetResetMode(POINT_CURSOR);
+        CursorSetMode(POINT_CURSOR);
     }
 }
 
@@ -164,7 +164,7 @@ void CGMerchantInfo::SortBuybackItems() {
     memset(CGMerchantInfo::m_buybackSlots, 0, sizeof(CGMerchantInfo::m_buybackSlots));
     CGMerchantInfo::m_numBuybackItems = 0;
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -221,7 +221,7 @@ void CGMerchantInfo::EnterWorld() {
     CGMerchantInfo::m_merchant = WOWGUID{ 0 };
     CGMerchantInfo::m_numMerchantItems = 0;
     memset(CGMerchantInfo::m_items, 0, sizeof(CGMerchantInfo::m_items));
-    ClntObjMgrSetObjMirrorHandler(ClntObjMgrGetActivePlayer(), ID_PLAYER, offsetof(CGPlayerLocalData, m_playerFieldBuybackPrice1), sizeof(CGPlayerLocalData::m_playerFieldBuybackPrice1) + sizeof(CGPlayerLocalData::m_playerFieldBuybackTimestamp1), BuybackUpdateHandler, nullptr, static_cast<HANDLER_PRIORITY>(0), 0);
+    ClntObjMgrSetObjMirrorHandler(ClntObjMgrGetActivePlayer(), ID_PLAYER, offsetof(CGPlayerLocalData, m_playerFieldBuybackPrice1), sizeof(CGPlayerLocalData::m_playerFieldBuybackPrice1) + sizeof(CGPlayerLocalData::m_playerFieldBuybackTimestamp1), BuybackUpdateHandler, nullptr, HANDLER_PRIORITY_NORMAL, 0);
     CGMerchantInfo::SortBuybackItems();
 }
 
@@ -236,7 +236,7 @@ void CGMerchantInfo::RefreshList() {
 // VERIFY: ceeabfca manual
 // OFFSET: 0x005845B0
 int32_t CGMerchantInfo::CanRepair() {
-    CGUnit_C* merchant = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGMerchantInfo::m_merchant, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* merchant = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGMerchantInfo::m_merchant, TYPE_UNIT, __FILE__, __LINE__));
     return merchant && (merchant->m_unit->m_unitNpcFlags & 0x1000);
 }
 

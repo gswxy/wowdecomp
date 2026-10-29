@@ -54,22 +54,70 @@ typedef void (*RENDER_CALLBACK)(uint32_t, void*);
 
 class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> {
     public:
+    enum SHADER_TYPE : uint32_t {
+        DIFFUSE = 0,
+        SPECULAR = 1,
+        METAL = 2,
+        ENVIRONMENT = 3,
+        OPAQUE_EFFECT = 4,
+        ENVIRONMENT_METAL = 5,
+        COMPOSITE = 6,
+        SHADER_COUNT = 7,
+    };
+
+    enum SHADER_FOG_MODE : int32_t {
+        CACHE_RESET = -1,
+        DISABLED = 0,
+        INTERIOR_COLOR = 1,
+        EXTERIOR_COLOR = 2,
+        BLACK_COLOR = 4,
+        INTERIOR_BLACK = 5,
+        EXTERIOR_BLACK = 6,
+    };
+
+    enum SHADOW_CONTEXT : int32_t {
+        INVALID = -1,
+        EXTERIOR = 0,
+        INTERIOR = 1,
+    };
+
+    enum LIGHTING_MODE : int32_t {
+        CACHE_INVALID = -1,
+        UNLIT = 0,
+        DAY_NIGHT = 1,
+        DAY_NIGHT_MID = 2,
+        PARENT_COLOR = 3,
+    };
+
+    enum RENDER_MODE : int32_t {
+        COLLISION_FACES = 0,
+        DETAIL_FACES = 1,
+        RENDER_FACES = 2,
+        TRANSPARENT_FACES = 3,
+        COLLIDABLE = 4,
+        DEFAULT_RENDER = 5,
+    };
+
     static void RenderMapObjGroupsShadowMap(void* groups, uint32_t count, void* groupData, const C44Matrix& translation, CFrustum& frustum);
     bool QueryLighting(uint32_t groupNum, const C3Vector& point, uint16_t face, CImVector* color, uint8_t* flag);
     bool QueryLighting(uint32_t groupNum, const C3Segment& seg, CImVector* color, uint8_t* flag);
     static TSList<CMapObj, TSGetExplicitLink<CMapObj> > s_asyncLoadQueue;
+#if defined(WOWDECOMP_ARCH_64)
+    // MODIFIED: performance; seconds an unreferenced WMO is kept (wmoCacheTime; stock 10)
+    static float s_flushTime;
+#endif
     static TSList<CMapObjGroup, TSGetExplicitLink<CMapObjGroup> > s_loadedGroups;
     static TSHashTable<CMapObj, HASHKEY_NONE> mapObjHash;
     static RENDER_CALLBACK gRenderCallback;
     static void* gRenderUserParam;
     static int32_t bPoolsDirty;
     static uint32_t* occluderHeap;
-    static int32_t s_renderMode;
+    static RENDER_MODE s_renderMode;
     static void (CMapObj::*s_renderGroupExterior)(CMapObjGroup* group, uint32_t index);
     static void (CMapObj::*s_renderGroupInterior)(CMapObjGroup* group, uint32_t index);
-    static CShaderEffect* s_classicShaders[7];
-    static CShaderEffect* s_unifiedShaders[7];
-    static int32_t s_lightingMode;
+    static CShaderEffect* s_classicShaders[SHADER_TYPE::SHADER_COUNT];
+    static CShaderEffect* s_unifiedShaders[SHADER_TYPE::SHADER_COUNT];
+    static LIGHTING_MODE s_lightingMode;
     static uint32_t s_maxLiquidQueryDepth;
 
     static void ClearCache(int32_t unused_a1);
@@ -154,11 +202,15 @@ class CMapObj : public CMapObjIndex, public TSHashObject<CMapObj, HASHKEY_NONE> 
     /* 01E8 */ TSExplicitList<CMapObjGroup, offsetof(CMapObjGroup, m_asyncLoadLink)> m_mapObjGroupList;
     /* 01F4 */ int32_t m_mapObjGroupCount;
     /* 01F8 */ CMapObjGroup* m_mapObjGroupArray [512];
+    // CUSTOM (WMONORMALS): each material's `<diffuse>_n.blp` normal map, or null; m_materialsCount entries,
+    // made by CreateMaterials only while a D3D11 / Vulkan device lights the world (g_gxLighting), freed by Clear
+    CTexture** m_normalTextures;
 
     CMapObj();
     ~CMapObj();
     void Clear();
     void UpdateMaterials();
+    void BindNormalMap(uint32_t material);   // CUSTOM (WMONORMALS)
     float DistFromClosestExtPortal(CMapObjGroup* group, const C3Vector& pos, int32_t exteriorLit);
     void DistFromClosestExtPortal(uint32_t depth, uint32_t flags, CMapObjGroup* group, CMapObjGroup* fromGroup, const C3Vector& pos, float* dist);
     void ExteriorRender(CMapObjGroup* group, uint32_t index);

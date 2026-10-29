@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "Engine/Source/Gx/GxParticleQuads.h"
 #include "Engine/Source/Gx/Types.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Storm/H/stpl.h"
@@ -68,7 +69,35 @@ class CSortableParticleQueue : public CMemBlock {
 };
 
 class CParticleEmitter2 {
+    protected:
+    static const float VEL_UPDATE_TIME;
+    static const float MIN_ZSOURCE;
+
     public:
+    enum PARTICLE_EMITTER_TYPE : int32_t {
+        PET_BASE_EMITTER = 0,
+        PET_PLANE_EMITTER = 1,
+        PET_SPHERE_EMITTER = 2,
+        PET_SPLINE_EMITTER = 3,
+        PET_NUMS_PETS = 4,
+    };
+
+    enum : uint32_t {
+        NUM_PARTICLE_KEYS = 2,
+        MAX_CHILD_EMITTERS = 4,
+    };
+
+    enum : uint32_t {
+        MAX_RECURSIVE_PARTICLES = 0x1000,
+        RND_TABLE_SIZE = 128,
+        RND_TABLE_MASK = 0x7F,
+    };
+
+    enum PARTICLE_TYPE : uint32_t {
+        PT_QUAD = 0,
+        PT_MODEL = 1,
+    };
+
     struct ParticleVertex {
         /* 0000 */ uint8_t* m_position;
         /* 0004 */ uint8_t* m_normal;
@@ -98,7 +127,7 @@ class CParticleEmitter2 {
     };
 
     struct Params {
-        /* 0000 */ uint32_t m_hasModel;
+        /* 0000 */ PARTICLE_TYPE m_particleType;
         /* 0004 */ float m_emissionRate;
         /* 0008 */ float m_emissionRateVariation;
         /* 000C */ float m_life;
@@ -132,9 +161,35 @@ class CParticleEmitter2 {
     static CGxPool* s_indexPool;
     static uint32_t s_initCount;
     static uint8_t s_noIndexBuffer;
-    static CSortableParticleQueue s_pq;
-    static float s_rndTable[128];
-    static float s_viewDist;
+    // Not stock: per thread, since CM2SceneRender::Draw builds particle vertices on the Model2 workers
+    static thread_local CSortableParticleQueue s_pq;
+    static float s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
+    // Not stock: per thread, since CM2Scene::Animate updates emitters on the Model2 workers (set in Update, read in
+    // EmitNewParticles of the same emitter tree)
+    static thread_local float s_viewDist;
+
+    // Not stock: vertices of one emitter built ahead of the draw on a Model2 worker (CM2SceneRender::Draw).
+    // RenderParticles copies them instead of building them again when s_prebuilt (main thread only) matches its inputs.
+    struct Prebuilt {
+        CParticleEmitter2* m_emitter;
+        const C44Matrix* m_frameOfReference;
+        uint8_t* m_data;
+        uint32_t m_capacity;
+        uint32_t m_vertexCount;
+        CAaBox m_worldBounds;
+        // GPUPARTICLES: m_data holds GxParticleQuad records (m_capacity and m_vertexCount still count vertices, 4 per quad)
+        uint8_t m_quads;
+    };
+    static const Prebuilt* s_prebuilt;
+    static C44Matrix s_prebuiltView;
+
+    // GPUPARTICLES: set by CM2SceneRender around an emitter's (or a batch's) Render: the particle buffer gets
+    // GxParticleQuad records, which the Vulkan backend expands on the GPU, instead of four vertices per quad. Main
+    // thread only.
+    static uint8_t s_quads;
+    // SOFTPARTICLES: not in 12340. Set by CM2SceneRender::DrawParticle: the emitter's material is blended (M2 blend
+    // 2 and up), so it may fade into the scene behind it (g_softParticleDraw). Main thread only.
+    static uint8_t s_soft;
 
     static void Destroy();
     static void Init();
@@ -148,14 +203,14 @@ class CParticleEmitter2 {
     /* 0014 */ float m_textureCellHeight;
     /* 0018 */ uint32_t m_priorityPlane;
     /* 001C */ uint32_t m_renderedParticles;
-    /* 0020 */ int32_t m_emitterType;
+    /* 0020 */ PARTICLE_EMITTER_TYPE m_emitterType;
     /* 0024 */ CRndSeed m_random;
     /* 002C */ TSGrowableArray<CParticle2> m_particles;
     /* 003C */ TSGrowableArray<CParticle2_Model> m_particleModels;
     /* 004C */ TSGrowableArray<uint32_t> m_liveList;
     /* 005C */ TSGrowableArray<uint32_t> m_freeList;
     /* 006C */ uint32_t m_childEmitterCount;
-    /* 0070 */ CParticleEmitter2* m_childEmitters [4];
+    /* 0070 */ CParticleEmitter2* m_childEmitters [CParticleEmitter2::MAX_CHILD_EMITTERS];
     /* 0080 */ CM2Model* m_model;
     /* 0084 */ CM2Scene* m_scene;
     /* 0088 */ CM2Model* m_childModel;
@@ -217,6 +272,9 @@ class CParticleEmitter2 {
     CParticleEmitter2(const CParticleEmitter2& source, int32_t copyParticles);
     CParticleEmitter2* AddRef();
     void BuildParticleVertices(ParticleVertex& vertex, uint32_t count, const C44Matrix& transform);
+    void BuildParticleQuads(GxParticleQuad* quads, uint32_t& quadCount, uint32_t count, const C44Matrix& transform);   // GPUPARTICLES: quad records
+    uint32_t BuildQuads(const CParticle2& particle, GxParticleQuad* quad);   // GPUPARTICLES: quad records
+    void Prebuild(Prebuilt& prebuilt);
     int32_t BuildVertex(const CParticle2& particle, ParticleVertex& vertex);
     float CalcVelocity();
     void ChangeFrameOfReference(const C44Matrix* matrix);
@@ -328,5 +386,9 @@ class CSplineParticleEmitter : public CParticleEmitter2 {
     void SetEmissionRate(float rate) override;
     void SetSpline(const C3Vector* points, uint32_t count);
 };
+
+// SOFTPARTICLES: not in 12340. Set by WoW's SoftParticles while an M2 pass has the scene depth: called right
+// before (true) and after (false) a soft-capable particle or ribbon draw, after its SetDefaultShaders. Null: stock.
+extern void (*g_softParticleDraw)(bool before);
 
 #endif

@@ -9,6 +9,8 @@
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Tempest/C2iVector.h"
 
+static const float oo255 = (1.0f / 255.0f);
+
 class C2Vector;
 class C3Vector;
 class C44Matrix;
@@ -51,7 +53,9 @@ class GxDrawListEntry {
 
 CGxDevice* CreateCGxDeviceD3d();
 CGxDevice* CreateCGxDeviceD3d9Ex();
+CGxDevice* CreateCGxDeviceD3d11();
 CGxDevice* CreateCGxDeviceOpenGl();
+CGxDevice* CreateCGxDeviceVulkan();
 CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& format);
 int32_t GxAdapterDesktopMode(CGxMonitorMode& mode);
 int32_t GxAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint32_t& driverVersionHi, uint32_t& driverVersionLo);
@@ -63,6 +67,11 @@ void GxXformSet(EGxXform xf, const C44Matrix& matrix);
 char* GxBufLock(CGxBuf* buf);
 void GxBufUnlock(CGxBuf* buf, uint32_t size);
 void GxBufDestroy(CGxBuf* buf);
+// plane: cube map face (level 0), or for any other texture the mip level rendered into (RTT MIPS, not in 12340,
+// which always bound level 0). A render target gets a full mip chain down to 1x1, with no hardware auto-generation,
+// when its CGxTexFlags have m_renderTarget = 1, a mip filter (m_filter >= GxTex_NearestMipNearest), m_generateMipMaps = 0
+// and m_forceMipTracking = 0 (ITexWHDStartEnd); the caller renders every level itself. The window/viewport is the
+// bound level's extent and the auto-paired depth is sized for it; bind no depth texture for a level > 0.
 void GxRenderTargetSet(EGxBuffer buffer, CGxTex* texture, uint32_t plane);
 void GxBufData(CGxBuf* buf, const void* data, uint32_t size, uint32_t offset);
 CGxBuf* GxBufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t itemCount);
@@ -100,6 +109,7 @@ void GxLog(const char* format, ...);
 void GxLogClose();
 void GxLogCrashInfo(char* buffer, uint32_t size);
 void GxLogOpen();
+void GxTeardownLog(const char* format, ...);
 int32_t GxIsWindowVisible();
 int32_t GxMasterEnable(EGxMasterEnables state);
 void GxMasterEnableSet(EGxMasterEnables state, int32_t enable);
@@ -113,6 +123,7 @@ void GxRsSet(EGxRenderState which, void* value);
 void GxRsSet(EGxRenderState which, int32_t value);
 void GxRsSet(EGxRenderState which, float value);
 void GxUpdateAlphaRef(EGxRenderState which);
+// mask is a combination of GxBufferBit_* values.
 void GxSceneClear(uint32_t mask, CImVector color);
 void GxScenePresent();
 void GxuClearDrawList(EGxuDrawListCategory category);

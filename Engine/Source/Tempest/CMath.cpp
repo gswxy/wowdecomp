@@ -226,7 +226,7 @@ double CMath::log2_(double x) {
     uint32_t index = (hi >> 14) & 0x3F;
 
     double mantissa = x;
-    reinterpret_cast<uint32_t*>(&mantissa)[1] = (hi & 0xFFFFF) | 0x3FF00000;
+    reinterpret_cast<uint32_t*>(&mantissa)[1] = (hi & lrmant) | lrexp;
 
     double t = s_log2MulTable[index] * mantissa - 1.0;
     double t2 = t * t;
@@ -297,7 +297,7 @@ float CMath::normalizeangle0to2pi_(float angle) {
     double result = fmod(angle, 6.2831854820251465);
 
     if (result < 0.0) {
-        result = result + 6.2831855f;
+        result = result + TWO_PI;
     }
 
     return static_cast<float>(result);
@@ -308,12 +308,12 @@ float CMath::normalizeangle0to2pi_(float angle) {
 float CMath::normalizeAngleNegPiToPi_(float angle) {
     double result = fmod(angle, 6.2831854820251465);
 
-    if (result < -3.1415927f) {
-        return static_cast<float>(result + 6.2831855f);
+    if (result < -PI) {
+        return static_cast<float>(result + TWO_PI);
     }
 
-    if (result > 3.1415927f) {
-        result = result - 6.2831855f;
+    if (result > PI) {
+        result = result - TWO_PI;
     }
 
     return static_cast<float>(result);
@@ -432,12 +432,12 @@ bool CMath::fnotequal(float a, float b) {
 // VERIFY: cc462220 auto
 // OFFSET: 0x007156C0
 float CMath::normalizeAnglePi(float angle) {
-    if (angle > 3.1415927f) {
-        return static_cast<float>(fmod(static_cast<double>(angle + 3.1415927f), static_cast<double>(6.2831855f)) - 3.1415927f);
+    if (angle > PI) {
+        return static_cast<float>(fmod(static_cast<double>(angle + PI), static_cast<double>(TWO_PI)) - PI);
     }
 
-    if (angle < -3.1415927f) {
-        return static_cast<float>(fmod(static_cast<double>(angle - 3.1415927f), static_cast<double>(6.2831855f)) + 3.1415927f);
+    if (angle < -PI) {
+        return static_cast<float>(fmod(static_cast<double>(angle - PI), static_cast<double>(TWO_PI)) + PI);
     }
 
     return angle;
@@ -474,20 +474,20 @@ CSoftFloat operator*(const CSoftFloat& l, const CSoftFloat& r) {
     uint32_t sign = (a ^ b) & 0x80000000;
     uint32_t expA = a & 0x7F800000;
     uint32_t expB = b & 0x7F800000;
-    uint32_t manA = a & 0x7FFFFF;
-    uint32_t manB = b & 0x7FFFFF;
+    uint32_t manA = a & rmant;
+    uint32_t manB = b & rmant;
 
     CSoftFloat result;
 
     if (manA && manB) {
-        int32_t exp = static_cast<int32_t>(expB + expA - 0x3F800000);
+        int32_t exp = static_cast<int32_t>(expB + expA - rexp);
         uint32_t product = static_cast<uint32_t>((static_cast<uint64_t>((manB | 0xFF800000) << 8) * ((manA | 0xFF800000) << 8)) >> 32);
         uint32_t carry = product >> 31;
-        uint32_t mantissa = ((product >> carry) >> 7) & 0x7FFFFF;
+        uint32_t mantissa = ((product >> carry) >> 7) & rmant;
 
         result.m_bits = ~static_cast<uint32_t>((exp - 0x800000) >> 31) & (mantissa | ((carry << 23) + exp) | sign);
     } else if (expA && expB) {
-        int32_t exp = static_cast<int32_t>(expB + expA - 0x3F800000);
+        int32_t exp = static_cast<int32_t>(expB + expA - rexp);
 
         result.m_bits = ~static_cast<uint32_t>((exp - 0x800000) >> 31) & (exp | manB | manA | sign);
     } else {
@@ -515,9 +515,9 @@ CSoftFloat operator+(const CSoftFloat& l, const CSoftFloat& r) {
     }
 
     int32_t signA = static_cast<int32_t>(a) >> 31;
-    int32_t manA = static_cast<int32_t>((((a & 0x7FFFFF) | 0x800000) * 2) ^ signA) - signA;
+    int32_t manA = static_cast<int32_t>((((a & rmant) | 0x800000) * 2) ^ signA) - signA;
     int32_t signB = static_cast<int32_t>(b) >> 31;
-    int32_t manB = static_cast<int32_t>((((b & 0x7FFFFF) | 0x800000) * 2) ^ signB) - signB;
+    int32_t manB = static_cast<int32_t>((((b & rmant) | 0x800000) * 2) ^ signB) - signB;
     int32_t diff = static_cast<int32_t>(expB - expA);
     uint32_t exp;
 
@@ -560,7 +560,7 @@ CSoftFloat operator+(const CSoftFloat& l, const CSoftFloat& r) {
         sum <<= -shift;
     }
 
-    result.m_bits = (((shift - 1) << 23) + exp) | (static_cast<uint32_t>(sum) & 0x7FFFFF) | sign;
+    result.m_bits = (((shift - 1) << 23) + exp) | (static_cast<uint32_t>(sum) & rmant) | sign;
     return result;
 }
 
@@ -568,7 +568,7 @@ CSoftFloat operator+(const CSoftFloat& l, const CSoftFloat& r) {
 // OFFSET: 0x0095D3F0
 CSoftFloat CSoftFloat::Reciprocal(const CSoftFloat& value) {
     uint32_t bits = value.m_bits;
-    uint32_t mantissa = bits & 0x7FFFFF;
+    uint32_t mantissa = bits & rmant;
     uint32_t exp = 0x7E800000 - (bits & 0x7F800000);
     uint32_t high = mantissa << 19;
     uint32_t fraction = high | ((((mantissa << 19) >> 13) | high) >> 13);
@@ -605,9 +605,9 @@ CSoftFloat CSoftFloat::Floor(const CSoftFloat& value) {
         return result;
     }
 
-    uint32_t mantissa = ((bits & 0x7FFFFF) + ~mask) & mask;
+    uint32_t mantissa = ((bits & rmant) + ~mask) & mask;
 
-    result.m_bits = ((exp + (mantissa >> 23) + 127) << 23) | (mantissa & 0x7FFFFF) | 0x80000000;
+    result.m_bits = ((exp + (mantissa >> 23) + 127) << 23) | (mantissa & rmant) | 0x80000000;
     return result;
 }
 
@@ -634,9 +634,9 @@ CSoftFloat CSoftFloat::Ceil(const CSoftFloat& value) {
         return result;
     }
 
-    uint32_t mantissa = ((bits & 0x7FFFFF) + ~mask) & mask;
+    uint32_t mantissa = ((bits & rmant) + ~mask) & mask;
 
-    result.m_bits = ((exp + (mantissa >> 23) + 127) << 23) | (mantissa & 0x7FFFFF);
+    result.m_bits = ((exp + (mantissa >> 23) + 127) << 23) | (mantissa & rmant);
     return result;
 }
 
@@ -648,7 +648,7 @@ CSoftFloat CSoftFloat::FromRatio(int32_t numerator, int32_t denominator) {
 
     if (num.m_bits == den.m_bits) {
         CSoftFloat result;
-        result.m_bits = 0x3F800000;
+        result.m_bits = rexp;
         return result;
     }
 
@@ -682,7 +682,7 @@ CSoftFloat CSoftFloat::FromInt(int32_t value) {
         magnitude >>= -shift;
     }
 
-    result.m_bits = ((31 - zeros + 127) << 23) | (static_cast<uint32_t>(magnitude) & 0x7FFFFF) | sign;
+    result.m_bits = ((31 - zeros + 127) << 23) | (static_cast<uint32_t>(magnitude) & rmant) | sign;
     return result;
 }
 
@@ -713,7 +713,7 @@ float CMath::sin_(float x) {
 // VERIFY: eea7f5f0 auto
 // OFFSET: 0x008CA080
 float OrganicSmooth(float from, float to, float t) {
-    return from + (to - from) * ((1.0f - cosf(t * 3.1415927f)) * 0.5f);
+    return from + (to - from) * ((1.0f - cosf(t * PI)) * 0.5f);
 }
 
 // VERIFY: 0fa97e20 auto

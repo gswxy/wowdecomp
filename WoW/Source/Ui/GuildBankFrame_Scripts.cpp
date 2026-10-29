@@ -88,7 +88,7 @@ static int32_t Script_GetGuildBankMoney(lua_State* L) {
 // VERIFY: faf0c262 manual
 // OFFSET: 0x005A6B20
 static int32_t Script_GetGuildBankTabCost(lua_State* L) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return 0;
@@ -108,7 +108,7 @@ static int32_t Script_GetGuildBankTabCost(lua_State* L) {
 // VERIFY: be98e965 manual
 // OFFSET: 0x005A5F60
 static int32_t Script_CanWithdrawGuildBankMoney(lua_State* L) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (player && player->m_player->m_playerGuildid) {
         const GuildRankInfo& rank = CGGuildInfo::m_rankInfo[player->m_player->m_playerGuildrank];
@@ -134,7 +134,7 @@ static int32_t Script_PickupGuildBankMoney(lua_State* L) {
     uint32_t amount = static_cast<uint32_t>(lua_tonumber(L, 1));
 
     if (amount && amount <= CGGuildBankInfo::m_money) {
-        CGGameUI::SetCursorMoney(amount, 12, SCRIPT_EVENT_GUILDBANK_UPDATE_MONEY);
+        CGGameUI::SetCursorMoney(amount, UICURSOR_GUILDBANK_MONEY, SCRIPT_EVENT_GUILDBANK_UPDATE_MONEY);
     }
 
     return 0;
@@ -307,7 +307,7 @@ static int32_t Script_DepositGuildBankMoney(lua_State* L) {
         return 0;
     }
 
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
     uint32_t amount = static_cast<uint32_t>(lua_tonumber(L, 1));
 
     if (player->GetCoinage() >= amount) {
@@ -347,7 +347,7 @@ static int32_t Script_GetGuildBankItemInfo(lua_State* L) {
     ItemRec* rec;
 
     if (tab < 6 && slot < CGGuildBankInfo::m_tabSlots[tabByte].m_count && (info = &CGGuildBankInfo::m_tabSlots[tab].m_data[slot])->m_itemID && info && ClntObjMgrGetActivePlayerObj() && (rec = g_itemDB.GetRecord(info->m_itemID))) {
-        const char* path = ClientDBStringLookup(3);
+        const char* path = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
         char texture[260];
         SStrPrintf(texture, sizeof(texture), "%s%s%s", path, *path ? "\\" : "", CGItem_C::GetInventoryArt(rec->m_displayInfoID));
         lua_pushstring(L, texture);
@@ -394,7 +394,7 @@ static int32_t Script_PickupGuildBankItem(lua_State* L) {
     uint32_t containerSlot;
     CGGameUI::GetCursorItem(item, container, containerSlot);
 
-    if (CGGameUI::m_cursorItemType == 11) {
+    if (CGGameUI::m_cursorItemType == UICURSOR_GUILDBANK_ITEM) {
         CGGameUI::GetCursorVirtualItem(virtualId, virtualSlot);
     }
 
@@ -424,7 +424,7 @@ static int32_t Script_PickupGuildBankItem(lua_State* L) {
         uint32_t bankSlot = slot + 98 * tab;
 
         if (!CGGameUI::VirtualItemIsLocked(info->m_itemID, bankSlot, 0)) {
-            CGGameUI::SetCursorVirtualItem(info->m_itemID, rec->m_displayInfoID, bankSlot, 11, 0);
+            CGGameUI::SetCursorVirtualItem(info->m_itemID, rec->m_displayInfoID, bankSlot, UICURSOR_GUILDBANK_ITEM, 0);
             CGGameUI::LockVirtualItem(info->m_itemID, bankSlot, 0);
         }
     }
@@ -520,7 +520,7 @@ static int32_t Script_SplitGuildBankItem(lua_State* L) {
     int32_t virtualSlot = 0;
     uint32_t bankSlot = slot + 98 * tab;
 
-    if (CGGameUI::m_cursorItemType == 11) {
+    if (CGGameUI::m_cursorItemType == UICURSOR_GUILDBANK_ITEM) {
         CGGameUI::GetCursorVirtualItem(virtualId, virtualSlot);
     }
 
@@ -547,11 +547,11 @@ static int32_t Script_SplitGuildBankItem(lua_State* L) {
     Spell_C_StopTargeting();
 
     if (amount == stats->m_stackable) {
-        CGGameUI::SetCursorVirtualItem(info->m_itemID, stats->m_displayId, bankSlot, 11, 0);
+        CGGameUI::SetCursorVirtualItem(info->m_itemID, stats->m_displayId, bankSlot, UICURSOR_GUILDBANK_ITEM, 0);
         CGGameUI::LockVirtualItem(info->m_itemID, bankSlot, 0);
     }
 
-    CGGameUI::SetCursorVirtualItem(info->m_itemID, stats->m_displayId, bankSlot, 11, amount);
+    CGGameUI::SetCursorVirtualItem(info->m_itemID, stats->m_displayId, bankSlot, UICURSOR_GUILDBANK_ITEM, amount);
     CGGameUI::LockVirtualItem(info->m_itemID, bankSlot, 0);
     return 0;
 }
@@ -599,7 +599,7 @@ static int32_t Script_GetGuildBankTabInfo(lua_State* L) {
         SStrCopy(icon, "INV_Misc_QuestionMark", STORM_MAX_STR);
     }
 
-    const char* path = ClientDBStringLookup(3);
+    const char* path = ClientDBStringLookup(SLOOKUP_INVENTORYICONPATH);
     char texture[260];
     SStrPrintf(texture, sizeof(texture), "%s%s%s", path, *path ? "\\" : "", icon);
     lua_pushstring(L, texture);
@@ -619,7 +619,9 @@ static int32_t Script_GetGuildBankTabInfo(lua_State* L) {
     }
 
     lua_pushnumber(L, CGGuildInfo::GetNumGuildBankTabItemWithdrawalsByRankID(tab, rank));
-    lua_pushnumber(L, CGGuildBankInfo::m_withdrawMoneyRemaining);
+    // FORK FIX (Badgermilk0 2b4496a1): the exe loads this signed (fild at 0x5A69AE), so 0xFFFFFFFF reaches Lua as -1
+    // ("Unlimited"); pushed unsigned it showed as "-2147483648 Stacks"
+    lua_pushnumber(L, static_cast<int32_t>(CGGuildBankInfo::m_withdrawMoneyRemaining));
     return 6;
 }
 

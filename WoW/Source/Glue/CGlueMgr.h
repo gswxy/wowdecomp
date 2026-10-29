@@ -1,6 +1,7 @@
 #ifndef WOW_SOURCE_GLUE_CGLUEMGR_H
 #define WOW_SOURCE_GLUE_CGLUEMGR_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "WoW/Source/Object/WGUID.h"
@@ -62,8 +63,8 @@ class CGlueMgr {
     static GLUE_IDLE_STATE m_idleState;
     static uint32_t m_matrixChallengeCount;
     static char m_accountName[1280];
-    static int32_t m_loginResult;
-    static int32_t m_loginState;
+    static std::atomic<int32_t> m_loginResult; // Not stock: atomic (net thread writes)
+    static std::atomic<int32_t> m_loginState; // Not stock: atomic (net thread writes)
     static int32_t m_lastLoginResult;
     static int32_t m_lastLoginState;
     static uint32_t m_matrixRemaining;
@@ -81,7 +82,7 @@ class CGlueMgr {
     static int32_t m_acceptedScanning;
     static int32_t m_rereadContest;
     static int32_t m_acceptedContest;
-    static uint8_t m_authenticated;
+    static std::atomic<uint8_t> m_authenticated; // Not stock: atomic (net thread writes)
     static bool s_scriptFunctionsLoaded;
     static int32_t m_screenWidth;
     static int32_t m_screenHeight;
@@ -89,7 +90,7 @@ class CGlueMgr {
     static int32_t m_pendingServerAlert;
     static int32_t m_processServerAlert;
     static uint32_t m_pendingTimerAlert;
-    static int32_t m_accountMsgAvailable;
+    static std::atomic<int32_t> m_accountMsgAvailable; // Not stock: atomic (net thread writes)
     static uint32_t m_numChangedOptionWarnings;
     static int32_t m_showedDisconnect;
     static Agreements m_latestAgreements;

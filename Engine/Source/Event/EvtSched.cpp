@@ -8,11 +8,19 @@
 #include "Engine/Source/Event/EvtSched.h"
 #include "Engine/Source/Event/EvtThread.h"
 #include "Engine/Source/Event/EvtTimer.h"
+#include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Os/OsCall.h"
 #include "Engine/Source/Os/OsTcp.h"
 #include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
+
+#if defined(WOWDECOMP_ARCH_64)
+#include <cstdarg>
+#include <cstdio>
+#include <windows.h>
+#include <tlhelp32.h>
+#endif
 
 namespace Event {
     // STATIC: 0x00AC0DC0
@@ -246,7 +254,16 @@ void IEvtSchedulerDestroy() {
         }
     }
 
-    SSyncObject::WaitMultiplePtr(Event::s_schedulerThreads.Count(), reinterpret_cast<SSyncObject**>(Event::s_schedulerThreads.Ptr()), 1, 0xFFFFFFFF);
+    GxTeardownLog("IEvtSchedulerDestroy: join scheduler threads");
+
+    // Not stock (stock waits INFINITE): bounded so a stuck scheduler thread cannot hang the quit. On timeout the
+    // thread tables are leaked, not freed, as the stuck thread may still use them.
+    if (SSyncObject::WaitMultiplePtr(Event::s_schedulerThreads.Count(), reinterpret_cast<SSyncObject**>(Event::s_schedulerThreads.Ptr()), 1, 2000) == 0x102 /* WAIT_TIMEOUT */) {
+        GxTeardownLog("IEvtSchedulerDestroy: scheduler threads did not exit in 2 s, skipping the rest");
+        return;
+    }
+
+    GxTeardownLog("IEvtSchedulerDestroy: scheduler threads joined");
 
     if (shutdownThreads.Count()) {
         shutdownEvent.Set();
@@ -690,6 +707,12 @@ uint32_t STORMAPI SchedulerThreadProc(void* mainThread) {
     OsCallInitialize(name);
 
     while (!SchedulerThreadProcProcess(hThread, &watchdogStarted)) {
+#if defined(WOWDECOMP_ARCH_64)
+        // Not stock (hangdiag): main-loop heartbeat for the hang watchdog
+        if (mainThread) {
+            HangWatchdogTick();
+        }
+#endif
     }
 
     DestroySchedulerThread(hThread);
@@ -697,6 +720,177 @@ uint32_t STORMAPI SchedulerThreadProc(void* mainThread) {
 
     return 0;
 }
+
+#if defined(WOWDECOMP_ARCH_64)
+// Not stock (hangdiag): if the main loop stops ticking for HANG_LIMIT_MS, a watchdog thread suspends every other thread
+// of the process in turn, walks its stack with the x64 unwind tables and writes module+RVA frames to Logs\hang.txt
+// (resolve offline against Wow64.map). Logs once per hang, and once more when the main loop recovers.
+static const DWORD HANG_LIMIT_MS = 4000;
+static const int32_t HANG_MAX_FRAMES = 48;
+static volatile DWORD s_hangTick;
+static DWORD s_hangMainThreadId;
+
+void HangLog(const char* format, ...) {
+    char path[MAX_PATH];
+    DWORD length = GetModuleFileNameA(nullptr, path, MAX_PATH);
+
+    while (length && path[length - 1] != '\\' && path[length - 1] != '/') {
+        length--;
+    }
+
+    _snprintf_s(path + length, MAX_PATH - length, _TRUNCATE, "Logs");
+    CreateDirectoryA(path, nullptr);
+    _snprintf_s(path + length, MAX_PATH - length, _TRUNCATE, "Logs\\hang.txt");
+
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char line[2048];
+    int32_t used = _snprintf_s(line, sizeof(line), _TRUNCATE, "%02u:%02u:%02u.%03u ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+
+    va_list args;
+    va_start(args, format);
+    _vsnprintf_s(line + used, sizeof(line) - used - 2, _TRUNCATE, format, args);
+    va_end(args);
+    strcat_s(line, sizeof(line), "\r\n");
+
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD written;
+        WriteFile(file, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
+        CloseHandle(file);
+    }
+}
+
+// Runs while the thread is suspended: no heap, no locks, only reads of its stack.
+static int32_t HangCaptureStack(CONTEXT* context, DWORD64* frames) {
+    int32_t count = 0;
+
+    __try {
+        while (count < HANG_MAX_FRAMES && context->Rip) {
+            frames[count++] = context->Rip;
+
+            DWORD64 imageBase = 0;
+            PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context->Rip, &imageBase, nullptr);
+
+            if (!function) {
+                context->Rip = *reinterpret_cast<DWORD64*>(context->Rsp);
+                context->Rsp += 8;
+                continue;
+            }
+
+            void* handlerData = nullptr;
+            DWORD64 establisher = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context->Rip, function, context, &handlerData, &establisher, nullptr);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+
+    return count;
+}
+
+static void HangDumpThread(DWORD threadId) {
+    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, threadId);
+
+    if (!thread) {
+        return;
+    }
+
+    DWORD64 frames[HANG_MAX_FRAMES];
+    int32_t count = 0;
+
+    if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
+        CONTEXT context = {};
+        context.ContextFlags = CONTEXT_FULL;
+
+        if (GetThreadContext(thread, &context)) {
+            count = HangCaptureStack(&context, frames);
+        }
+
+        ResumeThread(thread);
+    }
+
+    CloseHandle(thread);
+
+    HangLog("  thread %lu%s, %d frames", threadId, threadId == s_hangMainThreadId ? " (MAIN)" : "", count);
+
+    for (int32_t i = 0; i < count; i++) {
+        HMODULE module = nullptr;
+        char name[MAX_PATH] = "?";
+
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(frames[i]), &module)) {
+            char path[MAX_PATH];
+
+            if (GetModuleFileNameA(module, path, MAX_PATH)) {
+                const char* base = strrchr(path, '\\');
+                strcpy_s(name, sizeof(name), base ? base + 1 : path);
+            }
+        }
+
+        HangLog("    #%02d %s+0x%llX", i, name, static_cast<unsigned long long>(frames[i] - reinterpret_cast<DWORD64>(module)));
+    }
+}
+
+static DWORD WINAPI HangWatchdogThread(void*) {
+    int32_t reported = 0;
+    DWORD reportedTick = 0;
+
+    while (true) {
+        Sleep(500);
+
+        DWORD tick = s_hangTick;
+        DWORD stalled = GetTickCount() - tick;
+
+        if (reported) {
+            if (tick != reportedTick) {
+                HangLog("main loop recovered after a %lu ms stall", tick - reportedTick);
+                reported = 0;
+            }
+
+            continue;
+        }
+
+        if (stalled < HANG_LIMIT_MS) {
+            continue;
+        }
+
+        reported = 1;
+        reportedTick = tick;
+        HangLog("HANG: main loop has not ticked for %lu ms; stacks follow (MAIN first)", stalled);
+        HangDumpThread(s_hangMainThreadId);
+
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+
+        if (snapshot != INVALID_HANDLE_VALUE) {
+            THREADENTRY32 entry = {};
+            entry.dwSize = sizeof(entry);
+
+            for (BOOL ok = Thread32First(snapshot, &entry); ok; ok = Thread32Next(snapshot, &entry)) {
+                if (entry.th32OwnerProcessID == GetCurrentProcessId() && entry.th32ThreadID != GetCurrentThreadId() && entry.th32ThreadID != s_hangMainThreadId) {
+                    HangDumpThread(entry.th32ThreadID);
+                }
+            }
+
+            CloseHandle(snapshot);
+        }
+
+        HangLog("HANG: end of stacks");
+    }
+}
+
+void HangWatchdogTick() {
+    s_hangTick = GetTickCount();
+
+    if (!s_hangMainThreadId) {
+        s_hangMainThreadId = GetCurrentThreadId();
+        HANDLE thread = CreateThread(nullptr, 0, HangWatchdogThread, nullptr, 0, nullptr);
+
+        if (thread) {
+            CloseHandle(thread);
+        }
+    }
+}
+#endif
 
 // VERIFY: 1a6d8e94 auto
 // OFFSET: 0x0047F2D0

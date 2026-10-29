@@ -6,19 +6,19 @@
 #include "Engine/Source/Tempest/CImVector.h"
 
 // STATIC: 0x00AF4938
-static uint32_t s_deviceRestored;
+static PassFogSeed::CLEAR_STATE s_deviceRestored;
 
 // VERIFY: beff8e6d auto
 // OFFSET: 0x007E7FE0
 void __fastcall PassFogSeed::DeviceRestoredCallback() {
-    s_deviceRestored = 1;
+    s_deviceRestored = PassFogSeed::CLEAR_STATE::CLEAR_PENDING;
 }
 
 // INLINED
 PassFogSeed::PassFogSeed(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, EGxBlend blend, bool unk) : FFX::Pass(inputs, count, output, blend, unk) {
     this->m_row = 0;
     this->m_color = 0;
-    s_deviceRestored = 1;
+    s_deviceRestored = PassFogSeed::CLEAR_STATE::CLEAR_PENDING;
     g_theGxDevicePtr->AddDeviceRestoredCallback(PassFogSeed::DeviceRestoredCallback);
 }
 
@@ -72,8 +72,8 @@ void PassFogSeed::Execute() {
     FFX::SetupGx(this->m_output);
 
     if (s_deviceRestored) {
-        GxSceneClear(1, CImVector(0, 0, 0, 0));
-        s_deviceRestored = 0;
+        GxSceneClear(GxBufferBit_Color, CImVector(0, 0, 0, 0));
+        s_deviceRestored = PassFogSeed::CLEAR_STATE::CLEAR_NOT_PENDING;
     }
 
     GxPrimVertexPtr(buf, GxVBF_PT);

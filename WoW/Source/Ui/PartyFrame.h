@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "WoW/Source/Object/WGUID.h"
 #include "WoW/Source/Net/Types.h"
+#include "WoW/Source/Object/ObjectClient/Types.h"
 
 class CDataStore;
 class CGPlayer_C;
@@ -54,6 +55,17 @@ struct PartyReadyCheckInfo {
 
 class CGPartyInfo {
     public:
+    enum ASSIGNMENT : uint8_t {
+        MAINTANK = 0,
+        MAINASSIST = 1,
+    };
+
+    enum ASSIGNMENT_FLAGS : int32_t {
+        ASSISTANT = 0x1,
+        MAIN_TANK = 2,
+        MAIN_ASSIST = 4,
+    };
+
     static void ChangeRaidDifficulty(int32_t heroic);
     static void LeaveWorld();
     static uint32_t m_memberRoles[4];
@@ -80,7 +92,7 @@ class CGPartyInfo {
     static int32_t m_lfgSlot;
     static WOWGUID m_leader;
     static WOWGUID m_realLeader;
-    static int32_t m_lootMethod;
+    static LOOT_METHOD m_lootMethod;
     static WOWGUID m_lootMaster;
 
     static bool InParty();
@@ -99,7 +111,7 @@ class CGPartyInfo {
     static void SetLeader(WOWGUID leader);
     static void SetLfgRestricted(int32_t restricted);
     static void SetLfgSlot(int32_t slot);
-    static int32_t SetLootMethod(int32_t method, WOWGUID master, int32_t threshold, int32_t force);
+    static int32_t SetLootMethod(LOOT_METHOD method, WOWGUID master, int32_t threshold, int32_t force);
     static void UpdateRealStats(uint32_t count, WOWGUID leader);
     static void SetOptOutOfLoot(int32_t optOut);
     static void EnableMember(CGPlayer_C* player, int32_t enable);

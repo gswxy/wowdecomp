@@ -3,6 +3,8 @@
 
 #include "fmod_settings.h"
 
+#include <atomic>
+
 #include "fmod_plugin.h"
 #include "fmod.hpp"
 #include "fmod_dsp_connectioni.h"
@@ -116,7 +118,9 @@ namespace FMOD
         int                     mDefaultPriority;
         float                  *mBuffer;
         int                     mBufferChannels;
-        unsigned int            mFlags;
+        // Not stock: atomic, the mixer thread (FINISHED/IDLE) and the API thread (ACTIVE/BYPASS) both read-modify-write
+        // it; plain |= / &= lost each other's bits. Same size and alignment as the stock unsigned int.
+        std::atomic<unsigned int> mFlags;
         char                   *mWantsToFinish;
         char                    mWantsToFinishMem;
 

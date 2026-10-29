@@ -111,7 +111,7 @@ static int32_t ComputeDuration(const char* text, bool self) {
 // VERIFY: 5706ad2a manual
 // OFFSET: 0x0056C340
 void CGChatBubbleFrame::Render(CGWorldFrame* worldFrame) {
-    if (!ClntObjMgrObjectPtr(this->m_unit, TYPEMASK_UNIT, __FILE__, __LINE__) || !this->m_positionValid) {
+    if (!ClntObjMgrObjectPtr(this->m_unit, TYPE_UNIT, __FILE__, __LINE__) || !this->m_positionValid) {
         return;
     }
 
@@ -300,7 +300,7 @@ CGChatBubbleFrame::CGChatBubbleFrame(CSimpleFrame* parent) : CSimpleFrame(parent
     void* data = SMemAlloc(sizeof(CBackdropGenerator), __FILE__, __LINE__, 0);
     CBackdropGenerator* backdrop = data ? new (data) CBackdropGenerator() : nullptr;
     backdrop->m_bgFile.Copy("Interface\\Tooltips\\ChatBubble-Background");
-    backdrop->m_pieces = 0xFF;
+    backdrop->m_pieces = CBackdropGenerator::BACKDROPPIECES::THEWORKS;
     backdrop->m_tile = 1;
     backdrop->m_edgeFile.Copy("Interface\\Tooltips\\ChatBubble-Backdrop");
     backdrop->m_alphaMode = GxBlend_Alpha;
@@ -376,7 +376,7 @@ void CGChatBubbleFrame::ClearAll() {
 
     for (CGChatBubbleFrame* bubble = s_chatBubbles.Head(); bubble; bubble = next) {
         next = s_chatBubbles.Next(bubble);
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(bubble->m_unit, TYPEMASK_UNIT, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(bubble->m_unit, TYPE_UNIT, __FILE__, __LINE__));
 
         if (unit) {
             unit->ChatBubbleRemove();
@@ -403,12 +403,12 @@ void CGChatBubbleFrame::OnWorldLayerUpdate() {
     }
 
     TSList<CGChatBubbleFrame> moved;
-    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
     CGChatBubbleFrame* next;
 
     for (CGChatBubbleFrame* bubble = s_chatBubbles.Head(); bubble; bubble = next) {
         next = s_chatBubbles.Next(bubble);
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(bubble->m_unit, TYPEMASK_UNIT, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(bubble->m_unit, TYPE_UNIT, __FILE__, __LINE__));
 
         if (!unit) {
             CGChatBubbleFrame::Remove(bubble);

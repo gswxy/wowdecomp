@@ -17,6 +17,7 @@ class CGxShader;
 class CDetailDoodadData;
 class CDetailDoodadInst;
 class CTexture;
+class CGxVertexPNCT;
 
 class CDetailDoodad {
     public:
@@ -35,6 +36,23 @@ class CDetailDoodad {
     static SShaderConstants s_shaderConstants;
     static CGxShader* s_vertexShader[6];
     static uint32_t s_vtxBufItems;
+    // CUSTOM (Badgermilk0 port). Vertex/index buffer pairs the chunks' grass batches are baked into: s_bufferPairs at
+    // first (stock 128, the groundEffectBuffers CVar), then more pools of that many whenever they run out, up to
+    // MAX_BUFFER_PAIRS. The stock pool never grew: a batch that found none free fell back to a stream buffer and was
+    // rebuilt on the CPU every frame (Crystal Lake: 220 of 348 batches, 2.8 ms a frame)
+    static const uint32_t MAX_BUFFER_PAIRS = 2048;
+    static uint32_t s_bufferPairs;
+    static uint32_t s_poolPairs;
+    static bool GrowPools();
+    static bool OwnsBuffer(const CGxBuf* buf);
+    // GRASSWIND: not in 12340 (wxl-grasswind). CVars grassWind / grassWindStrength / grassParting; the motion
+    // constants (vs c35-c42 of our DetailDoodad.bls, Tools/CustomMpq/ShaderSrc/DetailDoodad.hlsl).
+    static int32_t s_grassWind;
+    static float s_grassWindStrength;
+    static int32_t s_grassParting;
+    static float s_grassConstants[8][4];
+    // GRASSJOBS: not in 12340 (after Cassteriidoadw/wowlogin335 7ca5204a). CVar groundEffectJobs; see PrefillBatches.
+    static int32_t s_fillJobs;
 
     static CDetailDoodadInst* AllocInst();
     static void CreateAlphaRampTexture(const void*& texels);
@@ -45,9 +63,11 @@ class CDetailDoodad {
     static void Initialize();
     static int32_t InitializeRenderState();
     static void InitializeShaderConstants();
+    static void PrefillBatches();
     static int32_t LoadModel(uint32_t id);
     static void SetupVertexShader(const C44Matrix& world, uint32_t index);
     static void UpdateAlphaRampTexture(EGxTexCommand command, uint32_t width, uint32_t height, uint32_t face, uint32_t level, void* userArg, uint32_t& texelStrideInBytes, const void*& texels);
+    static void UpdateGrassWind(const C44Matrix& view);
     static void UpdatePools();
 };
 
@@ -102,7 +122,9 @@ class CDetailDoodadInstBatch {
     ~CDetailDoodadInstBatch();
     void Draw();
     void FillIndices();
+    void FillIndices(uint16_t* indices);
     void FillVertices();
+    void FillVertices(CGxVertexPNCT* vertex);
     void Free();
     void FreeBuffers();
 };
@@ -134,7 +156,8 @@ inline void CDetailDoodadInstBatch::FreeBuffers() {
         return;
     }
 
-    if (this->m_vertexBuf->m_pool == CDetailDoodad::s_gxVertexPool) {
+    // CUSTOM (Badgermilk0 port): any of the grown pools
+    if (CDetailDoodad::OwnsBuffer(this->m_vertexBuf)) {
         *CDetailDoodad::s_freeGxBufs.New() = this->m_vertexBuf;
         *CDetailDoodad::s_freeGxBufs.New() = this->m_indexBuf;
     }

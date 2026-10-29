@@ -1,10 +1,12 @@
 #include "DetailDoodad.h"
 #include <cmath>
+#include "Engine/Source/Base/FrameProfile.h"
 #include "Engine/Source/Base/Handle.h"
 #include "Engine/Source/Base/ObjectAlloc.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxMatrixStack.h"
 #include "Engine/Source/Gx/CGxPool.h"
+#include "Engine/Source/Model2/M2Cache.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -20,16 +22,23 @@
 #include "Engine/Source/Tempest/C33Matrix.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include <cstring>
+#include <atomic>
+#include <vector>
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/WorldClient/CDetailDoodadData.h"
+#include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
+#include "WoW/Source/Object/ObjectClient/Player_C.h"
 #include "WoW/Source/WorldClient/DayNight.h"
+#include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
 #include "WoW/Source/WorldClient/MapLight.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "WoW/Source/WorldClient/SortTable.h"
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00D1C4C4
 static uint32_t s_indexBufferSize;
@@ -61,6 +70,12 @@ uint32_t CDetailDoodad::s_idxBufItems;
 // STATIC: 0x00D1C4D0
 uint32_t CDetailDoodad::s_vtxBufItems;
 
+// CUSTOM (Badgermilk0 port) (DetailDoodad.h)
+uint32_t CDetailDoodad::s_bufferPairs = 128;
+uint32_t CDetailDoodad::s_poolPairs;
+// the pools added after the first (vertex, index, vertex, index, ...)
+static TSGrowableArray<CGxPool*> s_grownPools;
+
 // STATIC: 0x00D1C4D4
 CGxPool* CDetailDoodad::s_gxIndexPool;
 
@@ -81,6 +96,12 @@ TSGrowableArray<CDetailDoodadData*> CDetailDoodad::s_doodadList;
 
 // STATIC: 0x00D1C518
 CDetailDoodad::SShaderConstants CDetailDoodad::s_shaderConstants;
+
+int32_t CDetailDoodad::s_grassWind = 1;
+float CDetailDoodad::s_grassWindStrength = 1.0f;
+int32_t CDetailDoodad::s_grassParting = 1;
+int32_t CDetailDoodad::s_fillJobs = 1;
+float CDetailDoodad::s_grassConstants[8][4];
 
 // VERIFY: 1a974b50 auto
 // OFFSET: 0x007B1000
@@ -112,6 +133,16 @@ static void __stdcall BuildInstanceMatrix(C33Matrix& result, C33Matrix& rotation
 static void AcquireBuffers(uint32_t vertexCount, CGxBuf** vertexBuf, uint32_t indexCount, CGxBuf** indexBuf) {
     uint32_t count = CDetailDoodad::s_freeGxBufs.Count();
 
+    // CUSTOM (Badgermilk0 port), grow the pool rather than rebuild this batch every frame (DetailDoodad.h)
+    if (!count && CDetailDoodad::GrowPools()) {
+        count = CDetailDoodad::s_freeGxBufs.Count();
+    }
+
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h)
+    if (!count) {
+        FrameProfileCount(FRAMEPROFILE_GRASS_STREAMED, 1);
+    }
+
     if (count) {
         *vertexBuf = CDetailDoodad::s_freeGxBufs[count - 2];
         *indexBuf = CDetailDoodad::s_freeGxBufs[count - 1];
@@ -139,7 +170,7 @@ int32_t CDetailDoodadInst::HasBatches() {
 // VERIFY: e98d17d0 auto
 // OFFSET: 0x007B10E0
 void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
-    uint32_t shadow = CShadowCache::GetShadowValue();
+    uint32_t shadow = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());   // shadowUnified
 
     if (shadow > 2) {
         shadow = 2;
@@ -153,6 +184,71 @@ void CDetailDoodad::SetupVertexShader(const C44Matrix& world, uint32_t index) {
 
     CDetailDoodad::s_shaderConstants.m_worldView = world * view;
     g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 0, reinterpret_cast<const float*>(&CDetailDoodad::s_shaderConstants), sizeof(CDetailDoodad::s_shaderConstants) / sizeof(C4Vector));
+    // GRASSWIND: the motion block (all zero = stock blade positions), c35-c42 after the shadow matrices
+    g_theGxDevicePtr->ShaderConstantsSet(GxSh_Vertex, 35, &CDetailDoodad::s_grassConstants[0][0], 8);
+}
+
+// GRASSWIND: not in 12340. wxl-grasswind GrassWind.cpp WriteFrameConstants with its default WindSettings /
+// PhysicsSettings, per detail-doodad pass: two travelling sine waves plus a downwind lean bend each blade by
+// 1 - uv.y (anchored, squared), and blades lean away from the player inside a radius. The shader turns the
+// view-space vertex back into camera-relative world space with the worldView rows, so the eye is taken from
+// this pass's own view (the water reflection pass included).
+void CDetailDoodad::UpdateGrassWind(const C44Matrix& view) {
+    constexpr float kTwoPi = 6.2831853f;
+    constexpr float kDirectionDeg = 45.0f, kSpeed = 3.0f, kAmplitude = 0.060f, kWavelength = 18.0f;
+    constexpr float kCrossAmplitude = 0.02f, kCrossWavelength = 6.5f, kCrossAngleDeg = 35.0f, kLean = 0.35f;
+    constexpr float kVariance = 0.6f, kDistanceFade = 0.015f, kAnchor = 0.3f;
+    constexpr float kRadius = 2.0f, kForceCenter = 0.5f, kForceEdge = 0.0f, kConeHeight = 0.5f, kMinHeight = 0.3f;
+    constexpr float kEps = 1.0e-3f, kJitter = 1.7f;
+
+    static uint32_t s_lastMs;
+    static float s_phase1;
+    static float s_phase2;
+
+    // phases advance by frequency * dt (no pop on clock wrap or retune); a hitch does not fast-forward the wind
+    float dt = (FrameTime::s_curTimeMs - s_lastMs) * 0.001f;
+    if (s_lastMs == 0 || dt > 0.25f) {
+        dt = 0.0f;
+    }
+    s_lastMs = FrameTime::s_curTimeMs;
+
+    const float k1 = kTwoPi / kWavelength;
+    const float k2 = kTwoPi / kCrossWavelength;
+    s_phase1 = std::fmod(s_phase1 + k1 * kSpeed * dt, kTwoPi);
+    s_phase2 = std::fmod(s_phase2 + k2 * kSpeed * 1.37f * dt, kTwoPi);
+
+    // eye = s_activeWorldView - t * R^T (the batches' world matrices are relative to s_activeWorldView)
+    C3Vector eye = CWorldScene::s_activeWorldView;
+    eye.x -= view.d0 * view.a0 + view.d1 * view.a1 + view.d2 * view.a2;
+    eye.y -= view.d0 * view.b0 + view.d1 * view.b1 + view.d2 * view.b2;
+    eye.z -= view.d0 * view.c0 + view.d1 * view.c1 + view.d2 * view.c2;
+
+    C3Vector player = eye;
+    CGPlayer_C* obj = ClntObjMgrGetActivePlayerObj();
+    if (obj) {
+        player = obj->GetPosition();
+    }
+
+    const float wind = CDetailDoodad::s_grassWind ? CDetailDoodad::s_grassWindStrength : 0.0f;
+    const float amp1 = kAmplitude * wind;
+    const float amp2 = kCrossAmplitude * wind;
+    const float a1 = kDirectionDeg * (kTwoPi / 360.0f);
+    const float a2 = (kDirectionDeg + kCrossAngleDeg) * (kTwoPi / 360.0f);
+    const bool rep = CDetailDoodad::s_grassWind && CDetailDoodad::s_grassParting && obj;
+    const float center = rep ? kForceCenter : 0.0f;
+    const float edge = rep ? kForceEdge : 0.0f;
+
+    const float c[8][4] = {
+        { eye.x, eye.y, eye.z, -s_phase2 },
+        { 1.0f / kConeHeight, 1.0f / kRadius, kMinHeight, kEps },
+        { player.x, player.y, player.z, kLean * wind },
+        { edge - center, center, kRadius, -s_phase1 },
+        { std::cos(a1) * amp1, std::sin(a1) * amp1, std::cos(a1) * k1, std::sin(a1) * k1 },
+        { std::cos(a2) * amp2, std::sin(a2) * amp2, std::cos(a2) * k2, std::sin(a2) * k2 },
+        { 0.737f, 1.311f, kJitter, kDistanceFade },
+        { 1.0f - kVariance * 0.5f, kVariance, -kAnchor, 1.0f / (1.0f - kAnchor) },
+    };
+    memcpy(CDetailDoodad::s_grassConstants, c, sizeof(c));
 }
 
 // VERIFY: f3428d3d manual
@@ -193,7 +289,14 @@ void CDetailDoodad::UpdateAlphaRampTexture(EGxTexCommand command, uint32_t width
 // VERIFY: c5224796 manual
 // OFFSET: 0x007B12B0
 void CDetailDoodadInstBatch::FillIndices() {
-    uint16_t* indices = reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(this->m_indexBuf));
+    CGxBuf* buf = this->m_indexBuf;
+    this->FillIndices(reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(buf)));
+    g_theGxDevicePtr->BufUnlock(buf, 0);
+    buf->m_hasData = 1;
+}
+
+// GRASSJOBS: the body of FillIndices, writing to any memory (a locked buffer, or PrefillBatches' scratch on a worker)
+void CDetailDoodadInstBatch::FillIndices(uint16_t* indices) {
     uint32_t index = 0;
     uint32_t base = 0;
 
@@ -212,10 +315,6 @@ void CDetailDoodadInstBatch::FillIndices() {
 
         base += skin->m_vertices.m_count;
     }
-
-    CGxBuf* buf = this->m_indexBuf;
-    g_theGxDevicePtr->BufUnlock(buf, 0);
-    buf->m_hasData = 1;
 }
 
 // VERIFY: 039ae168 manual
@@ -312,6 +411,8 @@ void CDetailDoodad::InitializeShaderConstants() {
     consts.m_fade.y = dist * fade;
     consts.m_fade.z = 0.0f;
     consts.m_fade.w = 0.0f;
+
+    CDetailDoodad::UpdateGrassWind(view);   // GRASSWIND
 }
 
 // VERIFY: 7ec422be manual
@@ -331,8 +432,13 @@ void CDetailDoodadData::ModelLoadedCallback(CM2Model* model, void* arg) {
 // OFFSET: 0x007B1B50
 void CDetailDoodadInstBatch::FillVertices() {
     CGxBuf* buf = this->m_vertexBuf;
-    CGxVertexPNCT* vertex = reinterpret_cast<CGxVertexPNCT*>(g_theGxDevicePtr->BufLock(buf));
+    this->FillVertices(reinterpret_cast<CGxVertexPNCT*>(g_theGxDevicePtr->BufLock(buf)));
+    g_theGxDevicePtr->BufUnlock(buf, 0);
+    buf->m_hasData = 1;
+}
 
+// GRASSJOBS: the body of FillVertices, writing to any memory (a locked buffer, or PrefillBatches' scratch on a worker)
+void CDetailDoodadInstBatch::FillVertices(CGxVertexPNCT* vertex) {
     C3Vector axis(0.0f, 0.0f, 1.0f);
     C33Matrix basis(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
     uint8_t built = 0;
@@ -429,10 +535,141 @@ void CDetailDoodadInstBatch::FillVertices() {
             }
         }
     }
+}
 
-    buf = this->m_vertexBuf;
-    g_theGxDevicePtr->BufUnlock(buf, 0);
-    buf->m_hasData = 1;
+// GRASSJOBS: not in 12340 (after Cassteriidoadw/wowlogin335 7ca5204a, adapted). Each grass batch that needs its
+// buffers rebuilt this frame is filled (the sin/cos vertex walk) on the Model2 worker pool into scratch memory, then
+// copied into its buffer here. The fork locked every buffer at once and let the workers write into the mappings;
+// the Vulkan device tracks at most 4 locks per target and D3D9/D3D11 share one emergency block per target, so the
+// locks stay one at a time on this thread. Models are waited for here, before the workers start. Batches on the stream
+// pool (grass pool exhausted) are left to Draw as stock: a stream lock is only good until the next one.
+static struct {
+    struct Fill {
+        CDetailDoodadInstBatch* batch;
+        uint32_t vertexAt;
+        uint32_t indexAt;
+        int32_t vertices;
+        int32_t indices;
+    };
+
+    std::vector<Fill> fills;
+    std::vector<CGxVertexPNCT> vertices;
+    std::vector<uint16_t> indices;
+    std::atomic<uint32_t> next;
+} s_prefill;
+
+static void PrefillThread(void*) {
+    for (;;) {
+        uint32_t i = s_prefill.next.fetch_add(1);
+
+        if (i >= s_prefill.fills.size()) {
+            return;
+        }
+
+        auto& fill = s_prefill.fills[i];
+
+        if (fill.vertices) {
+            fill.batch->FillVertices(&s_prefill.vertices[fill.vertexAt]);
+        }
+
+        if (fill.indices) {
+            fill.batch->FillIndices(&s_prefill.indices[fill.indexAt]);
+        }
+    }
+}
+
+void CDetailDoodad::PrefillBatches() {
+    CM2Cache* cache = World::s_m2Scene ? World::s_m2Scene->m_cache : nullptr;
+
+    if (!CDetailDoodad::s_fillJobs || !cache || !(cache->m_flags & 4) || !cache->m_threadCount) {
+        return;
+    }
+
+    s_prefill.fills.clear();
+    uint32_t vertexTotal = 0;
+    uint32_t indexTotal = 0;
+
+    for (CDetailDoodadInst* inst = CWorldScene::sortTable.m_detailDoodadInstList.Head(); inst; inst = CWorldScene::sortTable.m_detailDoodadInstList.Next(inst)) {
+        for (uint32_t b = 0; b < 4; b++) {
+            CDetailDoodadInstBatch& batch = inst->m_batches[b];
+
+            // the same tests, in the same order, as Draw
+            if (!batch.m_texture || !TextureGetGxTex(batch.m_texture, 0, nullptr)) {
+                continue;
+            }
+
+            if (!batch.m_vertexBuf || batch.m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream) {
+                AcquireBuffers(batch.m_vertexCount, &batch.m_vertexBuf, batch.m_indexCount, &batch.m_indexBuf);
+            }
+
+            if (batch.m_vertexBuf->m_pool->m_usage == GxPoolUsage_Stream) {
+                continue;
+            }
+
+            int32_t vertices = !batch.m_vertexBuf->m_hasData || !batch.m_vertexBuf->m_valid;
+            int32_t indices = !batch.m_indexBuf->m_hasData || !batch.m_indexBuf->m_valid;
+
+            if (!vertices && !indices) {
+                continue;
+            }
+
+            // a model that is still not loaded after the wait is left to Draw (its fill would wait again, on a worker)
+            int32_t loaded = 1;
+
+            for (uint32_t i = 0; i < batch.m_adds.Count(); i++) {
+                CM2Model* model = CDetailDoodad::s_doodadList[batch.m_adds[i].m_doodadId]->m_model;
+
+                if (!(model->m_fFlags & 1)) {
+                    model->WaitForLoad(nullptr);
+                    loaded &= (model->m_fFlags & 1) != 0;
+                }
+            }
+
+            if (!loaded) {
+                continue;
+            }
+
+            s_prefill.fills.push_back({ &batch, vertexTotal, indexTotal, vertices, indices });
+            vertexTotal += vertices ? batch.m_vertexCount : 0;
+            indexTotal += indices ? batch.m_indexCount : 0;
+        }
+    }
+
+    // one batch is no work to share; Draw fills it as stock
+    if (s_prefill.fills.size() < 2) {
+        return;
+    }
+
+    if (s_prefill.vertices.size() < vertexTotal) {
+        s_prefill.vertices.resize(vertexTotal);
+    }
+
+    if (s_prefill.indices.size() < indexTotal) {
+        s_prefill.indices.resize(indexTotal);
+    }
+
+    s_prefill.next = 0;
+    cache->RunThreads(&PrefillThread, nullptr, static_cast<uint32_t>(s_prefill.fills.size() - 1));
+
+    for (auto& fill : s_prefill.fills) {
+        CDetailDoodadInstBatch& batch = *fill.batch;
+
+        if (fill.vertices) {
+            uint32_t size = batch.m_vertexCount * sizeof(CGxVertexPNCT);
+            char* dst = g_theGxDevicePtr->BufLock(batch.m_vertexBuf);
+            memcpy(dst, &s_prefill.vertices[fill.vertexAt], size < batch.m_vertexBuf->m_size ? size : batch.m_vertexBuf->m_size);
+            g_theGxDevicePtr->BufUnlock(batch.m_vertexBuf, 0);
+            batch.m_vertexBuf->m_hasData = 1;
+        }
+
+        if (fill.indices) {
+            uint32_t size = batch.m_indexCount * sizeof(uint16_t);
+            char* dst = g_theGxDevicePtr->BufLock(batch.m_indexBuf);
+            memcpy(dst, &s_prefill.indices[fill.indexAt], size < batch.m_indexBuf->m_size ? size : batch.m_indexBuf->m_size);
+            g_theGxDevicePtr->BufUnlock(batch.m_indexBuf, 0);
+            batch.m_indexBuf->m_hasData = 1;
+        }
+    }
 }
 
 // VERIFY: a2c3ec0e manual
@@ -535,6 +772,14 @@ void CDetailDoodad::FreeGxBufMat() {
         g_theGxDevicePtr->PoolDestroy(CDetailDoodad::s_gxIndexPool);
     }
 
+    // CUSTOM (Badgermilk0 port), the grown pools (DetailDoodad.h)
+    for (uint32_t i = 0; i < s_grownPools.Count(); i++) {
+        g_theGxDevicePtr->PoolDestroy(s_grownPools[i]);
+    }
+
+    s_grownPools.SetCount(0);
+    CDetailDoodad::s_poolPairs = 0;
+
     CDetailDoodad::s_vtxBufItems = 0;
     CDetailDoodad::s_idxBufItems = 0;
     s_vertexBufferSize = 0;
@@ -573,19 +818,77 @@ void CDetailDoodad::UpdatePools() {
     s_vertexBufferSize = sizeof(CGxVertexPNCT) * vertexItems;
     s_indexBufferSize = sizeof(uint16_t) * indexItems;
 
-    CDetailDoodad::s_gxVertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, 128 * sizeof(CGxVertexPNCT) * vertexItems, GxPoolHintBit_Unk3, "CDetailDoodad_vtx");
-    CDetailDoodad::s_gxIndexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, 128 * sizeof(uint16_t) * indexItems, GxPoolHintBit_Unk0, "CDetailDoodad_idx");
+    // CUSTOM (Badgermilk0 port), s_bufferPairs pairs instead of 128 (see DetailDoodad.h)
+    uint32_t pairs = CDetailDoodad::s_bufferPairs;
+    CDetailDoodad::s_gxVertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, pairs * sizeof(CGxVertexPNCT) * vertexItems, GxPoolHintBit_Unk3, "CDetailDoodad_vtx");
+    CDetailDoodad::s_gxIndexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, pairs * sizeof(uint16_t) * indexItems, GxPoolHintBit_Unk0, "CDetailDoodad_idx");
 
-    CDetailDoodad::s_freeGxBufs.Reserve(256, 0);
+    CDetailDoodad::s_freeGxBufs.Reserve(2 * pairs, 0);
 
-    for (uint32_t i = 0; i < 256; i += 2) {
+    for (uint32_t i = 0; i < 2 * pairs; i += 2) {
         *CDetailDoodad::s_freeGxBufs.New() = g_theGxDevicePtr->BufCreate(CDetailDoodad::s_gxVertexPool, sizeof(CGxVertexPNCT), CDetailDoodad::s_vtxBufItems, sizeof(CGxVertexPNCT) * CDetailDoodad::s_vtxBufItems * (i >> 1));
         *CDetailDoodad::s_freeGxBufs.New() = g_theGxDevicePtr->BufCreate(CDetailDoodad::s_gxIndexPool, sizeof(uint16_t), CDetailDoodad::s_idxBufItems, sizeof(uint16_t) * CDetailDoodad::s_idxBufItems * (i >> 1));
         unk_D1C4E8 += 2;
     }
 
-    unk_D1C4DC = 256;
+    unk_D1C4DC = 2 * pairs;
+    CDetailDoodad::s_poolPairs = pairs;
     CDetailDoodad::s_bPoolsDirty = 0;
+}
+
+// CUSTOM (Badgermilk0 port) (DetailDoodad.h). One more pool of s_bufferPairs pairs, its buffers put on the free list
+bool CDetailDoodad::GrowPools() {
+#if !defined(WOWDECOMP_ARCH_64)
+    // not in the 32-bit address space: Wow32 keeps the stock single pool (groundEffectBuffers still sizes it)
+    return false;
+#endif
+
+    uint32_t pairs = CDetailDoodad::s_bufferPairs;
+
+    if (!CDetailDoodad::s_gxVertexPool || !CDetailDoodad::s_vtxBufItems || CDetailDoodad::s_poolPairs + pairs > CDetailDoodad::MAX_BUFFER_PAIRS) {
+        return false;
+    }
+
+    CGxPool* vertexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Vertex, GxPoolUsage_Dynamic, pairs * sizeof(CGxVertexPNCT) * CDetailDoodad::s_vtxBufItems, GxPoolHintBit_Unk3, "CDetailDoodad_vtx");
+    CGxPool* indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, pairs * sizeof(uint16_t) * CDetailDoodad::s_idxBufItems, GxPoolHintBit_Unk0, "CDetailDoodad_idx");
+
+    if (!vertexPool || !indexPool) {
+        if (vertexPool) {
+            g_theGxDevicePtr->PoolDestroy(vertexPool);
+        }
+
+        if (indexPool) {
+            g_theGxDevicePtr->PoolDestroy(indexPool);
+        }
+
+        return false;
+    }
+
+    *s_grownPools.New() = vertexPool;
+    *s_grownPools.New() = indexPool;
+
+    for (uint32_t i = 0; i < pairs; i++) {
+        *CDetailDoodad::s_freeGxBufs.New() = g_theGxDevicePtr->BufCreate(vertexPool, sizeof(CGxVertexPNCT), CDetailDoodad::s_vtxBufItems, sizeof(CGxVertexPNCT) * CDetailDoodad::s_vtxBufItems * i);
+        *CDetailDoodad::s_freeGxBufs.New() = g_theGxDevicePtr->BufCreate(indexPool, sizeof(uint16_t), CDetailDoodad::s_idxBufItems, sizeof(uint16_t) * CDetailDoodad::s_idxBufItems * i);
+    }
+
+    CDetailDoodad::s_poolPairs += pairs;
+    return true;
+}
+
+// CUSTOM (Badgermilk0 port) (DetailDoodad.h). A batch holds either one of the pools' buffers or a stream buffer
+bool CDetailDoodad::OwnsBuffer(const CGxBuf* buf) {
+    if (buf->m_pool == CDetailDoodad::s_gxVertexPool) {
+        return true;
+    }
+
+    for (uint32_t i = 0; i < s_grownPools.Count(); i += 2) {
+        if (buf->m_pool == s_grownPools[i]) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // VERIFY: 564457f1 manual
@@ -597,19 +900,19 @@ int32_t CDetailDoodad::InitializeRenderState() {
     GxRsSet(GxRs_DepthWrite, 1);
 
     if (CDetailDoodad::s_bUseShaders) {
-        uint32_t shadow = CShadowCache::GetShadowValue();
+        uint32_t shadow = CShadowCache::ReceiverValue(CShadowCache::GetShadowValue());
         g_theGxDevicePtr->RsSet(GxRs_PixelShader, CDetailDoodad::s_pixelShader[4 * ((CWorld::enables2 >> 1) & 1) + shadow]);
         CDetailDoodad::InitializeShaderConstants();
         CShadowCache::SetShadowMapDetailDoodad();
         return 1;
     }
 
-    GxRsSet(GxRs_ColorOp0, 0);
-    GxRsSet(GxRs_AlphaOp0, 0);
+    GxRsSet(GxRs_ColorOp0, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp0, GxTexOp_Mod);
     GxRsSet(GxRs_MatDiffuse, static_cast<int32_t>(0xFFFFFFFF));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, CDetailDoodad::s_alphaRampTexture);
-    GxRsSet(GxRs_ColorOp1, 0);
-    GxRsSet(GxRs_AlphaOp1, 0);
+    GxRsSet(GxRs_ColorOp1, GxTexOp_Mod);
+    GxRsSet(GxRs_AlphaOp1, GxTexOp_Mod);
     GxRsSet(GxRs_TexGen1, 3);
     GxRsSet(GxRs_TextureShader1, 1);
 
@@ -724,15 +1027,28 @@ void CDetailDoodadInstBatch::Draw() {
         AcquireBuffers(this->m_vertexCount, &this->m_vertexBuf, this->m_indexCount, &this->m_indexBuf);
     }
 
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h), rebuilding the batch on the CPU
+    uint64_t fillStart = FrameProfileNow();
+    bool filled = false;
+
     if (!this->m_vertexBuf->m_hasData || !this->m_vertexBuf->m_valid) {
         this->FillVertices();
+        filled = true;
     }
 
     GxPrimVertexPtr(this->m_vertexBuf, GxVBF_PNCT);
 
     if (!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) {
         this->FillIndices();
+        filled = true;
     }
+
+    if (filled) {
+        FrameProfileAdd(FRAMEPROFILE_GRASS_FILL, fillStart, FrameProfileNow());
+        FrameProfileCount(FRAMEPROFILE_GRASS_FILLS, 1);
+    }
+
+    FrameProfileCount(FRAMEPROFILE_GRASS_DRAWS, 1);
 
     g_theGxDevicePtr->PrimIndexPtr(this->m_indexBuf);
     g_theGxDevicePtr->RsSet(GxRs_Texture0, gxTex);

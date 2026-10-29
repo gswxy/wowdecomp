@@ -1,4 +1,5 @@
 #include "CharacterCreation.h"
+#include "WoW/Common/Types.h"
 #include <cstring>
 #include "Engine/Source/Event/Event.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
@@ -29,7 +30,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/Types.h"
 
 // STATIC: 0x00AC4220
-int32_t CCharacterCreation::m_selectedClassID = 1;
+int32_t CCharacterCreation::m_selectedClassID = CLASS_WARRIOR;
 
 // STATIC: 0x00AC4224
 int32_t CCharacterCreation::m_existingCharacterIndex = -1;
@@ -428,7 +429,7 @@ void CCharacterCreation::Dress() {
                     continue;
                 }
 
-                if (display->m_characterInfo.m_classID == 3) {
+                if (display->m_characterInfo.m_classID == CLASS_HUNTER) {
                     if (slot == INVSLOT_MAINHAND || slot == INVSLOT_OFFHAND) {
                         continue;
                     }
@@ -491,7 +492,7 @@ void CCharacterCreation::Dress() {
                 continue;
             }
 
-            if (CCharacterCreation::m_selectedClassID == 3) {
+            if (CCharacterCreation::m_selectedClassID == CLASS_HUNTER) {
                 switch (type) {
                     case INVTYPE_WEAPON:
                     case INVTYPE_2HWEAPON:

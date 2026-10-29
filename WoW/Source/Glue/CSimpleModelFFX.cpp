@@ -3,6 +3,7 @@
 #include <new>
 #include <typeinfo>
 #include "Engine/Source/FFX/FFX.h"
+#include "Engine/Source/FFX/EffectGlow.h"
 #include "Engine/Source/Frame/CRenderBatch.h"
 #include "Engine/Source/FrameXML/XMLTree.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -92,10 +93,10 @@ void CSimpleModelFFX::Render(void* arg) {
     clearColor.g = 0x00;
     clearColor.r = 0x00;
     clearColor.a = 0xFF;
-    GxSceneClear(3, clearColor);
+    GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
 
     int32_t params[3];
-    params[0] = 0;
+    params[0] = EffectGlow::PASS_SEQUENCE::STANDARD_PASSES;
     params[1] = static_cast<uint8_t>(model->m_glow * 255.0f);
     params[2] = 0;
     CGlueMgr::m_glowEffect->SetParameters(3, params);
@@ -106,7 +107,7 @@ void CSimpleModelFFX::Render(void* arg) {
     clearColor.g = 0x00;
     clearColor.r = 0x00;
     clearColor.a = 0xFF;
-    GxSceneClear(3, clearColor);
+    GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
 
     if (model->m_model) {
         CSimpleModel::RenderModel(model);

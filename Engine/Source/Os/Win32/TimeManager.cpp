@@ -244,10 +244,30 @@ void OsTimeManagerDestroy() {
     }
 }
 
+// BACKLOG F5: not in 12340.
+static volatile bool g_osFastSleep;
+static volatile DWORD g_osFastSleepSince;
+
 // VERIFY: 3caadb5b auto
 // OFFSET: 0x0086B280
 void OsSleep(uint32_t milliseconds) {
+    // BACKLOG F5 (wxl-loading fast_load): spin through the loading screen's waits; a screen up 60 s is not a
+    // normal load, so stop spinning then.
+    if (g_osFastSleep && GetTickCount() - g_osFastSleepSince < 60000) {
+        return;
+    }
+
     Sleep(milliseconds);
+}
+
+void OsSetFastSleep(bool on) {
+    g_osFastSleepSince = GetTickCount();
+    g_osFastSleep = on;
+}
+
+// CUSTOM: OsWaitUntilClocks (the precise frame cap) skips its wait under fast load, as OsSleep does
+bool OsFastSleepActive() {
+    return g_osFastSleep && GetTickCount() - g_osFastSleepSince < 60000;
 }
 
 #endif

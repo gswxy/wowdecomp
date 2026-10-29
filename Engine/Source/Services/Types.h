@@ -27,8 +27,48 @@ class CAsyncObject {
     /* 0025 */ int8_t m_char25;
     /* 0026 */ uint16_t m_padding;
     /* 0028 */ TSLink<CAsyncObject> m_link;
+    // Not stock (worldLoadSort): world x/y the load is for, so the disk readers can take the nearest one first.
+    float m_loadX;
+    float m_loadY;
+    uint32_t m_linkFrame;
+    bool m_hasLoadPos;
+#if defined(WOWDECOMP_ARCH_64)
+    // MODIFIED: performance. Runs on the reader thread right after a successful read, before the object is posted
+    // to the main thread. It may only touch m_buffer (which outlives a Cancel until the post-unload callback runs)
+    // and the fields below, never the owner, which a Cancel can free while it runs
+    void (*m_prepareCallback)(CAsyncObject* object);
+    // the prepare callback's result for the post-load callback: 0 none ran, > 0 succeeded, < 0 failed
+    int32_t m_prepared;
+    // ASYNC_KIND_*, for the load statistics
+    uint32_t m_kind;
+#endif
 
     int32_t IsPending();
+};
+
+// MODIFIED: kinds of asynchronous loads, for GetLoadTimings()
+enum {
+    ASYNC_KIND_OTHER,
+    ASYNC_KIND_TEXTURE,
+    ASYNC_KIND_MODEL,
+    ASYNC_KIND_SKIN,
+    ASYNC_KIND_ANIM,
+    ASYNC_KIND_ADT,
+    ASYNC_KIND_WMO,
+    ASYNC_KIND_WMOGROUP,
+    ASYNC_KIND_COUNT
+};
+
+#if defined(WOWDECOMP_ARCH_64)
+#define ASYNC_SET_KIND(object, kind) ((object)->m_kind = (kind))
+#else
+#define ASYNC_SET_KIND(object, kind) ((void)0)
+#endif
+
+enum TEXTBLOCK_WRAP_FLAGS : uint32_t {
+    TEXTBLOCK_NO_WORD_WRAP = 0x40,
+    TEXTBLOCK_NON_SPACE_WRAP = 0x1000,
+    TEXTBLOCK_INDENTED = 0x20000,
 };
 
 struct HTEXTBLOCK__ {

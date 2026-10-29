@@ -22,6 +22,12 @@ enum CMDOPT {
     CMD_22050HZ = 14,
     CMD_NO_WARNINGS = 15,
     CMDOPTS = 16,
+    // Not in 12340: -d3d11 (CGxDeviceD3d11). Past the WoW ids (WOWCMDOPT, Client.h, 16..39), so no switch shares it.
+    CMD_D3D11 = 40,
+    // Not in the 3.3.5a binary: "-vulkan" selects the Vulkan backend like "-opengl" / "-d3d" select theirs.
+    // Past every id the client registers (WOWCMDOPT in WoW/Source/Client.h ends at CMD_GX_OVERRIDE = 39; 40 is our -d3d11):
+    // SCmd keys its arguments on the id, so a reused value would alias another option.
+    CMD_VULKAN = 41,
 };
 
 enum PROPERTY {
@@ -48,12 +54,19 @@ enum PROPERTY {
 };
 
 enum STATUS_TYPE {
+    SYSMSG_INFO = 0,
+    SYSMSG_WARNING = 1,
+    SYSMSG_ERROR = 2,
+    SYSMSG_FATAL = 3,
+    SYSMSG_NUMTYPES = 4,
     STATUS_INFO = 0,
     STATUS_WARNING = 1,
     STATUS_ERROR = 2,
     STATUS_FATAL = 3,
     STATUS_NUMTYPES = 4,
 };
+
+using SYSMSG_TYPE = STATUS_TYPE;
 
 struct HOBJECT__ {
     /* 0000 */ int32_t m_unused;

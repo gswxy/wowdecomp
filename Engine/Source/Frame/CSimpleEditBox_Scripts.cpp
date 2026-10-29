@@ -184,7 +184,7 @@ static int32_t Script_SetAutoFocus(lua_State* L) {
 // OFFSET: 0x00975A20
 static int32_t Script_IsAutoFocus(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x1) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_AUTO_FOCUS) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -205,7 +205,7 @@ static int32_t Script_SetCountInvisibleLetters(lua_State* L) {
 // OFFSET: 0x00975AD0
 static int32_t Script_IsCountInvisibleLetters(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x20) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -226,7 +226,7 @@ static int32_t Script_SetMultiLine(lua_State* L) {
 // OFFSET: 0x00975B80
 static int32_t Script_IsMultiLine(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x2) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_MULTILINE) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -247,7 +247,7 @@ static int32_t Script_SetNumeric(lua_State* L) {
 // OFFSET: 0x00975C30
 static int32_t Script_IsNumeric(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x4) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_NUMERIC) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -268,7 +268,7 @@ static int32_t Script_SetPassword(lua_State* L) {
 // OFFSET: 0x00975CE0
 static int32_t Script_IsPassword(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x8) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_PASSWORD) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -519,7 +519,7 @@ static int32_t Script_GetMaxLetters(lua_State* L) {
 // OFFSET: 0x009766A0
 static int32_t Script_GetNumLetters(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    int32_t letters = editBox->m_editBoxFlags & 0x20 ? SStrLenUTF8(editBox->m_text) : editBox->GetLenToNum(0, editBox->m_textLength);
+    int32_t letters = editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_COUNT_INVISIBLE_LETTERS ? SStrLenUTF8(editBox->m_text) : editBox->GetLenToNum(0, editBox->m_textLength);
     lua_pushnumber(L, letters);
     return 1;
 }
@@ -576,7 +576,7 @@ static int32_t Script_SetAltArrowKeyMode(lua_State* L) {
 // OFFSET: 0x009768E0
 static int32_t Script_GetAltArrowKeyMode(lua_State* L) {
     CSimpleEditBox* editBox = static_cast<CSimpleEditBox*>(FrameScript_GetObjectThis(L, CSimpleEditBox::GetObjectType()));
-    if (editBox->m_editBoxFlags & 0x10) {
+    if (editBox->m_editBoxFlags & EDITBOX_FLAGS::EDITBOX_ALT_ARROW_KEY_MODE) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);

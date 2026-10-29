@@ -115,7 +115,7 @@ class CGxDevice {
     /* 0F70 */ CBoundingBox m_viewport;
     /* 0F88 */ C44Matrix m_projection;
     /* 0FC8 */ C44Matrix m_projNative;
-    /* 1008 */ CGxMatrixStack m_xforms [11];
+    /* 1008 */ CGxMatrixStack m_xforms [GxXforms_Last];
     /* 1C10 */ CGxMatrixStack m_texGen [8];
     /* 24D0 */ uint32_t m_clipPlaneMask;
     /* 24D4 */ C4Plane m_clipPlane [6];
@@ -242,6 +242,34 @@ class CGxDevice {
     virtual void DeviceUnk81(uint32_t a, uint32_t b) = 0;
     virtual void DeviceUnk82() = 0;
     virtual void DeviceUnk83(uint32_t a, uint32_t b) = 0;
+    // VFOG: not in 12340 (appended after the stock vtable, so stock-host never calls it). Copies the
+    // current scene depth-stencil (back-buffer size) into a backend-owned texture and returns it,
+    // bindable through GxRs_TextureN, .r = window-space depth 0..1 (viewport z bands included).
+    // Valid until the next call; draw with depth test and write off while it is bound.
+    // nullptr = unsupported (the volumetric fog then stays off), or, with *transient set, not available
+    // this frame only (retry next frame). docs/VFOG_PORT.md.
+    virtual CGxTex* DeviceCopySceneDepth(bool* transient = nullptr);
+    // VFOG: D3D9's scene depth IS the bound depth-stencil; false unbinds it before a draw that samples it, true
+    // puts it back (coa renderer.cpp PrepareFullscreenPasses). No-op where the depth is a separate copy.
+    virtual void DeviceSceneDepthBound(bool bound) {}
+    // VFOG: true where DeviceCopySceneDepth returns a snapshot that later draws do not change (D3D9 RESZ, D3D11,
+    // Vulkan); false where it is the live depth-stencil (D3D9 INTZ), which the caller must copy to keep.
+    virtual bool DeviceSceneDepthIsCopy() { return false; }
+    // GBUFFER: not in 12340. The world's view-space normals (RGBA8, rgb = n * 0.5 + 0.5, a = 1 where a world shader
+    // wrote one, 0 elsewhere), back-buffer size, written as a second render target by the opaque draws whose pixel
+    // shader writes oC1 (CGxShader::m_writesNormal), cleared each frame. Bind it through GxRs_TextureN (point filter);
+    // the backend unbinds it as a target first. nullptr: off (CVar gxNormalBuffer, s_normalBuffer), unsupported, or
+    // nothing written this frame. GBUF-STATUS.md.
+    virtual CGxTex* DeviceNormalBuffer() { return nullptr; }
+    static bool s_normalBuffer;
+    // LEGION: not in 12340 (7.3.5 SetDepthUser 0x006C4343, its users counted at 0x013CCDDC). One bit per scene-depth
+    // consumer, set from its CVar state each frame; while none is set every DeviceCopySceneDepth returns nullptr
+    // (transient), so no copy runs. A new consumer adds a bit here and one SetDepthUser call. docs/LEGION_PORT.md.
+    enum : uint32_t { DepthUser_Fog = 1u << 0, DepthUser_FadeStencil = 1u << 1, DepthUser_Water = 1u << 2,
+        DepthUser_ShadowMask = 1u << 3, DepthUser_Ssao = 1u << 4, DepthUser_Refraction = 1u << 5,
+        DepthUser_Lights = 1u << 6, DepthUser_SoftParticles = 1u << 7 };
+    static uint32_t s_depthUsers;
+    static void SetDepthUser(uint32_t user, bool on) { s_depthUsers = on ? s_depthUsers | user : s_depthUsers & ~user; }
 
     static HSLOG m_log;
     static C2iVector s_clientAdjust;

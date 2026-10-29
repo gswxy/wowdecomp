@@ -17,7 +17,15 @@ enum EGxApi {
     GxApi_D3d10 = 3,
     GxApi_D3d11 = 4,
     GxApi_GLL = 5,
-    GxApis_Last = 6,
+    // Not in the 3.3.5a binary: the Vulkan backend (Engine/Source/Gx/CGxDeviceVulkan). Appended after the
+    // original six so every table and loop indexed by EGxApi keeps the binary's values for 0..5.
+    GxApi_Vulkan = 6,
+    GxApis_Last = 7,
+};
+
+enum EGxEnable : int32_t {
+    Gx_Disable = 0,
+    Gx_Enable = 1,
 };
 
 enum EGxBlend {
@@ -36,6 +44,14 @@ enum EGxBlend {
     GxBlends_Last = 12,
 };
 
+enum EGxCmp : int32_t {
+    GxCmp_LEqual = 0,
+    GxCmp_Equal = 1,
+    GxCmp_GEqual = 2,
+    GxCmp_Less = 3,
+    GxCmps_Last = 4,
+};
+
 enum EGxTexFormat {
     GxTex_Unknown = 0,
     GxTex_Abgr8888 = 1,
@@ -50,8 +66,13 @@ enum EGxTexFormat {
     GxTex_Gr1616F = 10,
     GxTex_R32F = 11,
     GxTex_D24X8 = 12,
-    GxTexFormats_Last = 13,
+    GxTex_Abgr16161616F = 13,  // VFOG: RGBA half float (render target + texture), CGxCaps::m_rttAbgr16161616F says if the device has it
+    GxTexFormats_Last = 14,
 };
+
+// CGxCaps keeps the 3.3.5a layout (wxl reads fields at fixed offsets): its per-format arrays cover the first 13
+// formats only, and the formats appended after them get caps fields of their own (CGxCaps::m_rttAbgr16161616F).
+constexpr uint32_t GxTexCapsFormats = 13;
 
 enum EGxVertexBufferFormat {
     GxVBF_P = 0,
@@ -77,22 +98,28 @@ enum EGxBuffer {
     GxBuffers_Last = 2,
 };
 
+enum EGxBufferBit : uint32_t {
+    GxBufferBit_Color = 0x1,
+    GxBufferBit_Depth = 0x2,
+    GxBufferBit_Stencil = 0x4,  // DECOMP: clears the stencil to 0 (D3D11/Vulkan: the whole surface)
+};
+
 enum EGxOverride {
     GxOverride_PixelShader = 0,
-    GxOverride_Unk1 = 1,
-    GxOverride_Unk2 = 2,
-    GxOverride_Unk3 = 3,
-    GxOverride_Unk4 = 4,
-    GxOverride_Unk5 = 5,
-    GxOverride_Unk6 = 6,
-    GxOverride_Unk7 = 7,
-    GxOverride_Unk8 = 8,
+    GxOverride_VertexBufferObject = 1,
+    GxOverride_StreamVertexBufferObject = 2,
+    GxOverride_StreamIndexBufferObject = 3,
+    GxOverride_StreamVertexBufferBroker = 4,
+    GxOverride_StreamIndexBufferBroker = 5,
+    GxOverride_SphereMapReflection = 6,
+    GxOverride_TexNonPow2 = 7,
+    GxOverride_PointScaleMax = 8,
     GxOverrides_Last = 9,
 };
 
 enum EGxQueryParam {
-    GxQueryParam_Unk0 = 0,
-    GxQueryParam_Unk1 = 1,
+    GxQueryParam_DataSize = 0,
+    GxQueryParam_ResultAvailable = 1,
     GxQueryParams_Last = 2,
 };
 
@@ -100,8 +127,13 @@ enum EGxTexCommand {
     GxTex_Lock = 0,
     GxTex_Latch = 1,
     GxTex_Unlock = 2,
-    GxTex_3 = 3,
+    GxTex_Recreate = 3,
     GxTexCommands_Last = 4,
+};
+
+enum EGx : int32_t {
+    Gx_SizeMinimized = 1,
+    Gx_SizeMaxHide = 2,
 };
 
 enum EGxWM {
@@ -112,11 +144,21 @@ enum EGxWM {
     GxWM_KillFocus = 4,
 };
 
+enum EGxTexCubeFace : uint32_t {
+    GxTex_PositiveX = 0,
+    GxTex_NegativeX = 1,
+    GxTex_PositiveY = 2,
+    GxTex_NegativeY = 3,
+    GxTex_PositiveZ = 4,
+    GxTex_NegativeZ = 5,
+    GxTexCubeFaces_Last = 6,
+};
+
 enum EGxTexGen {
     GxTexGen_Disabled = 0,
     GxTexGen_ObjectLinear = 1,
-    GxTexGen_EyeLinear = 2,
-    GxTexGen_Unk3 = 3,
+    GxTexGen_World = 2,
+    GxTexGen_View = 3,
     GxTexGen_ReflectionMap = 4,
     GxTexGen_Normal = 5,
     GxTexGen_SphereMap = 6,
@@ -167,7 +209,8 @@ enum BlitFormat {
     BlitFormat_Gr1616F = 10,
     BlitFormat_R32F = 11,
     BlitFormat_D24X8 = 12,
-    BlitFormats_Last = 13,
+    BlitFormat_Abgr16161616F = 13,
+    BlitFormats_Last = 14,
 };
 
 class CGxBatch {
@@ -196,11 +239,11 @@ class CGxCaps {
     /* 0018 */ int32_t unk_0018;
     /* 001C */ uint32_t m_maxIndex;
     /* 0020 */ int32_t m_generateMipMaps;
-    /* 0024 */ int32_t m_texFmt [13];
+    /* 0024 */ int32_t m_texFmt [GxTexCapsFormats];
     /* 0058 */ int32_t m_texTarget [4];
     /* 0068 */ uint32_t m_texNonPow2;
     /* 006C */ uint32_t m_texMaxSize [4];
-    /* 007C */ int32_t m_rttFormat [13];
+    /* 007C */ int32_t m_rttFormat [GxTexCapsFormats];
     /* 00B0 */ uint32_t unk_00B0;
     /* 00B4 */ int32_t m_shaderTargets [6];
     /* 00CC */ uint32_t m_shaderConstants [6];
@@ -216,7 +259,11 @@ class CGxCaps {
     /* 0108 */ float m_pointScaleMax;
     /* 010C */ int32_t m_pointSprite;
     /* 0110 */ uint32_t m_blendFactor;
-    /* 0114 */ uint32_t unused_0114 [5];
+    /* 0114 */ int32_t m_rttAbgr16161616F;   // VFOG: GxTex_Abgr16161616F renders (and filters), the m_rttFormat of format 13
+    /* 0118 */ uint32_t unused_0118 [3];
+    // DECOMP: was unused_0118[3] (the size must not change: wxl reads fixed device offsets). Stencil bits of
+    // the scene depth-stencil (8 with D24S8/D32S8, 0 without); GxRs_Stencil* are ignored when 0.
+    /* 0124 */ int32_t m_stencilBits;
     /* 0128 */ int32_t m_oglRtAlpha;
     /* 012C */ int32_t m_stereoAvailable;
     /* 0130 */ int32_t m_shaderAlphaRef;
@@ -337,9 +384,42 @@ enum EGxRenderState {
     GxRs_PointScaleMin = 81,
     GxRs_PointScaleMax = 82,
     GxRs_PointSprite = 83,
-    Unk84 = 84,
+    GxRs_BlendFactor = 84,
     GxRs_ColorMaterial = 85,
-    GxRenderStates_Last = 86,
+    // DECOMP: not in the stock client. Front-face stencil (both faces get it). IRsInit defaults are the
+    // stock device state: test off, ALWAYS, ref 0, masks 0xFF, ops KEEP. Values: EGxStencilCmp/EGxStencilOp.
+    GxRs_StencilTest = 86,
+    GxRs_StencilFunc = 87,
+    GxRs_StencilRef = 88,
+    GxRs_StencilReadMask = 89,
+    GxRs_StencilWriteMask = 90,
+    GxRs_StencilFail = 91,
+    GxRs_StencilZFail = 92,
+    GxRs_StencilPass = 93,
+    GxRenderStates_Last = 94,
+};
+
+// DECOMP: the D3D9/D3D11 values (D3DCMP_*, D3DSTENCILOP_*); Vulkan's are these minus 1.
+enum EGxStencilCmp {
+    GxStencilCmp_Never = 1,
+    GxStencilCmp_Less = 2,
+    GxStencilCmp_Equal = 3,
+    GxStencilCmp_LessEqual = 4,
+    GxStencilCmp_Greater = 5,
+    GxStencilCmp_NotEqual = 6,
+    GxStencilCmp_GreaterEqual = 7,
+    GxStencilCmp_Always = 8,
+};
+
+enum EGxStencilOp {
+    GxStencilOp_Keep = 1,
+    GxStencilOp_Zero = 2,
+    GxStencilOp_Replace = 3,
+    GxStencilOp_IncrSat = 4,
+    GxStencilOp_DecrSat = 5,
+    GxStencilOp_Invert = 6,
+    GxStencilOp_Incr = 7,
+    GxStencilOp_Decr = 8,
 };
 
 enum EGxShTarget {

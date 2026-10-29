@@ -1,0 +1,151 @@
+// LIGHTING: exposure, bloom and the tonemap (Lighting.hlsl TonemapPs) over the world viewport of the 8-bit scene
+// (gxColor; Vulkan has no float scene), gxColor2 bloom level 0. Written B, G, R, A, as LightingApply.comp.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, rgba8) uniform writeonly image2D gxOut;
+
+vec3 GxNeutral(vec3 c) {
+    const float shoulder = 0.8;
+    float m = max(c.r, max(c.g, c.b));
+
+    if (m <= shoulder) {
+        return c;
+    }
+
+    float mapped = shoulder + (1.0 - shoulder) * (1.0 - exp(-(m - shoulder) / (1.0 - shoulder)));
+    return c * (mapped / m);
+}
+
+vec3 GxAces(vec3 c) {
+    return clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+}
+
+// the curves below return linear [0, 1] like GxAces; main encodes after
+vec3 GxReinhard(vec3 c) {
+    // extended Reinhard on luminance, white at 4
+    const float white = 4.0;
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float m = l * (1.0 + l / (white * white)) / (1.0 + l);
+    return clamp(c * (m / max(l, 1e-6)), 0.0, 1.0);
+}
+
+vec3 GxHableCurve(vec3 x) {
+    const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+    return (x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F) - E / F;
+}
+
+vec3 GxHable(vec3 c) {
+    // Uncharted 2 filmic: exposure bias 2, white 11.2
+    return clamp(GxHableCurve(2.0 * c) / GxHableCurve(vec3(11.2, 11.2, 11.2)), 0.0, 1.0);
+}
+
+vec3 GxAgx(vec3 c, bool punchy) {
+    // AgX (Troy Sobotka), Benjamin Wrensch's sixth-order fit
+    const mat3 inset = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+                                    0.0784335999999992, 0.878468636469772, 0.0784336,
+                                    0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const mat3 outset = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+                                     -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+                                     -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+    const float minEv = -12.47393, maxEv = 4.026069;
+    vec3 x = clamp(log2(max(inset * c, 1e-10)), minEv, maxEv);
+    x = (x - minEv) / (maxEv - minEv);
+    vec3 x2 = x * x;
+    vec3 x4 = x2 * x2;
+    x = 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+
+    if (punchy) {
+        float luma = dot(x, vec3(0.2126, 0.7152, 0.0722));
+        x = luma + 1.4 * (pow(max(x, 0.0), vec3(1.35)) - luma);
+    }
+
+    // the fit is display encoded (2.2)
+    return pow(clamp(outset * x, 0.0, 1.0), vec3(2.2));
+}
+
+vec3 GxPbrNeutral(vec3 c) {
+    // Khronos PBR Neutral, the reference implementation
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    float x = min(c.r, min(c.g, c.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    c -= offset;
+    float peak = max(c.r, max(c.g, c.b));
+
+    if (peak < startCompression) {
+        return clamp(c, 0.0, 1.0);
+    }
+
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    c *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return clamp(mix(c, vec3(newPeak), g), 0.0, 1.0);
+}
+
+vec3 GxUchimura(vec3 x) {
+    // Gran Turismo (Uchimura 2017), the default parameters
+    const float P = 1.0, a = 1.0, m = 0.22, l = 0.4, c = 1.33, b = 0.0;
+    float l0 = (P - m) * l / a;
+    float S0 = m + l0;
+    float S1 = m + a * l0;
+    float C2 = a * P / (P - S1);
+    float CP = -C2 / P;
+    vec3 w0 = 1.0 - smoothstep(vec3(0.0), vec3(m), x);
+    vec3 w2 = step(vec3(m + l0), x);
+    vec3 w1 = 1.0 - w0 - w2;
+    vec3 T = m * pow(x / m, vec3(c)) + b;
+    vec3 S = P - (P - S1) * exp(CP * (x - S0));
+    vec3 L = m + a * (x - m);
+    return clamp(T * w0 + L * w1 + S * w2, 0.0, 1.0);
+}
+
+vec3 GxLottes(vec3 x) {
+    // Lottes 2016, the default parameters
+    const float a = 1.6, d = 0.977, hdrMax = 8.0, midIn = 0.18, midOut = 0.267;
+    float ad = a * d;
+    float b = (-pow(midIn, a) + pow(hdrMax, a) * midOut) / ((pow(hdrMax, ad) - pow(midIn, ad)) * midOut);
+    float c = (pow(hdrMax, ad) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, ad) * midOut) / ((pow(hdrMax, ad) - pow(midIn, ad)) * midOut);
+    return clamp(pow(x, vec3(a)) / (pow(x, vec3(ad)) * b + c), 0.0, 1.0);
+}
+
+vec3 GxTonemap(vec3 c, float mode) {
+    int m = int(mode + 0.5);
+
+    switch (m) {
+    case 0: return clamp(c, 0.0, 1.0);
+    case 1: return GxNeutral(c);
+    case 2: return GxAces(c);
+    case 3: return GxReinhard(c);
+    case 4: return GxHable(c);
+    case 5: return GxAgx(c, false);
+    case 6: return GxAgx(c, true);
+    case 7: return GxPbrNeutral(c);
+    case 8: return GxUchimura(c);
+    default: return GxLottes(c);
+    }
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    if (any(greaterThanEqual(id, ivec2(gxViewportPx.zw)))) {
+        return;
+    }
+
+    ivec2 px = id + ivec2(gxViewportPx.xy);
+    vec4 s = texelFetch(gxColor, px, 0);
+    vec3 c = GxDec(s.rgb) * gxTone.x;
+
+    if (gxBloom.w > 0.0) {
+        c += textureLod(gxColor2, (vec2(px) + 0.5) * gxSource.xy, 0.0).rgb * (gxBloom.z / gxSource.z);
+    }
+
+    // no NaN or negative light reaches the frame
+    bvec3 nan = greaterThan(floatBitsToUint(c) & 0x7FFFFFFFu, uvec3(0x7F800000u));
+    c = max(mix(c, vec3(0.0), nan), 0.0);
+
+    imageStore(gxOut, px, vec4(GxEnc(GxTonemap(c, gxTone.y)), s.a).bgra);
+}

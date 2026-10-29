@@ -199,7 +199,7 @@ int32_t CGRaidInfo::IsPlayerRaidOfficer(const WOWGUID& guid) {
 
     for (uint32_t i = 0; i < CGRaidInfo::m_numMembers; i++) {
         if (CGRaidInfo::m_members[i]->m_guid == guid) {
-            return CGRaidInfo::m_members[i]->m_rank > 0 || CGPartyInfo::m_leader == guid;
+            return CGRaidInfo::m_members[i]->m_rank > CGRaidMember::RANK::MEMBER || CGPartyInfo::m_leader == guid;
         }
     }
 
@@ -209,14 +209,14 @@ int32_t CGRaidInfo::IsPlayerRaidOfficer(const WOWGUID& guid) {
 // VERIFY: 0cbc8b71 manual
 // OFFSET: 0x00572ED0
 void CGRaidInfo::SetRaidTarget(uint32_t index, const WOWGUID& guid) {
-    CGUnit_C* previous = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGRaidInfo::m_raidTargets[index], TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* previous = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGRaidInfo::m_raidTargets[index], TYPE_UNIT, __FILE__, __LINE__));
     CGRaidInfo::m_raidTargets[index] = guid;
 
     if (previous) {
         previous->NamePlateUpdateRaidTarget();
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         unit->NamePlateUpdateRaidTarget();
@@ -359,7 +359,7 @@ int32_t CGRaidInfo::IsPetInRaid(const WOWGUID& guid, int32_t* index) {
             continue;
         }
 
-        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPE_PLAYER, __FILE__, __LINE__));
         bool match;
 
         if (player) {
@@ -395,7 +395,7 @@ int32_t Packet_MSG_RAID_TARGET_UPDATE(void* param, NETMESSAGE msgId, uint32_t ti
 
         for (uint32_t i = 0; i < 8; i++) {
             if (previous[i]) {
-                CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(previous[i], TYPEMASK_UNIT, __FILE__, __LINE__));
+                CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(previous[i], TYPE_UNIT, __FILE__, __LINE__));
 
                 if (unit) {
                     unit->NamePlateUpdateRaidTarget();
@@ -582,7 +582,7 @@ int32_t Packet_MSG_RAID_READY_CHECK(void* param, NETMESSAGE msgId, uint32_t time
     if (CGRaidInfo::m_numMembers) {
         CGRaidMember* self = CGRaidInfo::FindMemberByGuid(ClntObjMgrGetActivePlayer());
 
-        if (self && self->m_rank > 0) {
+        if (self && self->m_rank > CGRaidMember::RANK::MEMBER) {
             for (uint32_t i = 0; i < CGRaidInfo::m_numMembers; i++) {
                 CGRaidMember* member = CGRaidInfo::m_members[i];
 
@@ -792,7 +792,7 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
         previous[i].m_pending = member->m_readyCheckPending;
         previous[i].m_ready = member->m_readyCheckReady;
 
-        if (member->m_rank == 2) {
+        if (member->m_rank == CGRaidMember::RANK::LEADER) {
             leader = member->m_guid;
         }
     }
@@ -806,7 +806,7 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
         member->m_subgroup = subgroups[i];
         member->m_assignments = flags[i];
         member->m_groupRole = roles[i];
-        member->m_rank = member->m_guid == CGPartyInfo::m_leader ? 2 : flags[i] & 0x1;
+        member->m_rank = member->m_guid == CGPartyInfo::m_leader ? CGRaidMember::RANK::LEADER : static_cast<CGRaidMember::RANK>(flags[i] & CGPartyInfo::ASSIGNMENT_FLAGS::ASSISTANT);
         memcpy(&member->m_stats, &stats[i], sizeof(CGPartyMemberState));
 
         if (online[i]) {
@@ -835,7 +835,7 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
     }
 
     for (uint32_t i = 0; i < removedCount; i++) {
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(removed[i], TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(removed[i], TYPE_PLAYER, __FILE__, __LINE__));
 
         if (!unit) {
             CGGameUI::ClearTarget(removed[i], 1);
@@ -845,7 +845,7 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
         const WOWGUID& petGuid = unit->m_unit->m_unitFieldCharm.m_guid ? unit->m_unit->m_unitFieldCharm : unit->m_unit->m_unitFieldSummon;
 
         if (petGuid) {
-            CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(petGuid, TYPEMASK_UNIT, __FILE__, __LINE__));
+            CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(petGuid, TYPE_UNIT, __FILE__, __LINE__));
 
             if (pet) {
                 pet->UnregisterScript(512);
@@ -858,12 +858,12 @@ void CGRaidInfo::UpdateRoster(const WOWGUID* guids, const uint32_t* subgroups, c
     }
 
     for (uint32_t i = 0; i < addedCount; i++) {
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(added[i], TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(added[i], TYPE_PLAYER, __FILE__, __LINE__));
 
         if (unit) {
             unit->RegisterScript(256);
             const WOWGUID& petGuid = unit->m_unit->m_unitFieldCharm.m_guid ? unit->m_unit->m_unitFieldCharm : unit->m_unit->m_unitFieldSummon;
-            CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(petGuid, TYPEMASK_UNIT, __FILE__, __LINE__));
+            CGUnit_C* pet = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(petGuid, TYPE_UNIT, __FILE__, __LINE__));
 
             if (pet) {
                 pet->RegisterScript(512);
@@ -973,7 +973,7 @@ int32_t CGRaidInfo::IsPlayerOrPetInRaid(const WOWGUID& guid) {
             return 1;
         }
 
-        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPE_PLAYER, __FILE__, __LINE__));
 
         if (player) {
             CGUnitData* unit = player->m_unit;
@@ -1051,15 +1051,15 @@ uint8_t CGRaidInfo::GetPartyAssignments(const WOWGUID& guid) {
 int32_t CGRaidInfo::GetPartyAssignments(lua_State* L, int32_t assignment) {
     uint8_t flag = 0;
 
-    if (assignment == 0) {
-        flag = 2;
-    } else if (assignment == 1) {
-        flag = 4;
+    if (assignment == CGPartyInfo::ASSIGNMENT::MAINTANK) {
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK;
+    } else if (assignment == CGPartyInfo::ASSIGNMENT::MAINASSIST) {
+        flag = CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST;
     }
 
     if (lua_isstring(L, 2)) {
         const char* name = lua_tolstring(L, 2, nullptr);
-        WOWGUID guid = CGGameUI::ClosestObjectMatch(name, TYPEMASK_PLAYER, 6, StringToBOOL(L, 3, 0), 3.4028235e38f, 0);
+        WOWGUID guid = CGGameUI::ClosestObjectMatch(name, TYPE_PLAYER, 6, StringToBOOL(L, 3, 0), 3.4028235e38f, 0);
 
         if (!guid) {
             CGGameUI::DisplayError(ERR_TARGET_NOT_IN_GROUP_S, name);
@@ -1119,7 +1119,7 @@ void CGRaidInfo::ClearRoster() {
             continue;
         }
 
-        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(targets[i], TYPEMASK_UNIT, __FILE__, __LINE__));
+        CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(targets[i], TYPE_UNIT, __FILE__, __LINE__));
 
         if (unit) {
             unit->NamePlateUpdateRaidTarget();

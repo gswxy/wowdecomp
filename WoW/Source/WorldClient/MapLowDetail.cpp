@@ -1,4 +1,5 @@
 #include "MapLowDetail.h"
+#include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cmath>
 #include <cstring>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
@@ -15,6 +16,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "Engine/Source/Gx/CGxVertexPC.h"
+#include "WoW/Source/WorldClient/FarLand.h"
 
 // VERIFY: 3763adce auto
 // OFFSET: 0x007C06E0
@@ -30,6 +32,8 @@ CMapAreaLow::CMapAreaLow() {
     this->m_heights = nullptr;
     this->m_holes = nullptr;
 }
+
+uint32_t g_lowDetailLoads = 0;   // shadow audit L10 (MapLowDetail.h)
 
 // VERIFY: 0b659a65 auto
 // OFFSET: 0x007CC2C0
@@ -62,9 +66,10 @@ void CMapLowDetail::Purge() {
 // OFFSET: 0x007CC0B0
 void CMapLowDetail::CullHorizonAreas(const C3Vector* pos) {
     float y = -(pos->y - 17066.666f);
-    float x = -(pos->x - 17066.666f) * 0.029999999f;
+    float x = -(pos->x - 17066.666f) * OO_COORD_TO_CHUNK;
     int32_t row = CMath::fint_(x - 0.5f);
-    y = y * 0.029999999f;
+    FarLand::UpdateHorizonScale();   // BENILLA far view: not in 12340
+    y = y * OO_COORD_TO_CHUNK;
     int32_t col = CMath::fint_(y - 0.5f);
     int32_t radius = static_cast<int32_t>(static_cast<int64_t>(World::s_horizonFarClipScale * World::s_farClip * 0.030000001f));
 
@@ -92,6 +97,22 @@ void CMapLowDetail::CullHorizonAreas(const C3Vector* pos) {
     for (int32_t r = minRow; r <= maxRow; r++) {
         for (int32_t c = minCol; c <= maxCol; c++) {
             CMapAreaLow* area = this->m_areas[64 * r + c];
+
+            // FARLAND (vfogaudit): with real far land showing, a block is drawn whenever its box, padded by a small
+            // margin, touches the horizon frustum (the view's own at horizonFarclipScale x farclip). The stock skyline
+            // buffer and occlusion volumes are skipped: they were tuned for fog-coloured blocks and dropped blocks
+            // that peek over near hills or sit at the screen edge, so land popped in and out as the camera turned.
+            // ponytail: no occlusion at all for far land (a few hundred cheap draws); a conservative skyline test if it ever shows.
+            if (area && FarLand::Drawing()) {
+                constexpr float kMargin = 32.0f;
+                CAaBox box = area->m_bbox;
+                box.b.x -= kMargin; box.b.y -= kMargin; box.b.z -= kMargin;
+                box.t.x += kMargin; box.t.y += kMargin; box.t.z += kMargin;
+                if (!CWorldScene::FrustumCull(&box)) {
+                    CWorldScene::AddHorizonChunk(area);
+                }
+                continue;
+            }
 
             if (!area || CWorldScene::FrustumCull(&area->m_bbox) || CWorldOcclusion::QueryVolumes(&area->m_sphere)) {
                 continue;
@@ -131,6 +152,7 @@ void CMapLowDetail::Load(const char* mapPath, const char* mapName) {
     this->m_data = static_cast<char*>(SMemAlloc(size, __FILE__, __LINE__, 0));
     SFileReadFile(file, this->m_data, size, nullptr, nullptr, 0);
     SFileCloseFile(file);
+    g_lowDetailLoads++;
 
     uint32_t* chunk = reinterpret_cast<uint32_t*>(this->m_data + reinterpret_cast<uint32_t*>(this->m_data)[1] + 8);
     char* data = this->m_data + reinterpret_cast<uint32_t*>(this->m_data)[1] + 16;
@@ -264,6 +286,7 @@ void CMap::RenderLowDetail(CMapAreaLow* area) {
     CImVector color = info->m_fog.m_color;
     GxRsSet(GxRs_FogColor, *reinterpret_cast<int32_t*>(&color));
     GxRsSet(GxRs_Lighting, 0);
+    FarLand::Apply(area);   // FARLAND: not in 12340 (farLand: baked ground colour + normals; else the stock fogged tile)
 
     if (!area->m_block) {
         CMap::s_vbbList.AcquireBlock(&area->m_block);

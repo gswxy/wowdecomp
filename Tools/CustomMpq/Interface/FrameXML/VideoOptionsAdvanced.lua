@@ -1,0 +1,502 @@
+-- Video Options > Advanced: the settings our own exes (Wow32.exe / Wow64.exe) add, in custom.MPQ.
+-- Loaded by GameUI.cpp after FrameXML.toc and Bindings.xml (not through FrameXML.toc, which stays stock).
+-- Sliders, checkboxes and dropdowns apply live and Cancel puts the values back; settings marked
+-- restart are only written on Okay/Apply and ask for a client restart, like the stock texture options.
+
+local RESTART = OPTION_RESTART_REQUIREMENT or "Requires a client restart."
+
+-- { cvar, kind, label, tooltip, ... }  kind: "check" | "slider" (min, max, step) | "drop" ({ {value, text}, ... })
+-- check: on/off = values written instead of "1"/"0"; slider: pct = shown as a percentage.
+local PAGES = {
+	{ name = "Advanced", title = "Renderer & Performance",
+	  text = "Settings added by this client. Pick a category on the left.",
+	  { "gxApi", "drop", "Graphics API", "Which renderer the client uses. D3D11 and Vulkan add multisampled fog, GPU particles and more.",
+	    { { "D3D9", "Direct3D 9 (stock)" }, { "D3D11", "Direct3D 11" }, { "Vulkan", "Vulkan" } }, restart = true },
+	  { "gxAlphaToCoverage", "check", "Smooth cut-out edges", "Smooths the edges of leaves, grass and fences while multisampling (Resolution page) is on. D3D11 and Vulkan." },
+	  { "renderThread", "check", "Render thread", "Hands finished frames to a second thread so the next frame can start sooner. Vulkan only." },
+	  { "particleGpuQuads", "check", "GPU particles", "Builds particle sprites on the graphics card instead of the processor. Vulkan only." },
+	  { "occlusionCulling", "check", "Occlusion culling", "Skips buildings and objects hidden behind others. Vulkan only; off by default because world models can flicker while moving." },
+	  { "lodObjectCull", "check", "Fade tiny far objects", "Small objects only a few pixels tall in the distance fade out instead of being drawn." },
+	  { "lodObjectCullSize", "slider", "Tiny object size", "How small an object must look before it fades out (5 = one pixel tall).", 5, 50, 1 },
+	  { "horizonStaticVB", "check", "Static horizon buffers", "Draws far building silhouettes from buffers kept on the graphics card." },
+	  { "componentThreads", "check", "Threaded character textures", "Builds character skins and armour textures on several processor cores." },
+	  { "mpqThreads", "check", "Threaded file loading", "Unpacks game files on several processor cores." },
+	  { "worldLoadSort", "check", "Load nearest first", "Loads the trees, buildings and objects closest to you before the ones further away." },
+	  { "texUploadLimit", "drop", "Textures per frame", "How many newly loaded textures are set up each frame while you play. Lower spreads the work out and smooths hitches when flying; loading screens are never limited.",
+	    { { "8", "8" }, { "16", "16" }, { "24", "24" }, { "48", "48" }, { "0", "Unlimited" } } },
+	},
+	-- vfogaudit (docs/vfog-audit.md): the fog's user-facing set; every other vfog* CVar keeps its default and is hidden.
+	{ name = "Fog", parent = "Advanced", title = "Fog",
+	  { "vfog", "check", "Volumetric fog", "Replaces the stock fog with lit, volumetric fog." },
+	  { "foreverFog", "check", "Forever Fog", "Distant land fades into each zone's own fog colour: warm toward the sun, the zone's hue away from it, far mountains left as tinted silhouettes. Needs volumetric fog." },
+	  { "foreverFogStrength", "slider", "Forever Fog strength", "How strongly each zone's own fog, haze and sky colours show. 0 gives every zone the same plain look.", 0, 1, 0.05 },
+	  { "foreverSky", "check", "Forever Sky", "The sky takes Wowhead Forever's own colours (Kalimdor and the Eastern Kingdoms), each zone's tint, and its horizon the zone's fog colour, so it meets the Forever Fog haze. Needs volumetric fog and Forever Fog." },
+	  { "foreverSkyStrength", "slider", "Forever Sky strength", "How strongly Forever's sky colours and the zone's tint show in the sky and on its horizon. 0 leaves the sky as it was.", 0, 1, 0.05 },
+	  { "vfogQuality", "drop", "Fog quality", "Resolution and step count of the fog. Higher looks smoother and costs more.",
+	    { { "1", "Low" }, { "2", "Medium" }, { "3", "High" } } },
+	  { "vfogDensity", "slider", "Density", "How thick all fog is, near and far.", 0, 3, 0.05 },
+	  { "vfogNoise", "slider", "Patchiness", "How uneven the fog is. 0 keeps it smooth.", 0, 1, 0.05 },
+	  { "vfogSunScatter", "slider", "Sun glow in fog", "How much sun or moon light the fog catches.", 0, 1, 0.01 },
+	  { "vfogGodRays", "slider", "God rays", "Light shafts from the sky around the sun. 0 turns them off.", 0, 4, 0.25 },
+	  { "vfogShadowedSun", "check", "Sun shafts through the scene", "Sunlight in the fog is blocked by trees and buildings, so beams fall through the fog where the sun reaches. Needs shadows above Low." },
+	  { "vfogShaftIntensity", "slider", "Sun shaft strength", "How bright sunlit fog is away from the sun. 0 turns the shafts off.", 0, 2, 0.05 },
+	  { "vfogLocalLightIntensity", "slider", "Lamps light the fog", "How brightly torches, lamps and other nearby lights shine in the fog. 0 turns it off.", 0, 4, 0.1 },
+	  { "vfogInteriorDensity", "slider", "Indoor fog", "How much of the outdoor fog is kept inside buildings and caves.", 0, 1, 0.05 },
+	  { "vfogUnderwater", "check", "Fog under water", "Keeps the volumetric fog on while the camera is under water." },
+	  { "vfogGradeStrength", "slider", "Zone colour grading", "The modern client's colour look for each zone (not the interface). 0 turns it off.", 0, 1, 0.05 },
+	},
+	{ name = "Light & God Rays", parent = "Advanced", title = "Sun & Moon",
+	  { "gfxSunArc", "check", "Sun and moon cross the sky", "The sun rises in the east, passes through the south and sets in the west, and the moon does the same at night. The world's light, the shadows and the fog come from wherever the sun or moon is. Off uses the stock sky and light." },
+	  { "gfxSunArcMatch", "slider", "Gentle high sun", "How much the high midday sun or moon is kept from lighting the ground harder than the stock sky did. 1 matches the stock brightness, 0 lights the ground from the sun's full height.", 0, 1, 0.05 },
+	  { "gfxSunArcDawnRamp", "slider", "Slow sunrise light", "How high (in degrees) the sun or moon must climb before its light reaches full strength, so dawn and dusk light comes in gently. 4 is the old quick ramp.", 4, 30, 1 },
+	  { "debugHour", "slider", "Time of day (preview)", "Draws the sky, light, sun, moon, shadows and skyboxes for this hour. -1 follows the game clock. Not saved.", -1, 24, 0.5 },
+	},
+	{ name = "Water", parent = "Advanced", title = "Water",
+	  -- Cata water (waterStyle, WorldClient/CataWater.cpp): the settings below are the Modern style's.
+	  { "waterStyle", "drop", "Water style", "Modern: reflections, waves and foam from the volumetric fog (the settings below). Cataclysm: the Cataclysm water surface, with or without volumetric fog.",
+	    { { "0", "Modern" }, { "1", "Cataclysm" } } },
+	  { "waterCataRipples", "check", "Cataclysm ripples", "Cataclysm water style: rings and wakes where characters move through or jump into water." },
+	  { "waterRainRipples", "slider", "Rain ripples", "Rings where raindrops land on water, in either water style. 0 turns them off.", 0, 1, 0.05 },
+	  { "waterSnowRipples", "slider", "Snow ripples", "Faint dimples where snow lands on water. 0 turns them off.", 0, 1, 0.05 },
+	  { "waterShipWakes", "slider", "Ship wakes", "Wakes beside and behind moving ships and boats, in either water style. 0 turns them off.", 0, 2, 0.05 },
+	  { "waterCataReflection", "drop", "Cataclysm reflections", "Cataclysm water style: what the water mirrors. Each step costs more frame time.",
+	    { { "0", "Screen only" }, { "1", "Sky" }, { "2", "Sky and terrain" }, { "3", "Sky, terrain and buildings" } } },
+	  { "waterCataReflScale", "slider", "Reflection resolution", "Cataclysm water style: the mirror image's size against the screen. Lower is faster and blurrier.", 0.25, 1, 0.05 },
+	  { "vfogWater", "check", "Modern water", "Lakes, rivers, sea and pools get reflections, waves and foam. Needs volumetric fog on." },
+	  { "vfogWaterQuality", "drop", "Water quality", "Low reflects only the sky; Medium and High also reflect the world.",
+	    { { "1", "Low" }, { "2", "Medium" }, { "3", "High" } } },
+	  { "vfogWaterWaves", "slider", "Wave height", "How high the waves are. 0 makes the water flat.", 0, 2, 0.05 },
+	  { "vfogWaterWind", "slider", "Wind speed", "How fast the wind drives the waves.", 0.5, 10, 0.1 },
+	  { "vfogWaterFoam", "slider", "Foam", "Cataclysm water: how wide the shoreline foam reaches. Modern water: foam strength. 0 turns foam off.", 0, 2, 0.05 },
+	  { "vfogWaterReflections", "slider", "Reflections", "How strong reflections are. 0 reflects only the sky.", 0, 2, 0.05 },
+	  { "vfogWaterSpecular", "slider", "Sun highlight", "How bright the sun and moon shine on the water.", 0, 4, 0.1 },
+	  { "vfogWaterClarity", "slider", "Clarity", "How clear the water is; higher sees deeper.", 0.25, 4, 0.05 },
+	  { "vfogWaterZoneColors", "slider", "Zone colours", "How much each zone's own water colour tints the water.", 0, 1, 0.05 },
+	  { "vfogWaterRipples", "slider", "Ripples", "Ripples and wakes where characters move through water. 0 turns them off.", 0, 2, 0.05 },
+	  { "vfogWaterClientSplashes", "check", "Stock splashes", "Keeps the stock splash rings and wake trails on top of the ripples." },
+	  { "vfogWaterGpuWaves", "check", "Waves on the GPU", "Works out the waves on the graphics card instead of the processor." },
+	  -- caustics (docs/BACKLOG_PORT.md "Caustics")
+	  { "waterCaustics", "slider", "Caustics", "Rippling sunlight on the ground under shallow water, seen from above and below. Not at night or in shade. 0 turns it off.", 0, 3, 0.05 },
+	  { "waterUnderwaterTint", "slider", "Underwater tint", "Tints the screen with the water's colour and darkens the corners while you are under water. 0 turns it off.", 0, 2, 0.05 },
+	},
+	{ name = "World Effects", parent = "Advanced", title = "World Effects",
+	  { "groundDecals", "check", "Ground effects follow terrain", "Spell circles on the ground bend over hills instead of floating flat." },
+	  { "wmoNormalRepair", "check", "Repair building lighting", "Fixes dark wedges across flat floors and docks under a low sun. Buildings already loaded keep their old lighting until you relog or travel far away." },
+	  { "treeSway", "check", "Trees sway in the wind", "Living trees and bushes lean gently in passing gusts. Their shadows move with them." },
+	  { "treeSwayStrength", "slider", "Tree sway amount", "How far trees and bushes lean in the wind.", 0, 3, 0.05 },
+	  { "treeLeaves", "check", "Falling leaves", "Leaves drift down from the swaying trees nearest you, more when the wind gusts." },
+	  { "treeLeavesDensity", "slider", "Falling leaf amount", "How many leaves each tree can shed at once.", 1, 48, 1 },
+	  { "farLand", "check", "Far land", "Land past the view distance is drawn in its real ground colours and lit by the sun, instead of a flat fog-coloured outline." },
+	  { "horizonFarclipScale", "slider", "Far land reach", "How far the far land reaches, as a multiple of the view distance.", 3, 6, 0.5 },
+	  { "farViewDistance", "slider", "Horizon distance (yards)", "How far the far land and far trees reach, whatever the view distance. 0 uses Far land reach instead.", 0, 20000, 500 },
+	  { "farLandSeam", "check", "Blend near and far land", "Near the end of the view distance the detailed world fades into the far land behind it, so there is no line where the near ground stops. D3D11/Vulkan only." },
+	  { "farLandHazeGround", "check", "Haze settles in valleys", "The far haze lies over the low ground around you instead of following the camera, so it stays in the valleys when you fly up." },
+	  { "farLandHazeHeight", "slider", "Far haze height (yards)", "How quickly the far haze thins with height, so low land sinks into it and high ridges stay clear. 0 makes it even at every height. Not used while Forever Fog is on.", 0, 1000, 25 },
+	  { "weatherSteadyRate", "check", "Steady weather", "Rain, snow and sand fall just as thickly at any frame rate." },
+	  { "selectionCircleStyle", "drop", "Target circle", "The look of the circle under your target.",
+	    { { "0", "Stock" }, { "1", "Arrow" }, { "2", "Arrow, no fill" }, { "3", "Ring" }, { "4", "Ring, no fill" } } },
+	  { "selectionCircleReach", "drop", "Target circle size", "Size the circle by the model, or by melee reach.",
+	    { { "0", "Model size" }, { "1", "Melee reach" } } },
+	  { "smoothSplines", "check", "Smooth creature paths", "Creatures round the corners of their paths instead of turning sharply." },
+	  { "smoothTurning", "check", "Smooth creature turning", "Creatures turn gradually instead of snapping to a new facing." },
+	  { "smoothTurnRate", "slider", "Turn speed", "How fast creatures turn, in degrees per second (twice as fast in combat).", 90, 1080, 30 },
+	},
+	{ name = "Shadows", parent = "Advanced", title = "Shadows",
+	  text = "For the sun shadows set by Shadow Quality on the Graphics page.",
+	  { "gfxSunShadows", "check", "Shadows follow the sun", "Shadows fall from where the sun or moon is in the sky, long in the morning and evening and short at noon. Off uses the stock steep light." },
+	  { "gfxShadowSnap", "check", "Steady shadow edges", "Moves the shadow maps in whole pixels so shadow edges do not crawl or shimmer as you move." },
+	  { "gfxShadowSlopeBias", "slider", "Low sun shadow bias", "Stops striped or speckled shadows on walls and roofs when the sun is low. Higher can lift shadows off the ground slightly; 0 is stock.", 0, 4, 0.25 },
+	  { "gfxShadowAnchor", "check", "Steady shadows when jumping", "Keeps the shadow maps in place while you jump, so distant shadows do not shift or redraw." },
+	  { "gfxShadowFade", "check", "Shadows fade at dusk and dawn", "Shadows fade out as the sun or moon nears the horizon, so they never jump to the other side when the moon takes over." },
+	  { "gfxTerrainShadow", "check", "Mountains block the sun", "Hills and distant mountains block the sunlight in the fog and hide the sun's glare when the sun is behind them." },
+	  { "shadowMask", "check", "Mountain shadows on the world", "Hills and distant mountains cast the sun's shadow onto the ground, buildings and creatures. Needs \"Mountains block the sun\"." },
+	  { "shadowSoft", "slider", "Mountain shadow softness", "How soft the edge of a mountain's shadow is. 0 is hard.", 0, 4, 0.25 },
+	},
+	{ name = "Loading & Gameplay", parent = "Advanced", title = "Loading & Gameplay",
+	  { "fastLoad", "check", "Fast loading", "Loading screens finish sooner; one processor core stays busy while they are up." },
+	  { "terrainPoolMaxMB", "slider", "Terrain memory budget (MB)", "Caps the memory kept for drawing ground at long view distances. Far ground that does not fit is skipped. 0 = no cap.", 0, 1024, 32 },
+	  { "spellQueueWindow", "slider", "Spell queue window (ms)", "Lets a spell be pressed this long before the global cooldown ends; it casts the moment the cooldown is over. 0 turns it off.", 0, 400, 10 },
+	},
+	{ name = "Debug", parent = "Advanced", title = "Debug & Technical",
+	  text = "For testing. The defaults are right for normal play.",
+	  { "vfogDebug", "drop", "Fog debug view", "Shows one part of the fog on screen.",
+	    { { "0", "Off" }, { "1", "Fog light" }, { "2", "Transmittance" }, { "3", "Depth" } } },
+	  { "vfogWaterDebug", "drop", "Water debug view", "Shows one part of the water on screen.",
+	    { { "0", "Off" }, { "1", "Normals" }, { "2", "Foam" }, { "3", "Transmittance" }, { "4", "Reflection" }, { "5", "Liquid type" }, { "6", "Ripples" } } },
+	  { "lightingDebug", "drop", "Lighting debug view", "Shows one part of the lighting on screen. D3D11/Vulkan only.",
+	    { { "0", "Off" }, { "1", "Ambient occlusion" }, { "2", "Lit surfaces by kind" }, { "3", "Dynamic light alone" }, { "4", "Occlusion inputs" }, { "5", "Occlusion depth" },
+	      { "6", "Sky occlusion" }, { "7", "Rain wetness" }, { "8", "Probe GI" } } },
+	  { "vfogSunMarker", "check", "Sun marker", "Draws a red dot where the sunlight comes from." },
+	},
+	{ name = "Post Processing", parent = "Advanced", title = "Anti-Aliasing & Colour",
+	  text = "Applied to the 3D world only; names and the interface stay sharp.",
+	  { "ffxAntiAliasingMode", "drop", "Post anti-aliasing", "Smooths jagged edges, including leaves and fences multisampling misses. Slightly softens the image.",
+	    { { "0", "Off" }, { "1", "FXAA Low" }, { "2", "FXAA High" } } },
+	  { "colorblindSimulator", "drop", "Colour blindness type", "The kind of colour blindness to show or correct for.",
+	    { { "0", "Off" }, { "1", "Protanopia (red)" }, { "2", "Deuteranopia (green)" }, { "3", "Tritanopia (blue)" } } },
+	  { "daltonize", "check", "Correct colours", "On shifts colours so they are easier to tell apart with that colour blindness. Off shows how the world looks with it." },
+	  { "colorblindWeaknessFactor", "slider", "Strength", "How strong the colour blindness view or correction is.", 0, 1, 0.05 },
+	  { "SSAO", "drop", "Ambient occlusion", "Soft contact shadows in corners, creases and under objects.",
+	    { { "0", "Off" }, { "1", "Low (half resolution)" }, { "2", "High (full resolution)" } } },
+	  { "SSAOBlur", "drop", "Ambient occlusion blur", "Smooths the occlusion. Edge-aware keeps it off the background behind objects.",
+	    { { "0", "Off" }, { "1", "Box" }, { "2", "Edge-aware" } } },
+	  { "SSAODistance", "slider", "Ambient occlusion distance", "How far away (yards) the occlusion reaches before it fades out.", 25, 400, 25 },
+	  { "SSAOStrength", "slider", "Ambient occlusion strength", "How dark the occlusion is.", 0, 2, 0.1 },
+	  { "refraction", "drop", "Heat haze", "Air shimmers above fires, braziers, lava and burning spells.",
+	    { { "0", "Off" }, { "1", "On" }, { "2", "High" } } },
+	  { "refractionStrength", "slider", "Heat haze strength", "How strongly the hot air bends what is behind it.", 0, 4, 0.25 },
+	},
+}
+
+-- Grass wind (wxl-grasswind, DetailDoodad.hlsl): its own page, placed before Debug.
+table.insert(PAGES, #PAGES, { name = "Grass", parent = "Advanced", title = "Grass",
+	{ "grassWind", "check", "Grass sways in the wind", "Grass moves gently in the wind." },
+	{ "grassWindStrength", "slider", "Wind strength", "How far the grass sways.", 0, 4, 0.1 },
+	{ "grassParting", "check", "Grass parts as you walk", "Grass leans away from your character and settles back behind you." },
+})
+
+-- Lava and slime (backlog #10, docs/BACKLOG_PORT.md): on the Water page.
+for _, page in ipairs(PAGES) do
+	if page.name == "Water" then
+		table.insert(page, { "liquidProcMagma", "check", "Cataclysm lava and slime", "Lava and slime flow with layered, moving textures as in Cataclysm. Off keeps the stock look." })
+	end
+end
+
+-- Lamp light (Legion lightMode, docs/LEGION_PORT.md "Legion lights"): its own page, placed before the last one.
+table.insert(PAGES, #PAGES, { name = "Lights", parent = "Advanced", title = "Lamps & Torches",
+	{ "lightMode", "drop", "Lamp light on the world", "Lamps, torches and braziers light the ground and walls around them.",
+	  { { "0", "Off" }, { "1", "Ground and buildings" }, { "2", "Also creatures and grass" } } },
+	{ "maxLightCount", "slider", "Most lamps at once", "How many lamps light the world at the same time, the biggest on screen first.", 1, 256, 1 },
+	{ "maxLightDist", "slider", "Lamp light distance (yards)", "How far away lamps still light the world.", 20, 2048, 20 },
+	{ "lightIntensity", "slider", "Lamp brightness", "How bright the lamp light on the world is.", 0, 4, 0.1 },
+	{ "lightShadows", "slider", "Lamp shadows", "Posts, walls and creatures between a lamp and a surface block its light. 0 turns it off.", 0, 1, 0.1 },
+	{ "lightBakedShadows", "slider", "Baked lamp shadows", "Walls, ground and buildings between a fixed lamp and a surface block its light, also where they are off screen. 0 turns it off.", 0, 1, 0.1 },
+	{ "lightShadowSoft", "check", "Soft lamp shadows", "Baked lamp shadows are crisp where a post meets the ground and soften further from it." },
+	{ "lightBakedShadowAtlas", "drop", "Baked lamp shadow memory", "How many lamps can keep baked shadows at once. More costs graphics memory.",
+	  { { "64", "10 lamps" }, { "128", "20 lamps" }, { "256", "40 lamps" }, { "512", "80 lamps (2 MB)" }, { "1024", "160 lamps (4 MB)" }, { "2048", "320 lamps (8 MB)" }, { "4096", "640 lamps (16 MB)" } } },
+	{ "lightEmissive", "check", "Glowing objects give light", "Braziers, candles and glowing lanterns that carry no lamp of their own light the world around them in the colour of their glow." },
+	{ "lightGrid", "check", "Many lamps per area", "Each part of the screen is lit only by the lamps that reach it, so more lamps can light a busy town at once. Off lights the whole screen from at most 16 lamps." },
+})
+-- Soft particles (backlog #4, docs/BACKLOG_PORT.md): on the World Effects page.
+for _, page in ipairs(PAGES) do
+	if page.name == "World Effects" then
+		table.insert(page, { "softParticles", "check", "Soft particles", "Smoke, fire and spell effects fade where they meet the ground, walls and water instead of cutting a hard line." })
+		table.insert(page, { "softParticlesDistance", "slider", "Soft particle fade (yards)", "How far in front of the ground an effect starts to fade.", 0.1, 5, 0.1 })
+	end
+end
+
+-- Badgermilk0 ports (perfcore, streaming, gpuskin, shadows), lighting post passes and the sky: placed before Debug.
+table.insert(PAGES, #PAGES, { name = "Performance", parent = "Advanced", title = "Performance & Streaming",
+	{ "gxMaxFrameLatency", "drop", "Frames queued ahead", "How many frames the graphics card may queue while the next one is prepared. Fewer feels more responsive, more runs smoother. All renderers.",
+	  { { "0", "0 (wait for each frame)" }, { "1", "1" }, { "2", "2" }, { "3", "3" } } },
+	{ "textureCacheSize", "slider", "Texture cache (MB)", "Memory kept for textures no longer on screen, so they come back without reloading. All renderers.", 32, 1024, 32 },
+	{ "SoundMemoryCache", "slider", "Sound cache (MB)", "Memory kept for sounds already played, so they are not read from disk again. All renderers.", 4, 256, 4, restart = true },
+	{ "groundEffectBuffers", "slider", "Grass buffers", "Grass batches kept ready per pool. More avoids rebuilding grass when you turn or move fast. All renderers.", 32, 1024, 32 },
+	{ "groundEffectJobs", "check", "Threaded grass", "Builds grass on several processor cores. All renderers." },
+	{ "asyncReadThreads", "slider", "Disk reader threads", "How many threads read game files from disk. 0 picks a count from your processor. All renderers.", 0, 8, 1, restart = true },
+	{ "asyncPostloadBudget", "slider", "Loading time per frame (ms)", "How long each frame may spend setting up files that finished loading. Higher loads faster, lower hitches less. All renderers.", 0, 50, 1 },
+	{ "textureLoadBudget", "slider", "Texture read-ahead (MB)", "How much texture data is read ahead of being needed. All renderers.", 4, 512, 4 },
+	{ "M2CacheTime", "slider", "Keep unused models (seconds)", "How long a model no longer in view is kept for reuse. All renderers.", 10, 600, 10 },
+	{ "M2CacheSize", "slider", "Unused model memory (MB)", "Memory kept for models no longer in view. 0 = no cap. All renderers.", 0, 1024, 32 },
+	{ "wmoCacheTime", "slider", "Keep unused buildings (seconds)", "How long a building no longer in view is kept for reuse. All renderers.", 10, 600, 10 },
+	{ "animLod", "check", "Slower far animation", "Creatures and characters far away animate at a lower rate, which saves processor time in crowds. All renderers." },
+	{ "portraitLive", "check", "Animated portraits", "Unit portraits are moving 3D models instead of still pictures. All renderers." },
+	{ "portraitResolution", "drop", "Portrait resolution", "Size the unit portraits are drawn at. All renderers.",
+	  { { "64", "64 (stock)" }, { "128", "128" }, { "256", "256" }, { "512", "512" } } },
+	{ "minimapIndoorResolution", "drop", "Indoor minimap resolution", "Size the indoor minimap is drawn at. All renderers.",
+	  { { "256", "256 (stock)" }, { "512", "512" }, { "1024", "1024" }, { "2048", "2048" } } },
+})
+-- Shadow map options (Badgermilk0 port, ShadowQuery.cpp): on the Shadows page.
+for _, page in ipairs(PAGES) do
+	if page.name == "Shadows" then
+		table.insert(page, { "shadowMapSize", "drop", "Shadow map size", "Sharpness of the sun shadows. Larger costs graphics memory. All renderers.",
+		  { { "0", "Stock" }, { "1024", "1024" }, { "2048", "2048" }, { "4096", "4096" }, { "8192", "8192" } } })
+		table.insert(page, { "shadowSoftness", "slider", "Shadow softness", "How soft shadow edges are. 1 is stock. All renderers.", 0.25, 4, 0.25 })
+		table.insert(page, { "shadowWaterStrength", "slider", "Shadows on water", "How strong sun shadows are on water. 1 is as strong as on land. All renderers.", 0, 1, 0.05 })
+		table.insert(page, { "shadowCascadeReuse", "check", "Reuse far shadows", "At the highest shadow quality, far shadows are redrawn every few frames instead of every frame. All renderers." })
+	end
+end
+-- World lighting post passes (WorldLighting.cpp).
+table.insert(PAGES, #PAGES, { name = "Lighting", parent = "Advanced", title = "HDR, Bloom & Occlusion",
+	{ "hdr", "check", "HDR", "Draws the world in high dynamic range and tone maps it. D3D11/Vulkan only." },
+	{ "hdrExposure", "slider", "Exposure", "Overall brightness of the world with HDR on. D3D11/Vulkan only.", 0.25, 4, 0.05 },
+	{ "autoExposure", "check", "Auto exposure", "Dark scenes (night, dark zones, deep shade) brighten slowly toward visible, like eyes adjusting. It never darkens. Needs HDR. D3D11/Vulkan only." },
+	{ "autoExposureTarget", "slider", "Auto exposure threshold", "How dark the picture must be before auto exposure starts to brighten it. Higher brightens more scenes. Needs HDR. D3D11/Vulkan only.", 0.01, 0.25, 0.01 },
+	{ "autoExposureMax", "slider", "Auto exposure limit", "The most auto exposure may brighten a dark scene, as a multiple of normal. Needs HDR. D3D11/Vulkan only.", 1, 8, 0.25 },
+	{ "hdrTonemap", "drop", "Tone mapping", "How bright light is fitted to the screen with HDR on. D3D11/Vulkan only.",
+	  { { "0", "Clamp (stock)" }, { "1", "Neutral" }, { "2", "ACES (filmic)" }, { "3", "Reinhard" },
+	    { "4", "Uncharted 2 (Hable)" }, { "5", "AgX" }, { "6", "AgX Punchy" }, { "7", "Khronos PBR Neutral" },
+	    { "8", "Gran Turismo" }, { "9", "Lottes" } } },
+	{ "bloom", "slider", "Bloom", "Bright light glows onto what is around it. 0 turns it off. D3D11/Vulkan only.", 0, 2, 0.05 },
+	{ "bloomThreshold", "slider", "Bloom threshold", "How bright something must be before it glows. D3D11/Vulkan only.", 0.05, 2, 0.05 },
+	{ "lightingSsao", "slider", "Post-pass ambient occlusion", "A second, lighter ambient occlusion drawn after the world, separate from the one on Post Processing. 0 turns it off. D3D11/Vulkan only.", 0, 2, 0.05 },
+	{ "lightingSsilvb", "check", "Better post-pass occlusion", "The post-pass ambient occlusion is drawn at full resolution with a better method (SSILVB). Off uses the older, softer half-resolution one. D3D11/Vulkan only." },
+	{ "lightingSsgi", "slider", "Bounced colour", "Lit surfaces cast a little of their colour onto what is near them. Costly. 0 turns it off. Needs HDR and Better post-pass occlusion. D3D11/Vulkan only.", 0, 2, 0.05 },
+	{ "lightingSsilvbRadius", "slider", "Better occlusion reach (yards)", "How far around each point the better post-pass occlusion looks for nearby surfaces. D3D11/Vulkan only.", 0.5, 16, 0.5 },
+	{ "lightingSsilvbThickness", "slider", "Better occlusion thickness (yards)", "How thick the better post-pass occlusion assumes objects are. Higher darkens more behind thin posts and leaves. D3D11/Vulkan only.", 0.1, 4, 0.1 },
+	{ "lightingSsaoRadius", "slider", "Post-pass occlusion radius (yards)", "How far around each point the post-pass occlusion looks for nearby surfaces. D3D11/Vulkan only.", 0.25, 5, 0.25 },
+	{ "lightingSsaoDistance", "slider", "Post-pass occlusion distance (yards)", "How far away the post-pass occlusion reaches before it fades out. D3D11/Vulkan only.", 25, 500, 25 },
+	{ "fogScattering", "slider", "Sun glow in distance fog", "Tints the distance fog toward the sun's colour around the sun, with volumetric fog off. 0 turns it off. D3D11/Vulkan only.", 0, 2, 0.05 },
+})
+-- benilla ports (docs/benilla-port/PLAN.md items 4, 5, 9): their own post passes, independent of shaderLighting.
+table.insert(PAGES, #PAGES, { name = "Modern Lighting", parent = "Advanced", title = "Modern Lighting",
+	{ "skyOcclusion", "check", "Sky shade under cover", "Ground and walls under trees, roofs, bridges and overhangs get less light from the sky. D3D11/Vulkan only." },
+	{ "skyOcclusionFloor", "slider", "Light kept under cover", "How much of the sky's light a spot fully under cover keeps. Lower is darker. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "probeGi", "check", "Bounced light (probe GI)", "Light bounced off the world around you replaces the flat ambient light: darker under cover, tinted by sunlit ground nearby. D3D11/Vulkan only." },
+	{ "probeGiStrength", "slider", "Bounced light strength", "How much of the flat ambient light the bounced light replaces. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "probeGiBudget", "slider", "Bounced light time per frame (ms)", "How long each frame may spend working out the bounced light. Higher settles faster after you move, lower costs less. D3D11/Vulkan only.", 0.25, 8, 0.25 },
+	{ "rainWetness", "check", "Rain soaks the world", "In rain, ground and walls open to the sky darken and flat ground gathers puddles. It takes about a minute and a half to soak and four minutes to dry. D3D11/Vulkan only." },
+	{ "rainReflections", "check", "Puddle reflections", "Wet ground and puddles reflect the world. Off they only reflect the fog colour. D3D11/Vulkan only." },
+	{ "rainWetnessForce", "slider", "Wetness (preview)", "Holds the ground this wet whatever the weather. Below 0 follows the weather. D3D11/Vulkan only.", -1, 1, 0.05 },
+})
+-- FSR 4 world upscaler (Vulkan/Upscale.cpp). Turning it off is live; turning it on builds the Vulkan device with the
+-- FSR 4 provider, so it waits for a restart.
+table.insert(PAGES, #PAGES, { name = "FSR", parent = "Advanced", title = "FSR Upscaling",
+	{ "fsrMode", "check", "FSR 4 upscaling", "Draws the world at a lower resolution and upscales it with AMD FSR 4. Turns multisampling off while it is on: FSR 4 smooths edges itself. Vulkan only.", on = "fsr4", off = "off", restart = true },
+	{ "fsrScale", "drop", "Quality", "Resolution the world is drawn at before FSR 4 upscales it. Lower is faster and softer. Vulkan only.",
+	  { { "0.77", "Ultra Quality (77%)" }, { "0.67", "Quality (67%)" }, { "0.59", "Balanced (59%)" }, { "0.5", "Performance (50%)" }, { "1", "Off (100%, no upscaling)" } } },
+	{ "fsr4Shaders", "drop", "FSR 4 version", "FSR 4 Fast uses faster shaders with nearly the same picture; FSR 4 is AMD's own shaders. Vulkan only.",
+	  { { "fast", "FSR 4 Fast" }, { "stock", "FSR 4" } }, restart = true },
+	{ "fsr4Version", "drop", "FSR 4 model", "Which FSR 4 model upscales the world. 4.1.1 is the newest; 4.0.2 is the first release. Vulkan only.",
+	  { { "4.1.1", "4.1.1" }, { "4.0.2", "4.0.2" } }, restart = true },
+})
+-- Shader lighting (WorldLighting.cpp, the lit shader pack): shaderLighting gates every light* feature.
+table.insert(PAGES, #PAGES, { name = "ShaderLighting", parent = "Advanced", title = "Shader Lighting",
+	{ "shaderLighting", "check", "Shader lighting", "Turns on the lighting below. Off, the world is lit the stock way whatever the settings below say. D3D11/Vulkan only." },
+	{ "lightPerPixel", "check", "Per-pixel lighting", "Models, buildings and terrain are lit per pixel instead of per vertex. D3D11/Vulkan only." },
+	{ "lightDynamic", "check", "Dynamic lights", "Torches, braziers, lanterns and the lamps inside buildings light the surfaces around them. D3D11/Vulkan only." },
+	{ "lightDynamicIntensity", "slider", "Dynamic light intensity", "Overall strength of the dynamic lights. D3D11/Vulkan only.", 0, 8, 0.1 },
+	{ "lightDynamicM2", "slider", "Torch and brazier lights", "Strength of the lights carried by models. D3D11/Vulkan only.", 0, 8, 0.1 },
+	{ "lightDynamicWmo", "slider", "Building lights", "Strength of the lamps placed in buildings. D3D11/Vulkan only.", 0, 8, 0.1 },
+	{ "lightDynamicDistance", "slider", "Dynamic light distance (yards)", "How far from the camera dynamic lights are looked for. D3D11/Vulkan only.", 20, 500, 10 },
+	{ "lightFlicker", "slider", "Flame flicker", "How much warm flame lights waver. 0 keeps them steady. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "lightWrap", "slider", "Light wrap", "How far dynamic light reaches round the edge of a surface. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "lightSpecular", "check", "Specular highlights", "Shiny buildings and models catch highlights from the sun and dynamic lights. D3D11/Vulkan only." },
+	{ "lightSpecularM2", "slider", "Model highlights", "Strength of the highlights on shiny models. D3D11/Vulkan only.", 0, 4, 0.05 },
+	{ "lightSpecularWmo", "slider", "Building highlights", "Strength of the highlights on shiny buildings. D3D11/Vulkan only.", 0, 4, 0.05 },
+	{ "lightSkyAmbient", "slider", "Sky ambient", "Shadowed sides take the sky's colour from above and the ground's from below. 0 turns it off. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "lightPbr", "check", "Physically based lighting", "Soft, realistic highlights from the sun and dynamic lights (with Specular highlights on), and metal on plate and mail armour and on metal parts. D3D11/Vulkan only." },
+	{ "lightRoughnessBias", "slider", "Surface roughness", "Makes every surface rougher (right) or shinier (left) under physically based lighting. D3D11/Vulkan only.", -0.5, 0.5, 0.05 },
+	{ "lightMetalPlate", "slider", "Plate armour metal", "How metallic worn plate armour looks under physically based lighting. 0 makes it dull. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "lightMetalMail", "slider", "Mail armour metal", "How metallic worn mail armour looks under physically based lighting. 0 makes it dull. D3D11/Vulkan only.", 0, 1, 0.05 },
+	{ "wmoNormalMaps", "check", "Building relief", "Stone, brick and wood on buildings catch the light with surface relief (normal maps). D3D11/Vulkan only." },
+	{ "wmoNormalStrength", "slider", "Building relief strength", "How deep the stone and wood relief looks. D3D11/Vulkan only.", 0, 2, 0.05 },
+})
+-- Terrain height blend (MapRenderChunk.cpp TerrainPomBind, Tools/VulkanShaders/bls/terrainpom.py).
+-- Independent of shaderLighting.
+table.insert(PAGES, #PAGES, { name = "Terrain", parent = "Advanced", title = "Terrain",
+	{ "terrainHeightBlend", "slider", "Height blending", "Ground textures blend by their height: sand and dirt settle between cobbles and stones instead of fading evenly. 0 is the stock blend. D3D11/Vulkan only.", 0, 1, 0.05 },
+})
+-- Sky and clouds (SkyClouds.cpp, DayNight.cpp).
+table.insert(PAGES, #PAGES, { name = "Sky", parent = "Advanced", title = "Sky & Clouds",
+	{ "skyClouds", "check", "Volumetric clouds", "Clouds with depth replace the flat stock cloud layer; with the sun crossing the sky it also uses the modern sky colours. All renderers." },
+	{ "skyCloudCover", "slider", "Cloud cover", "How cloudy fair weather is where the zone has no clouds of its own. All renderers.", 0, 1, 0.05 },
+	{ "skyCloudSpeed", "slider", "Cloud drift speed", "How fast the clouds drift and change shape. All renderers.", 0, 4, 0.1 },
+	{ "skyCloudsReflect", "check", "Clouds in water", "Water reflects the volumetric clouds instead of the stock cloud layer. All renderers." },
+	{ "gfxSunArcSkybox", "drop", "Zone sky models", "While the sun crosses the sky, which of the zone's sky models are kept. All renderers.",
+	  { { "0", "None" }, { "1", "All (stock)" }, { "2", "Only auroras and overlays" } } },
+})
+
+local function Num(v)
+	return tonumber(v) or 0
+end
+
+local function Fmt(v)
+	local s = string.format("%.3f", v):gsub("0+$", ""):gsub("%.$", "")
+	if s == "-0" then s = "0" end
+	return s
+end
+
+local function Same(a, b)
+	if a == nil or b == nil then return a == b end
+	if tonumber(a) and tonumber(b) then return math.abs(tonumber(a) - tonumber(b)) < 0.0005 end
+	return string.lower(a) == string.lower(b)
+end
+
+local function Tooltip(self)
+	local c = self.control or self
+	GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+	GameTooltip:SetText(c.label, 1, 1, 1)
+	GameTooltip:AddLine(c.tip, nil, nil, nil, 1)
+	if c.unavailable then
+		GameTooltip:AddLine("Not available with the current renderer.", 1, 0.2, 0.2, 1)
+	elseif c.restart then
+		GameTooltip:AddLine(RESTART, 1, 0.2, 0.2, 1)
+	end
+	GameTooltip:Show()
+end
+
+local function HideTooltip()
+	GameTooltip:Hide()
+end
+
+local function DropText(c, value)
+	for _, o in ipairs(c.options) do
+		if Same(o[1], value) then return o[2] end
+	end
+	return value or ""
+end
+
+-- Shows a value on the control without applying it.
+local function Show(c, value)
+	c.cur = value
+	if c.kind == "check" then
+		c:SetChecked(value ~= nil and (c.on and Same(value, c.on) or not c.on and Num(value) ~= 0))
+	elseif c.kind == "slider" then
+		c.panel.refreshing = true
+		c:SetValue(Num(value))
+		c.panel.refreshing = nil
+		_G[c:GetName() .. "Text"]:SetText(c.label .. ": " .. (value and (c.pct and Fmt(Num(value) * 100) .. "%" or Fmt(Num(value))) or "-"))
+	else
+		UIDropDownMenu_SetText(c, DropText(c, value))
+	end
+end
+
+-- A change from the user: live controls apply now, restart controls wait for Okay.
+local function Change(c, value)
+	if c.unavailable or Same(c.cur, value) then return end
+	Show(c, value)
+	if not c.restart then
+		SetCVar(c.cvar, value)
+	end
+	if VideoOptionsFrameApply then VideoOptionsFrameApply:Enable() end
+end
+
+local function Okay(panel)
+	for _, c in ipairs(panel.controls) do
+		if not c.unavailable and not Same(c.cur, c.orig) then
+			SetCVar(c.cvar, c.cur)
+			if c.restart then VideoOptionsFrame.gameRestart = true end
+			c.orig = c.cur
+		end
+	end
+end
+
+local function Cancel(panel)
+	for _, c in ipairs(panel.controls) do
+		if not c.unavailable and not Same(c.cur, c.orig) then
+			if not c.restart then SetCVar(c.cvar, c.orig) end
+			Show(c, c.orig)
+		end
+	end
+end
+
+local function Default(panel)
+	for _, c in ipairs(panel.controls) do
+		if GetCVar(c.cvar) ~= nil then
+			local d = GetCVarDefault(c.cvar)
+			if not Same(GetCVar(c.cvar), d) then
+				SetCVar(c.cvar, d)
+				if c.restart then VideoOptionsFrame.gameRestart = true end
+			end
+		end
+	end
+end
+
+local function Refresh(panel)
+	for _, c in ipairs(panel.controls) do
+		local v = GetCVar(c.cvar)   -- nil until the backend that owns it registers it
+		c.unavailable = v == nil
+		c:SetAlpha(c.unavailable and 0.4 or 1)
+		c.orig = v
+		Show(c, v)
+	end
+end
+
+local function DropInit(self)
+	local c = self.control or self
+	for _, o in ipairs(c.options) do
+		local info = UIDropDownMenu_CreateInfo()
+		info.text = o[2]
+		info.value = o[1]
+		info.checked = Same(c.cur, o[1])
+		info.func = function(b) Change(c, b.value) end
+		UIDropDownMenu_AddButton(info)
+	end
+end
+
+local count = 0
+local function Build(page)
+	count = count + 1
+	local name = "VideoOptionsAdvancedPanel" .. count
+	local panel = CreateFrame("Frame", name, VideoOptionsFramePanelContainer)
+	panel.name = page.name
+	panel.parent = page.parent
+	panel.okay, panel.cancel, panel.default, panel.refresh = Okay, Cancel, Default, Refresh
+	panel.controls = {}
+	panel:Hide()
+
+	local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", 16, -16)
+	title:SetText(page.title)
+	local sub = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+	sub:SetText(page.text or "")
+
+	local scroll = CreateFrame("ScrollFrame", name .. "Scroll", panel, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 8, -52)
+	scroll:SetPoint("BOTTOMRIGHT", -30, 8)
+	local content = CreateFrame("Frame", name .. "Content", scroll)
+	content:SetWidth(360)
+	scroll:SetScrollChild(content)
+
+	local y = -6
+	for i, s in ipairs(page) do
+		local cname = name .. "Control" .. i
+		local c
+		if s[2] == "check" then
+			c = CreateFrame("CheckButton", cname, content, "OptionsCheckButtonTemplate")
+			c:SetPoint("TOPLEFT", 8, y)
+			_G[cname .. "Text"]:SetText(s[3])
+			c:SetScript("OnClick", function(self)
+				PlaySound(self:GetChecked() and "igMainMenuOptionCheckBoxOn" or "igMainMenuOptionCheckBoxOff")
+				Change(self, self:GetChecked() and (s.on or "1") or (s.off or "0"))
+				if self.unavailable then Show(self, self.cur) end
+			end)
+			y = y - 28
+		elseif s[2] == "slider" then
+			c = CreateFrame("Slider", cname, content, "OptionsSliderTemplate")
+			c:SetPoint("TOPLEFT", 16, y - 16)
+			c:SetWidth(300)
+			c:SetMinMaxValues(s[5], s[6])
+			c:SetValueStep(s[7])
+			c.step = s[7]
+			_G[cname .. "Low"]:SetText(s.pct and Fmt(s[5] * 100) .. "%" or Fmt(s[5]))
+			_G[cname .. "High"]:SetText(s.pct and Fmt(s[6] * 100) .. "%" or Fmt(s[6]))
+			c:SetScript("OnValueChanged", function(self, value)
+				if self.panel.refreshing then return end
+				value = math.floor((value - s[5]) / self.step + 0.5) * self.step + s[5]
+				Change(self, Fmt(value))
+				if self.unavailable then Show(self, self.cur) end
+			end)
+			y = y - 50
+		else
+			local label = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+			label:SetPoint("TOPLEFT", 16, y - 4)
+			label:SetText(s[3])
+			c = CreateFrame("Frame", cname, content, "UIDropDownMenuTemplate")
+			c:SetPoint("TOPLEFT", 150, y)
+			c.options = s[5]
+			UIDropDownMenu_SetWidth(c, 160)
+			UIDropDownMenu_Initialize(c, DropInit)
+			c:EnableMouse(true)
+			local button = _G[cname .. "Button"]
+			button.control = c
+			button:HookScript("OnEnter", Tooltip)
+			button:HookScript("OnLeave", HideTooltip)
+			y = y - 34
+		end
+		c.cvar, c.kind, c.label, c.tip, c.restart, c.panel = s[1], s[2], s[3], s[4], s.restart, panel
+		c.on, c.pct = s.on, s.pct
+		c:SetScript("OnEnter", Tooltip)
+		c:SetScript("OnLeave", HideTooltip)
+		tinsert(panel.controls, c)
+	end
+	content:SetHeight(-y + 8)
+
+	OptionsFrame_AddCategory(VideoOptionsFrame, panel)
+end
+
+for _, page in ipairs(PAGES) do
+	Build(page)
+end

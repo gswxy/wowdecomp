@@ -454,6 +454,20 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
         break;
       }
       case OP_CLOSURE: {
+#if LUA_OUR_BUGFIXES
+        /* LUA_OUR_BUGFIXES 5.1.1-2: wrong error message in some cases
+           involving closures (do not 'execute' the pseudo-instructions) */
+        int nup, j;
+        check(b < pt->sizep);
+        nup = pt->p[b]->nups;
+        check(pc + nup < pt->sizecode);
+        for (j = 1; j <= nup; j++) {
+          OpCode op1 = GET_OPCODE(pt->code[pc + j]);
+          check(op1 == OP_GETUPVAL || op1 == OP_MOVE);
+        }
+        if (reg != NO_REG)  /* tracing? */
+          pc += nup;  /* do not 'execute' these pseudo-instructions */
+#else
         int nup;
         check(b < pt->sizep);
         nup = pt->p[b]->nups;
@@ -462,6 +476,7 @@ static Instruction symbexec (const Proto *pt, int lastpc, int reg) {
           OpCode op1 = GET_OPCODE(pt->code[pc+nup]);
           check(op1 == OP_GETUPVAL || op1 == OP_MOVE);
         }
+#endif
         break;
       }
       case OP_VARARG: {

@@ -1,6 +1,12 @@
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 #include "Engine/Source/Model2/CM2SceneRender.h"
+#include "Engine/Source/Gx/GxLighting.h"
+#include "Engine/Source/ConsoleBase/ConsoleVar.h"
+#include "Engine/Source/ConsoleBase/Types.h"
+#include "Engine/Source/Gx/GxParticleQuads.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -21,10 +27,153 @@
 #include "Engine/Source/Tempest/CImVector.h"
 
 // STATIC: 0x00A45390
-const uint32_t s_fogModes[7] = { 1, 1, 1, 2, 2, 3, 4 };
+const uint32_t s_fogModes[M2BLEND_COUNT] = { 1, 1, 1, 2, 2, 3, 4 };
 
 // STATIC: 0x00AF58A8
 static C44Matrix s_identity;
+
+// VFOG: not in 12340. Hooks for the volumetric fog (WoW/Source/WorldClient/VolumetricFog.cpp sets them in
+// RegisterCVars; Engine does not depend on WoW). BatchFog rewrites a late batch's fog with the fitted linear fog
+// (in: the stock values, out: the fog to draw; returns false to keep stock). FogParticles is true while late
+// particles should take the fog like any late model.
+// DOODADINST: not in 12340. Doodads drawn through DrawBatchDoodad and the draws they took (console doodadInstancingStats).
+uint32_t g_m2DoodadInstances = 0;
+uint32_t g_m2DoodadDraws = 0;
+
+bool (*g_vfogM2BatchFog)(const float modelPos[3], float& start, float& end, float& density, float color[3]) = nullptr;
+bool (*g_vfogM2FogParticles)() = nullptr;
+
+// Not stock: particle vertices of the current top level Draw, built ahead on the Model2 workers. s_prebuiltAt maps a
+// position in Draw's index list to its s_prebuilt slot (-1: built at draw time as stock).
+#define PARTICLE_MIN_EMITTERS 8
+#define PARTICLE_MIN_PARTICLES 2000
+static std::vector<CParticleEmitter2::Prebuilt> s_prebuilt;
+static std::vector<int32_t> s_prebuiltAt;
+static std::vector<uint8_t> s_prebuiltData;
+static volatile LONG s_prebuiltNext;
+static uint32_t s_drawDepth;
+
+// GPUPARTICLES: CVar particleGpuQuads (default 1): M2 particle quads go to the Vulkan backend as one GxParticleQuad
+// record each and are expanded on the GPU; 0 builds the four vertices per quad on the CPU (stock). Other backends
+// always take the CPU path.
+static int32_t GpuQuadsOn() {
+    static CVar* cvar;
+
+    if (!cvar) {
+        cvar = CVar::Register("particleGpuQuads", "Vulkan: 1 expands M2 particle quads on the GPU, 0 builds them on the CPU", 0, "1", nullptr, CATEGORY_GRAPHICS, false, nullptr, false);
+    }
+
+    return cvar->m_intValue && GxVkParticleQuadsReady();
+}
+
+// GPUPARTICLES: whether an emitter's quads may go to the GPU: a top level Draw, no model or projected particles, and
+// no more live particles than the stock 0x4000 vertex cap draws (over it the sort queue keeps the rest; stock path)
+static uint8_t GpuQuadsFor(CParticleEmitter2* emitter) {
+    uint32_t live = emitter->m_liveList.Count();
+    return s_drawDepth == 1 && !emitter->m_params.m_particleType && !(emitter->m_flags & 0x40000) && emitter->m_vertsPerParticle && live <= 0x4000 / emitter->m_vertsPerParticle && GpuQuadsOn();
+}
+
+static void PrebuildThread(void*) {
+    while (true) {
+        uint32_t i = static_cast<uint32_t>(InterlockedIncrement(&s_prebuiltNext) - 1);
+
+        if (i >= s_prebuilt.size()) {
+            return;
+        }
+
+        s_prebuilt[i].m_emitter->Prebuild(s_prebuilt[i]);
+    }
+}
+
+// Not stock: gathers the plain (non model) particle emitters of a Draw and builds their vertices on the worker pool
+// when there are enough of them. The view is the one DrawParticle/DrawBatchedParticle set (SetupBillboardView);
+// RenderParticles checks it, the frame of reference (DrawBatchedParticle passes the first emitter's to the whole
+// batch) and the vertex count before using a slot. Only Render's vertex build moves; locks and draws stay here.
+static void PrebuildParticles(CM2SceneRender* render, M2Element* elements, uint32_t* indices, uint32_t count) {
+    s_prebuilt.clear();
+    s_prebuiltAt.assign(count, -1);
+
+    if (!(render->m_cache->m_flags & 4) || !render->m_cache->m_threadCount) {
+        return;
+    }
+
+    uint32_t particles = 0;
+    size_t bytes = 0;
+    static std::vector<size_t> offsets;   // static: reused every Draw instead of allocated
+    offsets.clear();
+
+    for (uint32_t i = 0; i < count; i++) {
+        M2Element* element = &elements[indices[i]];
+
+        if (element->m_type != 4) {
+            continue;
+        }
+
+        CParticleEmitter2* emitter = element->m_emitter;
+        uint32_t live = emitter->m_liveList.Count();
+
+        // Over the 0x4000 vertex cap stock leaves sorted particles in s_pq; keep those on the stock path
+        if (emitter->m_params.m_particleType || !live || live > 0x4000 / emitter->m_vertsPerParticle) {
+            continue;
+        }
+
+        CParticleEmitter2::Prebuilt prebuilt;
+        prebuilt.m_emitter = emitter;
+        prebuilt.m_frameOfReference = static_cast<const C44Matrix*>(element->m_model->m_frameOfReference);
+        prebuilt.m_data = nullptr;
+        prebuilt.m_capacity = live * emitter->m_vertsPerParticle;
+        prebuilt.m_vertexCount = 0;
+        prebuilt.m_quads = GpuQuadsFor(emitter);   // GPUPARTICLES: quad records
+
+        s_prebuiltAt[i] = static_cast<int32_t>(s_prebuilt.size());
+        s_prebuilt.push_back(prebuilt);
+        offsets.push_back(bytes);
+        particles += live;
+        bytes += prebuilt.m_quads ? prebuilt.m_capacity / 4 * sizeof(GxParticleQuad) : prebuilt.m_capacity * GxVertexSize((emitter->m_params.m_materialFlags & 1) ? GxVBF_PNCT : GxVBF_PCT);
+    }
+
+    // Two workers must never build the same emitter, so an emitter listed twice sends the whole Draw down the stock path
+    static std::vector<CParticleEmitter2*> emitters;
+    emitters.clear();
+    bool few = s_prebuilt.size() < 2 || (s_prebuilt.size() < PARTICLE_MIN_EMITTERS && particles < PARTICLE_MIN_PARTICLES);
+
+    if (!few) {
+        for (const CParticleEmitter2::Prebuilt& prebuilt : s_prebuilt) {
+            emitters.push_back(prebuilt.m_emitter);
+        }
+
+        std::sort(emitters.begin(), emitters.end());
+    }
+
+    if (few || std::adjacent_find(emitters.begin(), emitters.end()) != emitters.end()) {
+        s_prebuilt.clear();
+        s_prebuiltAt.assign(count, -1);
+        return;
+    }
+
+    if (s_prebuiltData.size() < bytes) {
+        s_prebuiltData.resize(bytes);
+    }
+
+    for (size_t i = 0; i < s_prebuilt.size(); i++) {
+        s_prebuilt[i].m_data = s_prebuiltData.data() + offsets[i];
+    }
+
+    CParticleEmitter2::s_prebuiltView = render->m_scene->m_view;
+    CParticleEmitter2::s_prebuiltView.Translate(*reinterpret_cast<const C3Vector*>(&render->m_scene->m_viewInv.d0));
+
+    s_prebuiltNext = 0;
+    render->m_cache->RunThreads(&PrebuildThread, nullptr, static_cast<uint32_t>(s_prebuilt.size() - 1));
+}
+
+// Not stock: the prebuilt slot for a position in the current Draw's index list, if any
+static const CParticleEmitter2::Prebuilt* PrebuiltAt(uint32_t position) {
+    if (s_drawDepth != 1 || position >= s_prebuiltAt.size() || s_prebuiltAt[position] < 0) {
+        return nullptr;
+    }
+
+    return &s_prebuilt[s_prebuiltAt[position]];
+}
 
 // VERIFY: 6a3520ef manual
 // OFFSET: 0x0081F330
@@ -53,7 +202,7 @@ CM2SceneRender::CM2SceneRender(CM2Scene* scene) {
     this->m_prevMaterial = nullptr;
     this->m_curMaterial = nullptr;
     this->m_defaultMaterial.m_flags = 0;
-    this->m_defaultMaterial.m_blendMode = 0;
+    this->m_defaultMaterial.m_blendMode = M2BLEND_OPAQUE;
     this->m_particleEffect = CShaderEffectManager::GetEffect("Particle");
     this->m_particleUnlitEffect = CShaderEffectManager::GetEffect("Particle_Unlit");
     this->m_projectedModModEffect = CShaderEffectManager::GetEffect("Projected_ModMod");
@@ -201,7 +350,7 @@ int32_t CM2SceneRender::LightingColorsMatch(const CM2Lighting* a, const CM2Light
 void CM2SceneRender::SetupLighting() {
     M2Material* material = this->m_curMaterial;
     int32_t localLighting = !(material->m_flags & 1) && s_localLighting[material->m_blendMode];
-    uint32_t shadow = this->m_curElement->m_shadowValue;
+    uint32_t shadow = CShadowCache::ReceiverValue(this->m_curElement->m_shadowValue);   // shadowUnified
 
     this->m_curLocalLighting = localLighting;
     CShaderEffect::SetLocalLighting(this->m_curLighting, localLighting, nullptr);
@@ -219,10 +368,25 @@ void CM2SceneRender::SetupLighting() {
 
     if (fogMode) {
         uint32_t color = 0;
+        float fogStart = this->m_curLighting->m_fogStart;
+        float fogEnd = this->m_curLighting->m_fogEnd;
+        float fogDensity = this->m_curLighting->m_fogDensity;
+        C3Vector fogColor = this->m_curLighting->m_fogColor;
+
+        // VFOG: not in 12340. After the fog composite, a late batch takes the fitted fog; only the lighting colour
+        // (mode 1) follows it, additive/modulate keep black/white/grey (coa-vfog transparent_fog.cpp).
+        if (g_vfogM2BatchFog && this->m_curModel) {
+            const C44Matrix& world = this->m_curModel->m_worldTransform;
+            float position[3] = { world.d0, world.d1, world.d2 };
+            float fitted[3] = { fogColor.x, fogColor.y, fogColor.z };
+
+            if (g_vfogM2BatchFog(position, fogStart, fogEnd, fogDensity, fitted) && fogMode == 1) {
+                fogColor = C3Vector(fitted[0], fitted[1], fitted[2]);
+            }
+        }
 
         switch (fogMode) {
             case 1: {
-                const C3Vector& fogColor = this->m_curLighting->m_fogColor;
                 uint8_t b = fogColor.z > 0.0f ? static_cast<uint8_t>(fogColor.z < 1.0f ? fogColor.z * 255.0f + 0.5f : 255.0f) : 0;
                 uint8_t g = fogColor.y > 0.0f ? static_cast<uint8_t>(1.0f > fogColor.y ? fogColor.y * 255.0f + 0.5f : 255.0f) : 0;
                 uint8_t r = 0.0f < fogColor.x ? static_cast<uint8_t>(1.0f > fogColor.x ? 255.0f * fogColor.x + 0.5f : 255.0f) : 0;
@@ -242,7 +406,7 @@ void CM2SceneRender::SetupLighting() {
                 break;
         }
 
-        CShaderEffect::SetFogParams(this->m_curLighting->m_fogStart, this->m_curLighting->m_fogEnd, this->m_curLighting->m_fogDensity, *reinterpret_cast<CImVector*>(&color));
+        CShaderEffect::SetFogParams(fogStart, fogEnd, fogDensity, *reinterpret_cast<CImVector*>(&color));
         CShaderEffect::SetFogEnabled(1);
     } else {
         CShaderEffect::SetFogEnabled(0);
@@ -284,7 +448,7 @@ void CM2SceneRender::SetupMaterial() {
         int32_t blend;
 
         if (this->m_curElement->m_flags & 1) {
-            blend = this->m_curMaterial->m_blendMode == 1;
+            blend = this->m_curMaterial->m_blendMode == M2BLEND_ALPHA_KEY;
         } else {
             blend = s_blendModes[this->m_pass][this->m_curMaterial->m_blendMode];
         }
@@ -294,9 +458,9 @@ void CM2SceneRender::SetupMaterial() {
 
         float alphaRef;
 
-        if (!this->m_curMaterial->m_blendMode) {
+        if (this->m_curMaterial->m_blendMode == M2BLEND_OPAQUE) {
             alphaRef = 0.0f;
-        } else if (this->m_curMaterial->m_blendMode == 1) {
+        } else if (this->m_curMaterial->m_blendMode == M2BLEND_ALPHA_KEY) {
             alphaRef = this->m_curElement->m_alpha * 0.87843138f;
         } else {
             alphaRef = 0.0039215689f;
@@ -364,10 +528,10 @@ void CM2SceneRender::SetupMaterial() {
 
     C3Vector diffuse = this->m_curModel->m_diffuseColor;
     C3Vector emissive = this->m_curModel->m_emissiveColor;
-    uint16_t blend = this->m_curMaterial->m_blendMode;
+    M2BLEND blend = this->m_curMaterial->m_blendMode;
 
-    if (blend == 5 || blend == 6) {
-        if (blend == 6) {
+    if (blend == M2BLEND_MOD || blend == M2BLEND_MOD2X) {
+        if (blend == M2BLEND_MOD2X) {
             scale = 0.5f;
         }
 
@@ -421,6 +585,38 @@ void CM2SceneRender::DrawBatch() {
     this->m_curSkinSection = element->m_skinSection;
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
     element->m_effect->SetCurrent();
+
+    // CUSTOM (PBR-lite, GxLighting.h): the batch's material category from its first texture's type: skin, hair and
+    // creature skins medium; item textures (blade, handle) and the models attached to another metal on grey texels.
+    // ARMORMETAL: an attached armour piece takes its item's category (CCharacterComponent::AddLink), a character's own
+    // object skin (the cape) is cloth. ARMORMASK: the composite body skin and attached mail / plate read their per-texel
+    // metal mask (CM2Model::m_pbrMask) on kArmorMaskStage, only where the shader lighting runs (not D3D9)
+    g_gxLightingMaterial = GxLightingMaterial_Generic;
+    CTexture* mask = nullptr;
+
+    if (this->m_curBatch->m_textureCount) {
+        uint32_t combo = this->m_data->m_textureCombos[this->m_curBatch->m_textureComboIndex];
+        uint32_t type = combo < this->m_data->m_textures.m_count ? this->m_data->m_textures[combo].m_type : 0;
+        uint32_t armor = this->m_curModel->m_pbrArmor & 7u;
+        CM2Model* parent = this->m_curModel->m_attachParent;
+        CTexture* own = g_gxLighting ? this->m_curModel->m_pbrMask : nullptr;
+
+        if (type == 1) {
+            mask = own;
+            g_gxLightingMaterial = mask ? GxLightingMaterial_Masked : GxLightingMaterial_Skin;
+        } else if (type == 2 && !parent) {
+            g_gxLightingMaterial = GxLightingMaterial_Cloth;
+        } else if (type == 2 || type == 3 || type == 4 || (type == 0 && parent)) {
+            mask = armor >= GxLightingMaterial_Mail ? own : nullptr;
+            g_gxLightingMaterial = mask ? GxLightingMaterial_Masked : (armor ? armor : GxLightingMaterial_Item);
+        } else if ((type >= 6 && type <= 8) || (type >= 10 && type <= 13)) {
+            g_gxLightingMaterial = GxLightingMaterial_Skin;
+        }
+    }
+
+    if (mask) {
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + kArmorMaskStage), TextureGetGxTex(mask, 0, nullptr));
+    }
 
     this->SetupLighting();
     this->SetupMaterial();
@@ -489,6 +685,10 @@ void CM2SceneRender::DrawBatch() {
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
         g_theGxDevicePtr->Draw(&batch, 1);
     }
+
+    if (mask) {   // CUSTOM (ARMORMASK): never leave the mask bound (it can go away with its model)
+        g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + kArmorMaskStage), nullptr);
+    }
 }
 
 // VERIFY: eebe62d2 manual
@@ -499,6 +699,7 @@ void CM2SceneRender::DrawBatchProj() {
     M2Element* element = this->m_curElement;
     this->m_curBatch = element->m_batch;
     this->m_curSkinSection = element->m_skinSection;
+    g_gxLightingMaterial = GxLightingMaterial_Generic;   // CUSTOM (PBR-lite): not the last DrawBatch's category
 
     CAaBox box;
     box.b.x = 0.0f;
@@ -515,8 +716,30 @@ void CM2SceneRender::DrawBatchProj() {
         return;
     }
 
-    box.b.z = box.b.z - 2.0f;
-    box.t.z = box.t.z + 2.0f;
+    // BENILLA: a ground spell quad (CM2Scene::IsGroundDecalBatch): either one CM2Scene redirected here
+    // (no projected flag) or a stock flag-4 one (Consecration, Flamestrike, Blizzard, Death and Decay all
+    // ship flag 4, whose stock slab is only +-2 yards, so hills clip them). It always draws (not only
+    // under projectedTextures), keeps its texture animation, and its slab reaches as far as the quad is
+    // wide (benilla's fit_frame). Half the width is enough: a 45 degree slope from the centre reaches the
+    // edge at extent/2, and the full width painted floors up to ~13 yd above or below the spell.
+    int32_t groundDecal = !(this->m_curBatch->m_flags & 4)
+        || (CM2Scene::s_groundDecals && CM2Scene::IsGroundDecalBatch(this->m_curModel, this->m_curBatch, this->m_curSkinSection));
+    float pad = 2.0f;
+
+    if (groundDecal) {
+        float extent = box.t.x - box.b.x > box.t.y - box.b.y ? box.t.x - box.b.x : box.t.y - box.b.y;
+        extent *= 0.5f;
+        pad = extent > pad ? extent : pad;
+
+        uint32_t transform = this->m_data->m_textureTransformCombos[this->m_curBatch->m_textureTransformComboIndex];
+
+        if (transform < this->m_data->m_textureTransforms.m_count) {
+            texMatrix = texMatrix * this->m_curModel->m_textureMatrices[transform];
+        }
+    }
+
+    box.b.z = box.b.z - pad;
+    box.t.z = box.t.z + pad;
 
     C44Matrix depthMatrix;
     depthMatrix.a0 = 0.0f;
@@ -572,15 +795,21 @@ void CM2SceneRender::DrawBatchProj() {
 
     effect->SetCurrent();
     this->SetupBillboardView(*reinterpret_cast<const C3Vector*>(&this->m_scene->m_viewInv.d0));
-    CShaderEffect::SetTexMtx_TexGen(GxTexGen_EyeLinear, texMatrix, 0);
-    CShaderEffect::SetTexMtx_TexGen(GxTexGen_EyeLinear, depthMatrix, 1);
-    this->m_scene->m_projectTextureCallback(box, imColor, this->m_curLocalLighting, this->m_scene->m_projectTextureParam, (this->m_curModel->m_fFlags >> 2) & 1);
+    CShaderEffect::SetTexMtx_TexGen(GxTexGen_World, texMatrix, 0);
+    CShaderEffect::SetTexMtx_TexGen(GxTexGen_World, depthMatrix, 1);
+    // BENILLA: 2 marks a quad rerouted from plain geometry; when it hits nothing (over water) draw it flat as stock did
+    int32_t rerouted = !(this->m_curBatch->m_flags & 4);
+    int32_t hit = this->m_scene->m_projectTextureCallback(box, imColor, this->m_curLocalLighting, this->m_scene->m_projectTextureParam, ((this->m_curModel->m_fFlags >> 2) & 1) | groundDecal | (rerouted ? 2 : 0));
     g_theGxDevicePtr->XformSetView(s_identity);
 
     CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
     world.m_dirty = 1;
     world.m_flags[world.m_level] &= ~CGxMatrixStack::F_Identity;
     world.m_mtx[world.m_level] = s_identity;
+
+    if (rerouted && !hit) {
+        this->DrawBatch();
+    }
 }
 
 // VERIFY: 2ff5e9df manual
@@ -594,15 +823,23 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
     this->m_curMaterial = &this->m_data->m_materials[this->m_curBatch->m_materialIndex];
     element->m_effect->SetCurrent();
 
+    g_gxLightingMaterial = GxLightingMaterial_Generic;   // CUSTOM (PBR-lite): a doodad
+
     this->SetupLighting();
     this->SetupMaterial();
     this->SetupTextures();
 
     uint32_t total = this->m_curElement->m_count;
     uint32_t instances = this->m_curShared->AllocInstances(total);
+    g_m2DoodadInstances += total;   // DOODADINST: doodadInstancingStats
 
     if (instances > total) {
         instances = total;
+    }
+
+    // Not stock: c31..c255 hold 75 bones; an over-sized skin (converted retail models) would write past them.
+    if (this->m_curSkinSection->m_boneCount * instances > 75) {
+        instances = std::max(1u, 75u / this->m_curSkinSection->m_boneCount);
     }
 
     this->m_curShared->SetIndices();
@@ -653,6 +890,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
             batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
             g_theGxDevicePtr->Draw(&batch, 1);
+            g_m2DoodadDraws++;
         }
     } else {
         for (uint32_t done = 0; done < total; done += instances) {
@@ -817,16 +1055,29 @@ uint32_t CM2SceneRender::DrawBatchedParticle(uint32_t index, M2Element* elements
     C44Matrix view = viewStack.m_mtx[viewStack.m_level];
     this->SetupBillboardView(*reinterpret_cast<const C3Vector*>(&this->m_scene->m_viewInv.d0));
 
-    CGxBuf* buf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, vertexSize, vertices);
+    // GPUPARTICLES: the whole batch writes quad records when every emitter of it may; else the stock vertices
+    uint8_t quads = 1;
+
+    for (uint32_t i = 0; i < batched; i++) {
+        quads &= GpuQuadsFor(elements[first[i]].m_emitter);
+    }
+
+    CParticleEmitter2::s_quads = quads;
+    const uint32_t itemSize = quads ? sizeof(GxParticleQuad) : vertexSize;
+    const uint32_t verticesPerItem = quads ? 4 : 1;
+
+    CGxBuf* buf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, itemSize, vertices / verticesPerItem);
     uint8_t* data = reinterpret_cast<uint8_t*>(g_theGxDevicePtr->BufLock(buf));
     uint32_t renderedVertices = 0;
     uint32_t renderedIndices = 0;
 
     for (uint32_t i = 0; i < batched; i++) {
         emitter = elements[first[i]].m_emitter;
+        CParticleEmitter2::s_prebuilt = PrebuiltAt(index + i);
         emitter->Render(static_cast<const C44Matrix*>(this->m_curModel->m_frameOfReference), data, i == 0);
+        CParticleEmitter2::s_prebuilt = nullptr;
         renderedVertices += emitter->m_renderedParticles * emitter->m_vertsPerParticle;
-        data += vertexSize * emitter->m_renderedParticles * emitter->m_vertsPerParticle;
+        data += itemSize * (emitter->m_renderedParticles * emitter->m_vertsPerParticle / verticesPerItem);
         renderedIndices += emitter->m_renderedParticles * emitter->m_indicesPerParticle;
     }
 
@@ -836,6 +1087,8 @@ uint32_t CM2SceneRender::DrawBatchedParticle(uint32_t index, M2Element* elements
     if (renderedVertices && renderedIndices) {
         this->RenderBatchedParticle(emitter, buf, format, renderedVertices, renderedIndices);
     }
+
+    CParticleEmitter2::s_quads = 0;
 
     g_theGxDevicePtr->XformSetView(view);
 
@@ -847,6 +1100,13 @@ uint32_t CM2SceneRender::DrawBatchedParticle(uint32_t index, M2Element* elements
 uint32_t CM2SceneRender::DrawParticle(uint32_t index, M2Element* elements, uint32_t* indices, uint32_t count) {
     CParticleEmitter2* emitter = this->m_curElement->m_emitter;
     uint32_t flags = emitter->m_params.m_materialFlags;
+
+    // VFOG: not in 12340. While the fog is on the frame, opaque/keyed/alpha emitters draw as if fog flag 2 were set,
+    // so they take the fitted fog (wxl-vfog 0.6.12); additive and modulating emitters stay as authored.
+    if (g_vfogM2FogParticles && emitter->m_params.m_materialBlend <= 2 && g_vfogM2FogParticles()) {
+        flags |= 2;
+    }
+
     M2Material material;
     material.m_flags = 4;
 
@@ -862,10 +1122,11 @@ uint32_t CM2SceneRender::DrawParticle(uint32_t index, M2Element* elements, uint3
         material.m_flags |= 0x10;
     }
 
-    material.m_blendMode = static_cast<uint16_t>(ParticleBlendToM2Blend(emitter->m_params.m_materialBlend));
+    material.m_blendMode = static_cast<M2BLEND>(ParticleBlendToM2Blend(emitter->m_params.m_materialBlend));
 
     this->m_curMaterial = &material;
     this->m_prevMaterial = nullptr;
+    CParticleEmitter2::s_soft = material.m_blendMode >= 2;   // SOFTPARTICLES: opaque and alpha-keyed stay hard
 
     if (this->m_cache->m_flags & 0x80) {
         return this->DrawBatchedParticle(index, elements, indices, count);
@@ -886,7 +1147,11 @@ uint32_t CM2SceneRender::DrawParticle(uint32_t index, M2Element* elements, uint3
     this->SetupLighting();
     this->SetupMaterial();
     this->SetupBillboardView(*reinterpret_cast<const C3Vector*>(&this->m_scene->m_viewInv.d0));
+    CParticleEmitter2::s_prebuilt = PrebuiltAt(index);
+    CParticleEmitter2::s_quads = GpuQuadsFor(emitter);   // GPUPARTICLES: quad records
     emitter->Render(static_cast<const C44Matrix*>(this->m_curModel->m_frameOfReference), nullptr, 1);
+    CParticleEmitter2::s_quads = 0;
+    CParticleEmitter2::s_prebuilt = nullptr;
     g_theGxDevicePtr->XformSetView(s_identity);
 
     CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
@@ -943,7 +1208,7 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
     world.m_flags[world.m_level] &= ~CGxMatrixStack::F_Identity;
     world.m_mtx[world.m_level] = s_identity;
 
-    GxRsSet(GxRs_DepthFunc, 0);
+    GxRsSet(GxRs_DepthFunc, GxCmp_LEqual);
     GxRsSet(GxRs_PolygonOffset, 0);
     GxRsSet(GxRs_Lighting, 0);
     GxRsSet(GxRs_Fog, 0);
@@ -966,6 +1231,11 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
     }
 
     this->m_pass = pass;
+
+    // Not stock: a Draw nested in a draw callback builds its particles as stock and leaves the outer slots alone
+    if (++s_drawDepth == 1) {
+        PrebuildParticles(this, elements, indices, count);
+    }
 
     for (uint32_t i = 0; i < count; i++) {
         M2Element* element = &elements[indices[i]];
@@ -1031,6 +1301,11 @@ void CM2SceneRender::Draw(M2PASS pass, M2Element* elements, uint32_t* indices, u
         }
 
         stack.m_dirty = 1;
+    }
+
+    if (--s_drawDepth == 0) {
+        s_prebuilt.clear();
+        s_prebuiltAt.clear();
     }
 
     g_theGxDevicePtr->XformSetView(view);

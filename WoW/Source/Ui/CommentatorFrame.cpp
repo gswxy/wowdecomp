@@ -10,6 +10,7 @@
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "WoW/Source/Object/ObjectClient/Unit_C.h"
 #include "WoW/Source/UIUtil/Camera.h"
+#include "WoW/Source/UIUtil/Types.h"
 #include "WoW/Source/Ui/Types.h"
 #include "WoW/Source/WorldClient/World.h"
 
@@ -19,7 +20,7 @@ CGCommentator CGCommentator::s_Commentator;
 // VERIFY: 892bcb14 manual
 // OFFSET: 0x0056B5C0
 void CGCommentator::UpdateCameraVelocity(uint32_t controlFlags, int32_t canControl) {
-    if (!ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__) || !CGWorldFrame::GetActiveCamera()) {
+    if (!ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__) || !CGWorldFrame::GetActiveCamera()) {
         return;
     }
 
@@ -31,17 +32,17 @@ void CGCommentator::UpdateCameraVelocity(uint32_t controlFlags, int32_t canContr
         return;
     }
 
-    int32_t forward = (controlFlags & 0x1000) != 0;
+    int32_t forward = (controlFlags & INPUT_MOVE_PLAYER_AUTORUN) != 0;
 
-    if (controlFlags & 0x10) {
+    if (controlFlags & INPUT_MOVE_PLAYER_FORWARD_KEY) {
         forward++;
     }
 
-    if ((controlFlags & 0x1) && (controlFlags & 0x2)) {
+    if ((controlFlags & INPUT_TURN_PLAYER) && (controlFlags & INPUT_TURN_CAMERA)) {
         forward++;
     }
 
-    if (controlFlags & 0x20) {
+    if (controlFlags & INPUT_MOVE_PLAYER_BACKWARD_KEY) {
         forward--;
     }
 
@@ -52,17 +53,17 @@ void CGCommentator::UpdateCameraVelocity(uint32_t controlFlags, int32_t canContr
         this->m_forwardVelocity = 0.0f;
     }
 
-    int32_t strafe = (controlFlags & 0x40) != 0;
+    int32_t strafe = (controlFlags & INPUT_STRAFE_PLAYER_LEFT_KEY) != 0;
 
-    if ((controlFlags & 0x2000001) && (controlFlags & 0x100)) {
+    if ((controlFlags & INPUT_PLAYER_LOOK_MASK) && (controlFlags & INPUT_TURN_PLAYER_LEFT_KEY)) {
         strafe++;
     }
 
-    if (controlFlags & 0x80) {
+    if (controlFlags & INPUT_STRAFE_PLAYER_RIGHT_KEY) {
         strafe--;
     }
 
-    if ((controlFlags & 0x2000001) && (controlFlags & 0x200)) {
+    if ((controlFlags & INPUT_PLAYER_LOOK_MASK) && (controlFlags & INPUT_TURN_PLAYER_RIGHT_KEY)) {
         strafe--;
     }
 
@@ -73,9 +74,9 @@ void CGCommentator::UpdateCameraVelocity(uint32_t controlFlags, int32_t canContr
         this->m_strafeVelocity = 0.0f;
     }
 
-    int32_t vertical = (controlFlags & 0x2000) != 0;
+    int32_t vertical = (controlFlags & INPUT_ASCEND_PLAYER_KEY) != 0;
 
-    if (controlFlags & 0x4000) {
+    if (controlFlags & INPUT_DESCEND_PLAYER_KEY) {
         vertical--;
     }
 
@@ -83,15 +84,15 @@ void CGCommentator::UpdateCameraVelocity(uint32_t controlFlags, int32_t canContr
 
     int32_t turn = 0;
 
-    if (controlFlags & 0x100) {
+    if (controlFlags & INPUT_TURN_PLAYER_LEFT_KEY) {
         turn = 1;
     }
 
-    if (controlFlags & 0x200) {
+    if (controlFlags & INPUT_TURN_PLAYER_RIGHT_KEY) {
         turn--;
     }
 
-    if (controlFlags & 0x2000001) {
+    if (controlFlags & INPUT_PLAYER_LOOK_MASK) {
         turn = 0;
     }
 
@@ -154,7 +155,7 @@ void CGCommentator::SnapCameraToPlayer() {
         return;
     }
 
-    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -321,7 +322,7 @@ void CGCommentator::OnUpdate(float elapsed) {
     C33Matrix rotation(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
     rotation.FromEulerAnglesZYX(this->m_facing, this->m_pitch, 0.0f);
 
-    CGObject_C* follow = this->m_followTarget ? ClntObjMgrObjectPtr(this->m_followTarget, TYPEMASK_OBJECT, __FILE__, __LINE__) : nullptr;
+    CGObject_C* follow = this->m_followTarget ? ClntObjMgrObjectPtr(this->m_followTarget, TYPE_OBJECT, __FILE__, __LINE__) : nullptr;
 
     if (follow) {
         float distance = this->m_distance - this->m_moveSpeed * this->m_forwardVelocity * elapsed;
@@ -341,7 +342,7 @@ void CGCommentator::OnUpdate(float elapsed) {
 
         C3Vector target = follow->GetPosition();
 
-        if (follow->m_obj->m_type & TYPEMASK_PLAYER) {
+        if (follow->m_obj->m_type & TYPE_PLAYER) {
             target.z = static_cast<CGUnit_C*>(follow)->m_movementData.m_collisionHeight * 0.75f + this->m_targetHeightOffset + target.z;
         } else {
             target.z = this->m_targetHeightOffset + target.z + 1.5f;
@@ -365,7 +366,7 @@ void CGCommentator::OnUpdate(float elapsed) {
         camera->SetFacing(this->m_facing, this->m_pitch, 0.0f);
         camera->CommentatorSetViewAndPosition(this->m_position, this->m_facing, this->m_pitch);
     } else {
-        CGObject_C* lookAt = this->m_lookAtTarget ? ClntObjMgrObjectPtr(this->m_lookAtTarget, TYPEMASK_OBJECT, __FILE__, __LINE__) : nullptr;
+        CGObject_C* lookAt = this->m_lookAtTarget ? ClntObjMgrObjectPtr(this->m_lookAtTarget, TYPE_OBJECT, __FILE__, __LINE__) : nullptr;
 
         float forward = this->m_forwardVelocity;
         float strafe = this->m_strafeVelocity;
@@ -390,7 +391,7 @@ void CGCommentator::OnUpdate(float elapsed) {
             C3Vector target = lookAt->GetPosition();
             float z;
 
-            if (lookAt->m_obj->m_type & TYPEMASK_PLAYER) {
+            if (lookAt->m_obj->m_type & TYPE_PLAYER) {
                 z = static_cast<CGUnit_C*>(lookAt)->m_movementData.m_collisionHeight * 0.75f + this->m_targetHeightOffset + target.z;
             } else {
                 z = this->m_targetHeightOffset + target.z + 1.5f;

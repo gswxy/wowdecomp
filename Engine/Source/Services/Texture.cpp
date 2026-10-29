@@ -23,19 +23,19 @@
 static const uint16_t s_pixelFormatBytesPerBlock[NUM_PIXEL_FORMATS] = { 8, 16, 0, 0, 0, 0, 0, 16, 0, 0 };
 
 // STATIC: 0x009F103C
-static const uint16_t s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32 };
+static const uint16_t s_texFormatBitDepth[GxTexFormats_Last] = { 0, 32, 32, 16, 16, 16, 4, 8, 8, 16, 32, 32, 32, 64 };
 
 // STATIC: 0x009F1058
-static const uint16_t s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 0, 0, 0, 0, 0, 8, 16, 16, 0, 0, 0, 0 };
+static const uint16_t s_texFormatBytesPerBlock[GxTexFormats_Last] = { 0, 0, 0, 0, 0, 0, 8, 16, 16, 0, 0, 0, 0, 0 };
 
 // STATIC: 0x009F1074
 static const int32_t s_pixelFormatToMipBitsCache[NUM_PIXEL_FORMATS] = { -1, -1, -1, 0, 0, 0, -1, -1, -1, 1 };
 
 // STATIC: 0x009F1120
-static const uint32_t s_texFormatBytesPerTexel[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4 };
+static const uint32_t s_texFormatBytesPerTexel[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 8, 16, 16, 2, 4, 4, 4, 8 };
 
 // STATIC: 0x009F1154
-static const uint32_t s_texFormatTexelsPerBlock[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1 };
+static const uint32_t s_texFormatTexelsPerBlock[GxTexFormats_Last] = { 1, 1, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1, 1 };
 
 // STATIC: 0x00AC3234
 static EGxTexFormat s_pixelFormatToGxTexFormat[NUM_PIXEL_FORMATS] = { GxTex_Dxt1, GxTex_Dxt3, GxTex_Argb8888, GxTex_Argb1555, GxTex_Argb4444, GxTex_Rgb565, GxTex_Unknown, GxTex_Dxt5, GxTex_Unknown, GxTex_Unknown };
@@ -87,6 +87,31 @@ static MipBits* s_mipBits;
 
 // STATIC: 0x00B49C94
 static int32_t s_pumping;
+
+// Not stock: bytes allocated for s_mipBits. Stock sizes it once for 1024x1024 ARGB8888 and decodes every BLP into it,
+// so a larger texture (custom HD assets, 2048+) overran the heap block and garbled whatever lived next to it.
+static uint32_t s_mipBitsSize;
+
+static void MipBitsReserve(uint32_t format, uint32_t width, uint32_t height) {
+    // One 4096^2 BLP grows the buffer to ~90 MB; Wow32's address space should not keep that for the session.
+    // After this many loads in a row that fit the stock 1024^2 size, it shrinks back to that.
+    constexpr uint32_t kShrinkAfter = 64;
+    static uint32_t smallRun;
+    const uint32_t base = MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+    uint32_t size = MippedImgCalcSize(format, width, height);
+
+    smallRun = size <= base ? smallRun + 1 : 0;
+
+    if (size <= base && s_mipBitsSize > base && smallRun >= kShrinkAfter) {
+        size = base;
+    } else if (size <= s_mipBitsSize) {
+        return;
+    }
+
+    SMemFree(s_mipBits, __FILE__, __LINE__, 0);
+    s_mipBits = static_cast<MipBits*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+    s_mipBitsSize = size;
+}
 
 // STATIC: 0x00B49C98
 static int32_t s_gxTexCacheSize;
@@ -207,6 +232,8 @@ int32_t TextureBuildAliasPath(char* buffer, const char* fileName) {
 // VERIFY: a6ae9dde manual
 // OFFSET: 0x004B5280
 MipBits* GetDefaultTexture(uint32_t width, uint32_t height) {
+    // Not stock: a failed >1024 texture fills the default at full size, overrunning s_mipBits like the BLP decode did.
+    MipBitsReserve(PIXEL_ARGB8888, width, height);
     MipBits* images = s_mipBits;
     MipBits* level = images;
 
@@ -396,14 +423,14 @@ TEXFILETYPE TextureDiscoverFileType(const char* fileName) {
     const char* extension = SStrChrR(const_cast<char*>(fileName), '.');
 
     if (!extension || SStrLen(extension) != 4) {
-        return TEXFILE_UNKNOWN;
+        return TEXFILETYPE_UNKNOWN;
     }
 
     if (!SStrCmpI(extension, ".TGA", STORM_MAX_STR)) {
-        return TEXFILE_TGA;
+        return TEXFILETYPE_TGA;
     }
 
-    return SStrCmpI(extension, ".BLP", STORM_MAX_STR) ? TEXFILE_UNKNOWN : TEXFILE_BLP;
+    return SStrCmpI(extension, ".BLP", STORM_MAX_STR) ? TEXFILETYPE_UNKNOWN : TEXFILETYPE_BLP;
 }
 
 // VERIFY: 813fa654 manual
@@ -414,7 +441,7 @@ TEXFILETYPE TexturePickAlternateFilename(const char* fileName, TEXFILETYPE type,
     }
 
     if (!type) {
-        return TEXFILE_UNKNOWN;
+        return TEXFILETYPE_UNKNOWN;
     }
 
     char* extension = SStrChrR(buffer, '.');
@@ -423,14 +450,14 @@ TEXFILETYPE TexturePickAlternateFilename(const char* fileName, TEXFILETYPE type,
         *extension = '\0';
     }
 
-    if (type == TEXFILE_TGA) {
+    if (type == TEXFILETYPE_TGA) {
         SStrPack(buffer, ".BLP", size);
-        return TEXFILE_BLP;
+        return TEXFILETYPE_BLP;
     }
 
-    if (type == TEXFILE_BLP) {
+    if (type == TEXFILETYPE_BLP) {
         SStrPack(buffer, ".TGA", size);
-        return TEXFILE_TGA;
+        return TEXFILETYPE_TGA;
     }
 
     return type;
@@ -516,7 +543,7 @@ void ResolveMipLevel(EGxTexCommand command, uint32_t width, uint32_t height, uin
     // STATIC: 0x00B4A1E8
     static uint32_t s_emptyTexel;
 
-    if (command == GxTex_3) {
+    if (command == GxTex_Recreate) {
         return;
     }
 
@@ -654,7 +681,7 @@ int32_t TextureLoadBlpMips(char* fileName, char* extension, int32_t flags, MipBi
     EGxTexFormat format = GxTex_Argb8888;
     PIXEL_FORMAT pixels = PIXEL_ARGB8888;
 
-    if (image.m_header.m_colorEncoding == 2) {
+    if (image.m_header.m_colorEncoding == COLOR_DXT) {
         pixels = static_cast<PIXEL_FORMAT>(image.m_header.m_preferredFormat);
 
         if (pixels == PIXEL_DXT1) {
@@ -715,6 +742,10 @@ int32_t TextureLoadBlpMips(char* fileName, char* extension, int32_t flags, MipBi
         *pixelFormat = pixels;
     }
 
+    if (images == &s_mipBits) {
+        MipBitsReserve(pixels, image.m_header.m_width, image.m_header.m_height);
+    }
+
     if (!image.LockChain(pixels, *images, bestMip)) {
         return 0;
     }
@@ -771,7 +802,7 @@ void UpdateBlpTextureAsync(EGxTexCommand command, uint32_t width, uint32_t heigh
             const uint8_t* bits = reinterpret_cast<const uint8_t*>(s_mipBits[level].m_mip[0]);
             texels = bits;
 
-            if (texture->m_gxTexTarget == GxTex_CubeMap) {
+            if (texture->m_gxTexTarget == GxTex_CubeMap && bits) {
                 uint32_t order = face;
 
                 switch (face) {
@@ -1022,6 +1053,38 @@ void CTextureAtlas::Reload() {
     this->m_dirty &= ~1;
 }
 
+#if defined(WOWDECOMP_ARCH_64)
+// MODIFIED: performance. Texture files are read into memory only while the bytes already in flight (read, waiting to be
+// read or waiting for their upload) stay within a budget, stock a fixed 4 MB. That is three or four HD textures, so a
+// city's textures trickled in one small batch at a time, and a file over 4 MB (a 2048 x 2048 DXT5 BLP is 5.3 MB) never
+// fitted: it stayed queued until something drew it with wait = 1 and loaded it on the spot. The budget is now
+// textureLoadBudget (64 MB), and a file larger than the budget starts whenever nothing else is in flight
+static uint32_t s_textureLoadBudget = 0x4000000;
+
+static bool TextureLoadFits(uint32_t size) {
+    // a count wrapped below zero (a subtraction the stock code makes for something it never counted) is nothing in
+    // flight, as the stock 4 MB arithmetic took it
+    if (s_asyncLoadBufferUsed >= 0x80000000u) {
+        s_asyncLoadBufferUsed = 0;
+    }
+
+    if (!s_asyncLoadBufferUsed) {
+        return true;
+    }
+
+    return s_asyncLoadBufferUsed < s_textureLoadBudget && s_textureLoadBudget - s_asyncLoadBufferUsed >= size;
+}
+
+void TextureSetLoadBudget(uint32_t bytes) {
+    s_textureLoadBudget = bytes < 0x400000 ? 0x400000 : bytes;
+}
+
+void TextureGetLoadStats(uint32_t& pending, uint32_t& bytesInFlight) {
+    pending = AsyncTextureStatus();
+    bytesInFlight = s_asyncLoadBufferUsed;
+}
+#endif
+
 // VERIFY: 7f5ee904 manual
 // OFFSET: 0x004B64E0
 void AsyncTextureProcess(CAsyncObject* object, int32_t immediate) {
@@ -1053,6 +1116,14 @@ void TextureSetCacheSize(int32_t size) {
     if (OsGetPhysicalMemory() <= 0x40000000) {
         maxSize = 0x2000000;
     }
+
+#if defined(WOWDECOMP_ARCH_64)
+    // CUSTOM (Badgermilk0 port). This pool keeps released textures for reuse, so the device does not create and destroy
+    // texture objects while the camera moves; 64 MB was the 32-bit address space's budget. 512 MB with 4 GB of RAM
+    if (OsGetPhysicalMemory() >= 0x100000000ull) {
+        maxSize = 0x20000000;
+    }
+#endif
 
     if (g_theGxDevicePtr->DeviceApi() == GxApi_D3d9Ex) {
         maxSize = 0;
@@ -1207,6 +1278,31 @@ void FillInSolidTexture(const CImVector& color, CTexture* texture) {
 // VERIFY: f77dd4dd manual
 // OFFSET: 0x004B69E0
 void AsyncTextureHandler() {
+#if defined(WOWDECOMP_ARCH_64)
+    // MODIFIED: performance; the same two passes against textureLoadBudget (see TextureLoadFits)
+    for (CAsyncObject* object = s_asyncLoadList.Head(); !s_asyncLoadList.IsEnd(object); ) {
+        CAsyncObject* next = s_asyncLoadList.RawNext(object);
+
+        if (TextureLoadFits(object->m_size)) {
+            AsyncTextureProcess(object, 0);
+        }
+
+        object = next;
+    }
+
+    for (CAsyncObject* object = s_asyncTextureList.Head(); !s_asyncTextureList.IsEnd(object); ) {
+        CAsyncObject* next = s_asyncTextureList.RawNext(object);
+
+        if (TextureLoadFits(object->m_size)) {
+            AsyncTextureProcess(object, 0);
+        }
+
+        object = next;
+    }
+
+    return;
+#endif
+
     uint32_t available = 0x400000 - s_asyncLoadBufferUsed;
 
     for (CAsyncObject* object = s_asyncLoadList.Head(); !s_asyncLoadList.IsEnd(object); ) {
@@ -1266,6 +1362,60 @@ void TextureCacheUpdate() {
                 entry->m_link.Unlink();
                 s_gxTexCacheFree.LinkToHead(entry);
                 entry = next;
+            }
+        }
+    }
+}
+
+// CUSTOM (texevict): not in 12340. The Vulkan device's first step under image-table or memory
+// pressure (CGxDeviceVulkan::ITexEvict): up to `maxDestroyed` of the recycle bin's CGxTexes destroyed,
+// oldest first across every size bucket (each bucket's list is in TextureFreeGxTex order, so its head
+// is its oldest). Nothing references a binned CGxTex (its callback is GxTexNullUserFunc), so this is
+// TextureCacheUpdate's trim without its byte target. Returns how many went.
+int32_t TextureCacheShrink(int32_t maxDestroyed) {
+    int32_t destroyed = 0;
+
+    while (destroyed < maxDestroyed) {
+        TSExplicitList<CGxTexCache, offsetof(CGxTexCache, m_link)>* oldest = nullptr;
+
+        for (int32_t x = 0; x < 6; x++) {
+            for (int32_t y = 0; y < 6; y++) {
+                CGxTexCache* head = s_gxTexCache[x][y].Head();
+
+                if (head && (!oldest || head->m_time < oldest->Head()->m_time)) {
+                    oldest = &s_gxTexCache[x][y];
+                }
+            }
+        }
+
+        if (!oldest) {
+            break;
+        }
+
+        CGxTexCache* entry = oldest->Head();
+        s_gxTexCacheSize -= entry->m_size;
+        GxTexDestroy(entry->m_gxTex);
+        entry->m_gxTex = nullptr;
+        entry->m_size = 0;
+        entry->m_time = 0xFFFFFFFF;
+        entry->m_link.Unlink();
+        s_gxTexCacheFree.LinkToHead(entry);
+        destroyed++;
+    }
+
+    return destroyed;
+}
+
+// CUSTOM (texevict): not in 12340. The recycle bin's bytes (TextureCalcGxTexSize's estimate) and entries, for
+// the Vulkan device's periodic texture log line.
+void TextureCacheStats(int32_t& bytes, int32_t& count) {
+    bytes = s_gxTexCacheSize;
+    count = 0;
+
+    for (int32_t x = 0; x < 6; x++) {
+        for (int32_t y = 0; y < 6; y++) {
+            for (CGxTexCache* entry = s_gxTexCache[x][y].Head(); entry; entry = entry->m_link.Next()) {
+                count++;
             }
         }
     }
@@ -1706,6 +1856,7 @@ void UpdateTgaTexture(EGxTexCommand command, uint32_t width, uint32_t height, ui
         case GxTex_Lock:
             if (!s_pumping) {
                 char* extension = texture->m_filename + SStrLen(texture->m_filename);
+                MipBitsReserve(PIXEL_ARGB8888, width, height); // Not stock: TGA reload decodes ARGB8888 into s_mipBits
                 int32_t result = LoadTgaMips(texture->m_filename, extension, texture->m_flags & 2, &s_mipBits, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
                 *extension = '\0';
 
@@ -1795,6 +1946,7 @@ int32_t PumpBlpTextureAsync(CTexture* texture, void* data) {
     TextureGetTextureFormats(pixelFormat, gxTexFormat, static_cast<PIXEL_FORMAT>(image.m_header.m_preferredFormat), image.m_header.m_alphaSize);
 
     s_pumping = 1;
+    MipBitsReserve(pixelFormat, image.m_header.m_width, image.m_header.m_height);
 
     if (!image.LockChain2(texture->m_filename, pixelFormat, s_mipBits, texture->m_bestMip, 1)) {
         s_pumping = 0;
@@ -1890,13 +2042,14 @@ int32_t AsyncTextureStatus() {
 // VERIFY: f4a9a3e6 manual
 // OFFSET: 0x004B7F80
 void TextureInitialize() {
-    s_mipBits = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024), __FILE__, __LINE__, 0));
+    s_mipBitsSize = MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024);
+    s_mipBits = static_cast<MipBits*>(SMemAlloc(s_mipBitsSize, __FILE__, __LINE__, 0));
     AsyncFileReadAddPollHandler(AsyncTextureHandler);
     AsyncFileReadAddStatusHandler(AsyncTextureStatus);
     s_currentTime = OsGetAsyncTimeMs();
     s_gxTexCacheSize = 0;
     s_gxTexCacheMaxSize = 0;
-    EventRegisterEx(EVENT_ID_POLL, TextureUpdate, nullptr, 0.0f);
+    EventRegisterEx(EVENT_ID_POLL, TextureUpdate, nullptr, EVENT_PRIORITY_NORMAL);
 }
 
 // VERIFY: 7711ba71 manual
@@ -2041,6 +2194,7 @@ void TextureDestroy() {
     s_gxTexCacheFree.Clear();
     SMemFree(s_mipBits, __FILE__, __LINE__, 0);
     s_mipBits = nullptr;
+    s_mipBitsSize = 0;
 
     for (int32_t x = 0; x < 6; x++) {
         for (int32_t y = 0; y < 6; y++) {
@@ -2118,8 +2272,13 @@ CTexture::~CTexture() {
             void* buffer = this->m_asyncObject->m_buffer;
 
             if (AsyncFile::Cancel(this->m_asyncObject, AsyncTextureDestroyedCallback)) {
-                s_asyncLoadBufferUsed -= this->m_asyncObject->m_size;
-                SMemFree(buffer, __FILE__, __LINE__, 0);
+                // MODIFIED: only a read that started (AsyncTextureProcess gave it its buffer) was counted in flight; a
+                // texture still waiting for the budget was not, and subtracting it wrapped the count (a teleport
+                // destroys many), which the budget then took as full for the rest of the session
+                if (buffer) {
+                    s_asyncLoadBufferUsed -= this->m_asyncObject->m_size;
+                    SMemFree(buffer, __FILE__, __LINE__, 0);
+                }
             }
         }
     }
@@ -2231,6 +2390,7 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
     texture->m_asyncObject->m_userPostUnloadCallback = reinterpret_cast<void*>(AsyncTextureFailureCallback);
     texture->m_asyncObject->m_file = file;
     texture->m_asyncObject->m_size = SFileGetFileSize(file, nullptr);
+    ASYNC_SET_KIND(texture->m_asyncObject, ASYNC_KIND_TEXTURE);
 
     if (blobTexture) {
         texture->m_asyncObject->m_priority = 131;
@@ -2242,7 +2402,12 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
 
     CAsyncObject* object = texture->m_asyncObject;
 
+#if defined(WOWDECOMP_ARCH_64)
+    // MODIFIED: performance; see TextureLoadFits
+    if (!TextureLoadFits(object->m_size)) {
+#else
     if (0x400000 - s_asyncLoadBufferUsed < object->m_size) {
+#endif
         s_asyncTextureList.LinkNode(object, 2, nullptr);
     } else {
         AsyncTextureProcess(object, 0);

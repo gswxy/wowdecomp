@@ -4,13 +4,16 @@
 #include "WoW/Common/AaBsp.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
+#include <algorithm>
 #include <cmath>
+#include <vector>
 #include "WoW/Source/WorldClient/Types.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "Engine/Source/Services/AsyncFile.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/MapObj.h"
+#include "Engine/Source/Gx/GxLighting.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 
 // STATIC: 0x00ADFC4C
@@ -25,6 +28,13 @@ void CMapObj::CreateMaterials() {
     for (uint32_t i = 0; i < static_cast<uint32_t>(this->m_materialsCount); i++) {
         this->m_materialList[i].Textures()[0] = nullptr;
         this->m_materialList[i].Textures()[1] = nullptr;
+    }
+
+    // CUSTOM (WMONORMALS): the normal-map slots, only where the lit shader pack can use them (D3D11 / Vulkan)
+    if (g_gxLighting && !this->m_normalTextures && this->m_materialsCount > 0) {
+        size_t size = sizeof(CTexture*) * static_cast<uint32_t>(this->m_materialsCount);
+        this->m_normalTextures = static_cast<CTexture**>(SMemAlloc(size, __FILE__, __LINE__, 0));
+        memset(this->m_normalTextures, 0, size);
     }
 }
 
@@ -192,6 +202,21 @@ void CMapObj::CreateMaterial(uint8_t texture) {
     }
 
     material.Textures()[0] = CMap::LoadTexture(texture1);
+
+    // CUSTOM (WMONORMALS): `<diffuse>_n.blp` beside the diffuse (Tools/WmoNormals, Data\\wmonormals.MPQ)
+    if (this->m_normalTextures && !this->m_normalTextures[texture]) {
+        char normal[260];
+        SStrCopy(normal, texture1, sizeof(normal) - 6);
+        size_t length = SStrLen(normal);
+
+        if (length > 4 && !SStrCmpI(normal + length - 4, ".blp", STORM_MAX_STR)) {
+            SStrCopy(normal + length - 4, "_n.blp", 7);
+
+            if (SFile::FileExistsInArchives(normal)) {
+                this->m_normalTextures[texture] = CMap::LoadTexture(normal);
+            }
+        }
+    }
 
     if (texture2) {
         material.Textures()[1] = CMap::LoadTexture(texture2);
@@ -405,7 +430,184 @@ void CMapObjGroup::CreateDataPointers(SIffChunk* dataChunk) {
     this->m_batchList = reinterpret_cast<SMOBatch*>(&chunk->m_data);
     this->m_batchListCount = chunk->m_size / sizeof(SMOBatch);
 
+    if (CMapObjGroup::s_repairNormals) {
+        this->RepairNormals();   // BACKLOG: not in 12340
+    }
+
     this->CreateOptionalDataPointers(reinterpret_cast<SIffChunk*>(reinterpret_cast<uint8_t*>(&chunk->m_data) + chunk->m_size));
+}
+
+// BACKLOG: not in 12340. Port of wxl-light Normals.cpp (the plugin hooked 0x007D7F50 and edited the
+// group's file buffer before this walk), widened 2026-10-24 (fix/pointlight). Many buildings store MONR normals
+// that are not their surfaces' own: Ratchet's dock deck (two flat 390 sq yd triangles whose corner normals lean
+// 50 degrees out), and Orgrimmar's floors (5 sq yd triangles, corner normals 10 degrees off the flat floor at the
+// median and 45 at the 90th percentile). Lit per vertex, or per pixel from those normals, every triangle takes its
+// own brightness: a dark wedge under a low sun, and a patchwork of triangles under a torch, whose light grazes the
+// floor so a few degrees of normal swing it a lot. A vertex takes the smooth normal of the surface round it:
+// the area-weighted normals of the rendered faces at its position (its welded twins included, so a floor split
+// into separate triangles is one surface again) that lie within 40 degrees of its own faces, WHEN those all but lie
+// in one plane (agreement >= 0.97) and the stored normal is more than 5 degrees off. Also, as before, when its own
+// faces include a large one (>= 20 sq yd), roughly agree (>= 0.8) and the stored normal is more than 25 degrees
+// off. Creases and curves are left as the artist made them. Applies at load only.
+bool CMapObjGroup::s_repairNormals = true;
+
+void CMapObjGroup::RepairNormals() {
+    constexpr float kMinArea = 20.0f;      // sq yd: the largest face round the vertex is at least this
+    constexpr float kMinAgree = 0.8f;      // |sum of area-weighted face normals| / sum of areas: 1 = one plane
+    constexpr float kMaxCos = 0.906f;      // cos 25 degrees: the stored normal is further off than this
+    constexpr float kPlanarAgree = 0.97f;  // the smooth rule: the surface round the vertex is this flat
+    constexpr float kPlanarCos = 0.9962f;  // cos 5 degrees
+    constexpr float kCrease = 0.766f;      // cos 40 degrees: a twin's faces further off are another surface
+    constexpr float kWeld = 32.0f;         // positions within 1/32 yd are one vertex
+
+    const uint32_t tris = static_cast<uint32_t>(this->m_indicesCount) / 3;
+    const uint32_t verts = static_cast<uint32_t>(this->m_vertexListCount);
+
+    if (!tris || !verts || static_cast<uint32_t>(this->m_normalListCount) != verts || static_cast<uint32_t>(this->m_polyListSize) < tris) {
+        return;
+    }
+
+    std::vector<float> acc(size_t(verts) * 3, 0.0f), tot(verts, 0.0f), big(verts, 0.0f);
+
+    for (uint32_t t = 0; t < tris; t++) {
+        if (this->m_polyList[t].m_materialId == 0xFF) {
+            continue;   // no material: collision only, never lit
+        }
+
+        const uint16_t* i = &this->m_indices[t * 3];
+
+        if (i[0] >= verts || i[1] >= verts || i[2] >= verts) {
+            return;   // not the layout we know: touch nothing
+        }
+
+        const C3Vector& a = this->m_vertexList[i[0]];
+        const C3Vector& b = this->m_vertexList[i[1]];
+        const C3Vector& c = this->m_vertexList[i[2]];
+        const float e0[3] = { b.x - a.x, b.y - a.y, b.z - a.z };
+        const float e1[3] = { c.x - a.x, c.y - a.y, c.z - a.z };
+        const float fn[3] = {
+            (e0[1] * e1[2] - e0[2] * e1[1]) * 0.5f,
+            (e0[2] * e1[0] - e0[0] * e1[2]) * 0.5f,
+            (e0[0] * e1[1] - e0[1] * e1[0]) * 0.5f,
+        };
+        const float area = std::sqrt(fn[0] * fn[0] + fn[1] * fn[1] + fn[2] * fn[2]);
+
+        if (!(area > 1.0e-6f)) {
+            continue;
+        }
+
+        for (int k = 0; k < 3; k++) {
+            const uint32_t v = i[k];
+            acc[v * 3] += fn[0];
+            acc[v * 3 + 1] += fn[1];
+            acc[v * 3 + 2] += fn[2];
+            tot[v] += area;
+
+            if (area > big[v]) {
+                big[v] = area;
+            }
+        }
+    }
+
+    // the vertices sorted by welded position: twins are neighbours
+    struct Key {
+        int32_t x, y, z;
+        uint32_t v;
+    };
+    std::vector<Key> keys;
+    keys.reserve(verts);
+
+    for (uint32_t v = 0; v < verts; v++) {
+        const C3Vector& p = this->m_vertexList[v];
+
+        if (tot[v] > 0.0f && std::fabs(p.x) < 1.0e6f && std::fabs(p.y) < 1.0e6f && std::fabs(p.z) < 1.0e6f) {
+            keys.push_back({ static_cast<int32_t>(std::lround(p.x * kWeld)), static_cast<int32_t>(std::lround(p.y * kWeld)), static_cast<int32_t>(std::lround(p.z * kWeld)), v });
+        }
+    }
+
+    std::sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) {
+        return a.x != b.x ? a.x < b.x : (a.y != b.y ? a.y < b.y : (a.z != b.z ? a.z < b.z : a.v < b.v));
+    });
+
+    std::vector<float> smooth(size_t(verts) * 4, 0.0f);   // xyz the smooth normal (unnormalised), w 1 = use it
+
+    for (size_t first = 0; first < keys.size();) {
+        size_t last = first + 1;
+
+        while (last < keys.size() && keys[last].x == keys[first].x && keys[last].y == keys[first].y && keys[last].z == keys[first].z) {
+            last++;
+        }
+
+        for (size_t k = first; k < last; k++) {
+            const uint32_t v = keys[k].v;
+            const float* o = &acc[v * 3];
+            const float len = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+
+            if (!(len > 1.0e-6f) || len < kPlanarAgree * tot[v]) {
+                continue;   // its own faces are a crease: one normal cannot serve them all
+            }
+
+            float s[3] = { 0.0f, 0.0f, 0.0f };
+            float area = 0.0f;
+
+            for (size_t j = first; j < last; j++) {
+                const uint32_t w = keys[j].v;
+                const float* q = &acc[w * 3];
+                const float qlen = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+
+                if (qlen > 1.0e-6f && (q[0] * o[0] + q[1] * o[1] + q[2] * o[2]) >= kCrease * qlen * len) {
+                    s[0] += q[0];
+                    s[1] += q[1];
+                    s[2] += q[2];
+                    area += tot[w];
+                }
+            }
+
+            const float slen = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+
+            if (slen > 1.0e-6f && slen >= kPlanarAgree * area) {
+                float* out = &smooth[v * 4];
+                out[0] = s[0] / slen;
+                out[1] = s[1] / slen;
+                out[2] = s[2] / slen;
+                out[3] = 1.0f;
+            }
+        }
+
+        first = last;
+    }
+
+    for (uint32_t v = 0; v < verts; v++) {
+        C3Vector& n = this->m_normalList[v];
+        const float* sm = &smooth[v * 4];
+
+        if (sm[3] > 0.0f) {
+            if (!(sm[0] * n.x + sm[1] * n.y + sm[2] * n.z >= kPlanarCos)) {   // also replaces a NaN normal
+                n.x = sm[0];
+                n.y = sm[1];
+                n.z = sm[2];
+            }
+
+            continue;
+        }
+
+        const float* s = &acc[v * 3];
+        const float len = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+
+        if (big[v] < kMinArea || !(len > 1.0e-6f) || len < kMinAgree * tot[v]) {
+            continue;
+        }
+
+        const float cosOff = (s[0] * n.x + s[1] * n.y + s[2] * n.z) / len;
+
+        if (!(cosOff < kMaxCos)) {
+            continue;   // also leaves a NaN normal alone
+        }
+
+        n.x = s[0] / len;
+        n.y = s[1] / len;
+        n.z = s[2] / len;
+    }
 }
 
 // VERIFY: aea1ef5e manual
@@ -453,6 +655,7 @@ bool CMapObj::Read(char* fileName) {
     this->m_asyncObject->m_size = this->m_wmoFileSize;
     this->m_asyncObject->m_userPostloadCallback = reinterpret_cast<void*>(CMapObj::PostloadCallback);
     this->m_asyncObject->m_priority = 124;
+    ASYNC_SET_KIND(this->m_asyncObject, ASYNC_KIND_WMO);
     AsyncFileReadObject(this->m_asyncObject, 0);
 
     CMapObj::s_asyncLoadQueue.LinkToTail(this);
@@ -632,6 +835,7 @@ void CMapObj::ReadGroup(uint32_t index, bool preLoad) {
     object->m_size = group->m_fileSize;
     object->m_userArg = group;
     object->m_userPostloadCallback = reinterpret_cast<void*>(CMapObjGroup::AsyncPostloadCallback);
+    ASYNC_SET_KIND(object, ASYNC_KIND_WMOGROUP);
     group->m_asyncObjPtr = object;
     AsyncFileReadObject(object, 0);
 

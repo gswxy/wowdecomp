@@ -1,4 +1,5 @@
 #include "RaidInfo.h"
+#include "WoW/Source/Ui/LFGInfo.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
 #include <cstdint>
 #include "Engine/Source/FrameScript/FrameScript.h"
@@ -107,7 +108,7 @@ static int32_t Script_GetReadyCheckTimeLeft(lua_State* L) {
 // OFFSET: 0x00574A00
 static int32_t Script_ConvertToRaid(lua_State* L) {
     if (CGPartyInfo::m_members[0] && CGPartyInfo::m_leader == ClntObjMgrGetActivePlayer()) {
-        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+        CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
         if (player && static_cast<int32_t>(player->m_unit->m_unitFieldLevel) >= 10) {
             CDataStore msg;
@@ -151,7 +152,7 @@ static int32_t Script_ConfirmReadyCheck(lua_State* L) {
 static int32_t Script_IsRaidOfficer(lua_State* L) {
     CGRaidMember* member = CGRaidInfo::FindMemberByGuid(ClntObjMgrGetActivePlayer());
 
-    if (member && member->m_rank > 0) {
+    if (member && member->m_rank > CGRaidMember::RANK::MEMBER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -205,7 +206,7 @@ static int32_t Script_GetReadyCheckStatus(lua_State* L) {
 
     CGRaidMember* self = CGRaidInfo::FindMemberByGuid(ClntObjMgrGetActivePlayer());
 
-    if (!self || self->m_rank <= 0) {
+    if (!self || self->m_rank <= CGRaidMember::RANK::MEMBER) {
         lua_pushstring(L, status);
         return 1;
     }
@@ -298,7 +299,7 @@ static int32_t Script_GetRaidRosterInfo(lua_State* L) {
     lua_pushstring(L, name->FullName(fullName, 305));
     lua_pushnumber(L, member->m_rank);
     lua_pushnumber(L, member->m_subgroup + 1);
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(member->m_guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         lua_pushnumber(L, static_cast<int32_t>(unit->m_unit->m_unitFieldLevel));
@@ -349,33 +350,33 @@ static int32_t Script_GetRaidRosterInfo(lua_State* L) {
         lua_pushnil(L);
     }
 
-    if (member->m_assignments & 2) {
+    if (member->m_assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_TANK) {
         lua_pushstring(L, "MAINTANK");
-    } else if (member->m_assignments & 4) {
+    } else if (member->m_assignments & CGPartyInfo::ASSIGNMENT_FLAGS::MAIN_ASSIST) {
         lua_pushstring(L, "MAINASSIST");
     } else {
         lua_pushnil(L);
     }
 
-    if (CGPartyInfo::m_lootMethod == 2 && CGPartyInfo::m_lootMaster == member->m_guid) {
+    if (CGPartyInfo::m_lootMethod == LOOT_METHOD_MASTERLOOTER && CGPartyInfo::m_lootMaster == member->m_guid) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 2) {
+    if (member->m_groupRole & ROLE_FLAGS::TANK) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 4) {
+    if (member->m_groupRole & ROLE_FLAGS::HEALER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
     }
 
-    if (member->m_groupRole & 8) {
+    if (member->m_groupRole & ROLE_FLAGS::DAMAGER) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -473,7 +474,7 @@ static int32_t Script_PromoteToLeader(lua_State* L) {
     }
 
     int32_t exact = StringToBOOL(L, 2, 0);
-    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPEMASK_PLAYER, 6, exact, 3.4028235e38f, 0);
+    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPE_PLAYER, 6, exact, 3.4028235e38f, 0);
 
     if (guid) {
         CDataStore msg;
@@ -495,7 +496,7 @@ static int32_t Script_PromoteToAssistant(lua_State* L) {
     }
 
     int32_t exact = StringToBOOL(L, 2, 0);
-    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPEMASK_PLAYER, 6, exact, 3.4028235e38f, 0);
+    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPE_PLAYER, 6, exact, 3.4028235e38f, 0);
 
     if (guid) {
         CDataStore msg;
@@ -518,7 +519,7 @@ static int32_t Script_DemoteAssistant(lua_State* L) {
     }
 
     int32_t exact = StringToBOOL(L, 2, 0);
-    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPEMASK_PLAYER, 6, exact, 3.4028235e38f, 0);
+    WOWGUID guid = CGGameUI::ClosestObjectMatch(lua_tolstring(L, 1, nullptr), TYPE_PLAYER, 6, exact, 3.4028235e38f, 0);
 
     if (guid) {
         CDataStore msg;
@@ -557,7 +558,7 @@ static int32_t Script_SetRaidTarget(lua_State* L) {
 
     if (index < 8) {
         if (guid && !CGRaidInfo::IsPlayerOrPetInRaid(guid) && !CGPartyInfo::IsPlayerOrPetInParty(guid)) {
-            CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+            CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(guid, TYPE_UNIT, __FILE__, __LINE__));
 
             if (!unit) {
                 CGGameUI::DisplayError(ERR_GENERIC_NO_TARGET);
@@ -566,7 +567,7 @@ static int32_t Script_SetRaidTarget(lua_State* L) {
 
             CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
-            if (player && unit != player && (unit->m_obj->m_type & TYPEMASK_PLAYER) && !player->CanCooperate(unit)) {
+            if (player && unit != player && (unit->m_obj->m_type & TYPE_PLAYER) && !player->CanCooperate(unit)) {
                 CGGameUI::DisplayError(ERR_INVALID_RAID_TARGET);
                 return 0;
             }

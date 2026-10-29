@@ -3,7 +3,6 @@ add_library(zlib STATIC
     zlib/compress.c
     zlib/crc32.c
     zlib/deflate.c
-    zlib/gzio.c
     zlib/infback.c
     zlib/inffast.c
     zlib/inflate.c
@@ -16,6 +15,21 @@ add_library(zlib STATIC
 target_include_directories(zlib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/zlib
+)
+
+# Not stock: libdeflate 1.24 (decompression side only), the fast MPQ sector inflate path in front of zlib
+# (Mopaq/SComp.cpp, CVar mpqFastInflate). Vendored unmodified, see libdeflate/README.ours.
+add_library(libdeflate STATIC
+    libdeflate/lib/adler32.c
+    libdeflate/lib/deflate_decompress.c
+    libdeflate/lib/utils.c
+    libdeflate/lib/zlib_decompress.c
+    libdeflate/lib/x86/cpu_features.c
+)
+
+target_include_directories(libdeflate
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/libdeflate
 )
 
 add_library(blast STATIC
@@ -66,6 +80,25 @@ if (WIN32)
     endif ()
 endif ()
 
+# The Khronos Vulkan headers (vulkan-headers/VERSION names the pinned SDK tag), headers only: no vulkan-1.lib
+# and no Vulkan SDK on the build machine. VK_NO_PROTOTYPES drops the function declarations, so every entry
+# point has to come from the loader at runtime (Engine/Source/Gx/CGxDeviceVulkan/Vulkan/Loader.cpp loads
+# vulkan-1.dll, the system component a machine with a Vulkan driver has in System32).
+if (WIN32)
+    add_library(VulkanHeaders INTERFACE)
+
+    target_include_directories(VulkanHeaders
+        INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-headers
+    )
+
+    target_compile_definitions(VulkanHeaders
+        INTERFACE
+            VK_NO_PROTOTYPES
+            VK_USE_PLATFORM_WIN32_KHR
+    )
+endif ()
+
 add_library(freetype STATIC
     freetype/src/base/ftsystem.c
     freetype/src/base/ftinit.c
@@ -92,22 +125,28 @@ target_include_directories(freetype
 )
 
 add_library(expat STATIC
+    expat/lib/xcs.c
     expat/lib/xmlparse.c
     expat/lib/xmlrole.c
     expat/lib/xmltok.c
 )
 
+if(WIN32)
+    target_sources(expat PRIVATE expat/lib/random_rand_s.c)
+else()
+    target_sources(expat PRIVATE expat/lib/random_dev_urandom.c)
+endif()
+
 target_compile_definitions(expat
     PUBLIC
-        _STATIC
-    PRIVATE
-        COMPILED_FROM_DSP
-        _LIB
+        XML_STATIC
 )
 
 target_include_directories(expat
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/expat/lib
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/expat
 )
 
 add_library(pcre STATIC
@@ -185,3 +224,52 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}
     )
 endif ()
+
+add_library(msdfgen STATIC
+    msdfgen/core/contour-combiners.cpp
+    msdfgen/core/Contour.cpp
+    msdfgen/core/convergent-curve-ordering.cpp
+    msdfgen/core/DistanceMapping.cpp
+    msdfgen/core/edge-coloring.cpp
+    msdfgen/core/edge-segments.cpp
+    msdfgen/core/edge-selectors.cpp
+    msdfgen/core/EdgeHolder.cpp
+    msdfgen/core/equation-solver.cpp
+    msdfgen/core/export-svg.cpp
+    msdfgen/core/msdf-error-correction.cpp
+    msdfgen/core/MSDFErrorCorrection.cpp
+    msdfgen/core/msdfgen.cpp
+    msdfgen/core/Projection.cpp
+    msdfgen/core/rasterization.cpp
+    msdfgen/core/render-sdf.cpp
+    msdfgen/core/save-bmp.cpp
+    msdfgen/core/save-fl32.cpp
+    msdfgen/core/save-rgba.cpp
+    msdfgen/core/save-tiff.cpp
+    msdfgen/core/Scanline.cpp
+    msdfgen/core/sdf-error-estimation.cpp
+    msdfgen/core/shape-description.cpp
+    msdfgen/core/Shape.cpp
+    msdfgen/ext/import-font.cpp
+    msdfgen/ext/resolve-shape-geometry.cpp
+)
+
+target_include_directories(msdfgen
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/msdfgen
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_compile_definitions(msdfgen
+    PUBLIC
+        MSDFGEN_PUBLIC=
+        MSDFGEN_DISABLE_VARIABLE_FONTS=1
+    PRIVATE
+        MSDFGEN_DISABLE_SVG=1
+        MSDFGEN_DISABLE_PNG=1
+)
+
+target_link_libraries(msdfgen
+    PRIVATE
+        freetype
+)

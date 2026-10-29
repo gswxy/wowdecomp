@@ -1,0 +1,96 @@
+// VFogWater{1,2,3} (ps_3_0, world viewport over the back buffer): port of coa-vfog shaders/vw_water.hlsl (@ 4e31ddf,
+// GPLv3). One water class per draw (docs/VFOG_PORT.md "Water"): TEXCOORD0 = world viewport uv instead of VPOS, and
+// the class mask comes from the sign of sWaterDepth instead of a stencil test. Drawn with GxBlend_Alpha: alpha 1 on
+// this class's pixels, 0 elsewhere (the colour is then unused). SSR_STEPS 0 / 16 / 32 = coa shade_low/mid/high.
+#include "vf_common.hlsli"
+#include "vw_constants.hlsli"
+#include "vw_surface.hlsli"
+#include "vw_optics.hlsli"
+#include "vw_reflection.hlsli"
+
+static const float kDebugNormal = 1;
+static const float kDebugFoamCoverage = 2;
+static const float kDebugTransmittance = 3;
+static const float kDebugReflection = 4;
+static const float kDebugLiquidClass = 5;
+static const float kDebugRippleHeightGain = 4;
+static const float kDebugRippleWindowShade = 0.25;
+
+float3 ClassColour(float waterClass)
+{
+    float3 primaries = saturate(1 - abs(waterClass - float3(1, 2, 3)));
+    return primaries + saturate(1 - abs(waterClass - 4)) * float3(1, 1, 0);
+}
+
+float3 RippleColour(RippleSample ripples)
+{
+    float height = 0.5 + 0.5 * clamp(ripples.height * kDebugRippleHeightGain, -1, 1);
+    return (height * lerp(1 - kDebugRippleWindowShade, 1, ripples.coverage)).xxx;
+}
+
+float3 DebugColour(float3 N, float4 foamAlbedo, float3 transmittance, float3 reflected, RippleSample ripples)
+{
+    float view = WaterDebugView();
+    if (view < kDebugNormal + 0.5)
+        return N * 0.5 + 0.5;
+    if (view < kDebugFoamCoverage + 0.5)
+        return foamAlbedo.aaa;
+    if (view < kDebugTransmittance + 0.5)
+        return transmittance;
+    if (view < kDebugReflection + 0.5)
+        return LinearToGamma(reflected);
+    if (view < kDebugLiquidClass + 0.5)
+        return ClassColour(WaterClassIndex());
+    return RippleColour(ripples);
+}
+
+float4 main(float2 uv : TEXCOORD0) : COLOR0
+{
+    float2 pixel = FullPixelFromUv(uv);
+    [branch] if (tex2Dlod(sWaterDepth, float4(CopyUv(pixel), 0, 0)).r <= 0)
+        return 0;
+    WaterPixel w = ReconstructWaterPixel(pixel);
+    gLandSun = LandSunVisibility(w.position);
+    RippleSample ripples = SampleRipples(w);
+    WaveState waves = SampleWaves(w, ripples.slope);
+    float4 foamAlbedo = FoamAlbedo(w, waves);
+
+    float3 N = normalize(float3(-waves.moments.xy, 1));
+    float3 V = w.toCamera;
+    float3 L = ToLight();
+    float NoV = clamp(dot(N, V), kMinCosine, 1);
+    float variance = SlopeVariance(waves.moments);
+    float envRoughness = PerceptualRoughness(lerp(EnvironmentRoughnessParameter(), kFoamRoughness, foamAlbedo.a),
+                                             variance);
+    float sunRoughness = PerceptualRoughness(lerp(SunRoughnessParameter(), kFoamRoughness, foamAlbedo.a), variance);
+
+    Refraction refraction = RefractScene(w, waves.moments.xy);
+    float3 transmittance = Transmittance(refraction.pathDepth);
+    float3 inscatter = InScattering(V, NoV, CrestTilt(waves.moments), waves.foam.y, transmittance);
+    float3 water = transmittance * refraction.scene + inscatter;
+    float3 foam = FoamLight(N, waves.foam.x) * foamAlbedo.rgb + inscatter;
+    float3 colour = lerp(water, foam, foamAlbedo.a);
+
+    float3 R = ReflectedDirection(V, N);
+    float2 hitUv;
+    float4 screenReflection = TraceScreenReflection(w, pixel, R, hitUv);
+    float3 sky = 0;
+    [branch] if (screenReflection.a < 1)
+        sky = FoggedSkyReflection(w, R, SkyColour(R.z));
+    [branch] if (screenReflection.a > 0)
+        screenReflection.rgb = FoggedScreenReflection(w, R, screenReflection.rgb, hitUv);
+    float3 reflected = lerp(sky, screenReflection.rgb, screenReflection.a);
+    float3 environment = reflected * EnvironmentBrdf(envRoughness, NoV) * ReflectionStrength();
+    float3 H = normalize(V + L);
+    float environmentAttenuation = 1 - FresnelSchlick(dot(H, V)) * GlintVisibility();
+    float3 sunSpecular = GlintVisibility() * SunColour() * SpecularStrength() * SunGlint(sunRoughness, N, V, L);
+    colour += sunSpecular + environmentAttenuation * environment;
+
+    [branch] if (WaterDebugView() > 0.5)
+        return float4(DebugColour(N, foamAlbedo, transmittance, reflected, ripples), 1);
+    float3 encoded = LinearToGamma(colour);
+    [branch] if (StockFogApplies())
+        encoded = lerp(StockFogColour(), encoded, StockFogVisibility(w.waterZ));
+    encoded = lerp(refraction.copied, encoded, saturate(kShoreFadePerYard * refraction.pathDepth));
+    return Dithered(float4(encoded, 1), pixel, float2(17, 229), cDither.y);
+}

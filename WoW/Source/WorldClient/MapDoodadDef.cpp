@@ -1,4 +1,5 @@
 #include "MapDoodadDef.h"
+#include "WoW/Source/WorldClient/WorldLightingConstants.h"
 #include "Engine/Source/Model2/M2Data.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -20,14 +21,16 @@
 #include "Engine/Source/Model2/M2Scene.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "Engine/Source/Tempest/C3Segment.h"
+#include "WoW/Source/WorldClient/LegionLights.h"
+#include "WoW/Source/WorldClient/SkyOcclusion.h"
 
 // VERIFY: 4012bf37 manual
 // OFFSET: 0x007B4FA0
 void CMapDoodadDef::ExtendBounds(CMapDoodadDef* doodadDef, CMapBaseObj* parent) {
-    if (parent->m_type & 0x4) {
+    if (parent->m_type & CMapBaseObj::Type_Chunk) {
         CMapChunk* chunk = static_cast<CMapChunk*>(parent);
         chunk->m_bbox.t.z = doodadDef->m_bbox.t.z < chunk->m_bbox.t.z ? chunk->m_bbox.t.z : doodadDef->m_bbox.t.z;
-    } else if (parent->m_type & 0x10) {
+    } else if (parent->m_type & CMapBaseObj::Type_MapObjDefGroup) {
         CMapObjDefGroup* group = static_cast<CMapObjDefGroup*>(parent);
         group->m_bbox |= doodadDef->m_bbox;
 
@@ -106,6 +109,8 @@ void CMapDoodadDef::UpdateBounds() {
     if (!(CWorld::enables & Enable_NoAnimation) && fadeLevel < 3) {
         this->m_model->m_fFlags &= ~0x40u;
     }
+    LegionLights::AddDoodad(this);     // LIGHTBAKE (not in 12340): the static light list
+    SkyOcclusion::AddDoodad(this);     // BENILLA sky occlusion (not in 12340)
 }
 
 // VERIFY: f560b093 manual
@@ -141,7 +146,7 @@ void CMapDoodadDef::SelectLights(CM2Lighting* lighting) {
 // VERIFY: fc0f43f4 manual
 // OFFSET: 0x007C21E0
 CMapDoodadDef::CMapDoodadDef() {
-    this->m_type |= 0x40;
+    this->m_type |= CMapBaseObj::Type_DoodadDef;
     this->m_model = nullptr;
     this->m_collisionGuid = WOWGUID();
     this->m_doodadSet = 0;
@@ -156,7 +161,7 @@ void CMapDoodadDef::SelectUnderwater(CM2Lighting* lighting) {
         for (CMapBaseObjLink* link = this->m_parentLinkList.Head(); link; link = this->m_parentLinkList.Next(link)) {
             CMapBaseObj* parent = link->m_ref;
 
-            if (!(parent->m_type & 0x10)) {
+            if (!(parent->m_type & CMapBaseObj::Type_MapObjDefGroup)) {
                 this->m_staticFlags |= 0x80;
                 C3Vector pos(this->m_position.x, this->m_position.y, this->m_bbox.b.z);
                 int32_t liquidType;
@@ -324,8 +329,8 @@ bool CMapDoodadDef::QueryInteriorLighting(CMapObjDef* mapObjDef, int32_t groupNu
     }
 
     CImVector limit;
-    *reinterpret_cast<uint32_t*>(&limit) = 0xA8;
-    this->AdjustLightmap(&color, &this->m_m2DiffuseColor, limit, &this->m_m2AmbientColor, 96);
+    *reinterpret_cast<uint32_t*>(&limit) = MIN_INTERIOR_DIRCOLOR;
+    this->AdjustLightmap(&color, &this->m_m2DiffuseColor, limit, &this->m_m2AmbientColor, MAX_AMBIENT);
 
     if (!flag) {
         this->m_staticFlags &= ~0x1000;
@@ -348,4 +353,6 @@ bool CMapDoodadDef::QueryInteriorLighting(CMapObjDef* mapObjDef, int32_t groupNu
 // VERIFY: aa96dd41 manual
 // OFFSET: [0x007C2350, 0x007C2E40]
 CMapDoodadDef::~CMapDoodadDef() {
+    LegionLights::RemoveDoodad(this);  // LIGHTBAKE (not in 12340)
+    SkyOcclusion::RemoveDoodad(this);  // BENILLA sky occlusion (not in 12340)
 }

@@ -181,7 +181,7 @@ void CSimpleHTML::ParseIMG(XMLNode* node, CStatus* status) {
     }
 
     CONTENTNODE* content = this->m_content.NewNode(2, 0, 0);
-    content->m_type = 2;
+    content->m_type = CONTENTNODE::CONTENT_TYPE::IMAGE;
     content->m_region = texture;
 }
 
@@ -216,7 +216,7 @@ void CSimpleHTML::AddText(const char* text, HTML_TEXT_TYPE type, uint32_t justif
 
     CONTENTNODE* content = this->m_content.NewNode(2, 0, 0);
     content->m_region = string;
-    content->m_type = SStrStr(text, "|H") != nullptr;
+    content->m_type = SStrStr(text, "|H") != nullptr ? CONTENTNODE::CONTENT_TYPE::HYPERLINK_TEXT : CONTENTNODE::CONTENT_TYPE::TEXT;
 }
 
 // VERIFY: 31268dcd auto
@@ -392,7 +392,7 @@ void CSimpleHTML::RefreshHyperlinks() {
     CONTENTNODE* content = this->m_content.Head();
 
     while (!TSList<CONTENTNODE, TSGetLink<CONTENTNODE> >::IsEnd(content)) {
-        if (content->m_type == 1) {
+        if (content->m_type == CONTENTNODE::CONTENT_TYPE::HYPERLINK_TEXT) {
             CSimpleFontString* string = static_cast<CSimpleFontString*>(content->m_region);
             const GXUFONTHYPERLINKINFO* info;
             uint32_t count = GxuFontStringHyperLinkInfo(string->m_string ? TextBlockGetStringPtr(string->m_string) : nullptr, info);

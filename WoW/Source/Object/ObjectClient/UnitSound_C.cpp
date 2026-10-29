@@ -1,4 +1,5 @@
 #include "UnitSound_C.h"
+#include "WoW/Common/Types.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Services/SysMessage.h"
@@ -18,7 +19,7 @@
 #include "WoW/Source/WorldClient/World.h"
 
 // STATIC: 0x00ADB5D8
-static const uint32_t s_unitSoundChance[14] = { 70, 100, 60, 100, 100, 40, 100, 100, 100, 100, 100, 100, 100, 0 };
+static const uint32_t s_unitSoundChance[NUM_UNITSOUNDTYPES] = { 70, 100, 60, 100, 100, 40, 100, 100, 100, 100, 100, 100, 100, 0 };
 
 // STATIC: 0x00CA12D0
 static CVar* s_cvFootstepSounds;
@@ -62,8 +63,8 @@ static void UnitSoundLoadDeathThuds() {
 // VERIFY: d5edf73b manual
 // OFFSET: 0x00746540
 void CGUnit_C::SetImpactKitEffect(bool offhand, const ATTACKROUNDINFO* info, const C3Vector* position) {
-    CGUnit_C* attacker = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(info->m_attacker, TYPEMASK_UNIT, __FILE__, __LINE__));
-    const CGUnitVirtualItem* weapon = attacker ? attacker->GetAttackingWeapon((info->m_hitInfo >> 2) & 1, false) : nullptr;
+    CGUnit_C* attacker = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(info->m_attacker, TYPE_UNIT, __FILE__, __LINE__));
+    const CGUnitVirtualItem* weapon = attacker ? attacker->GetAttackingWeapon(static_cast<COMBATHAND>((info->m_hitInfo >> 2) & 1), false) : nullptr;
     const CGUnitVirtualItem* parry = this->GetParryingItem(offhand);
 
     if (parry) {
@@ -100,36 +101,36 @@ void UnitSoundShutdown() {
 
 // VERIFY: 7e015e11 auto
 // OFFSET: 0x007461E0
-int32_t GetSoundID(const CreatureSoundDataRec* soundData, uint32_t soundType) {
+int32_t GetSoundID(const CreatureSoundDataRec* soundData, UNITSOUNDTYPE soundType) {
     if (!soundData) {
         return 0;
     }
 
     switch (soundType) {
-        case 0:
+        case UNITSOUNDTYPE_EXERTION:
             return soundData->m_soundExertionID;
-        case 1:
+        case UNITSOUNDTYPE_EXERTIONCRITICAL:
             return soundData->m_soundExertionCriticalID;
-        case 2:
-        case 13:
+        case UNITSOUNDTYPE_INJURY:
+        case UNITSOUNDTYPE_INJURY_FALL:
             return soundData->m_soundInjuryID;
-        case 3:
+        case UNITSOUNDTYPE_INJURYCRITICAL:
             return soundData->m_soundInjuryCriticalID;
-        case 4:
+        case UNITSOUNDTYPE_STUN:
             return soundData->m_soundStunID;
-        case 5:
+        case UNITSOUNDTYPE_STAND:
             return soundData->m_soundStandID;
-        case 7:
+        case UNITSOUNDTYPE_WINGFLAP:
             return soundData->m_soundWingFlapID;
-        case 8:
+        case UNITSOUNDTYPE_ALERT:
             return soundData->m_soundAlertID;
-        case 9:
+        case UNITSOUNDTYPE_INJURYCRUSHINGBLOW:
             return soundData->m_soundInjuryCrushingBlowID;
-        case 10:
+        case UNITSOUNDTYPE_WINGGLIDE:
             return soundData->m_soundWingGlideID;
-        case 11:
+        case UNITSOUNDTYPE_JUMPSTART:
             return soundData->m_soundJumpStartID;
-        case 12:
+        case UNITSOUNDTYPE_JUMPEND:
             return soundData->m_soundJumpEndID;
         default:
             return 0;
@@ -138,8 +139,8 @@ int32_t GetSoundID(const CreatureSoundDataRec* soundData, uint32_t soundType) {
 
 // VERIFY: dab78e5a auto
 // OFFSET: 0x007464A0
-int32_t CheckUnitSoundTimer(uint32_t soundType) {
-    if (soundType == 5) {
+int32_t CheckUnitSoundTimer(UNITSOUNDTYPE soundType) {
+    if (soundType == UNITSOUNDTYPE_STAND) {
         if (static_cast<int32_t>(FrameTime::s_curTimeMs - s_lastStandSoundTime - 10000) < 0) {
             return 0;
         }
@@ -201,7 +202,7 @@ void CGUnit_C::PlayDeathThud() {
     if (!soundKitId) {
         int32_t defaults[5] = { 907, 912, 917, 922, 927 };
         soundKitId = defaults[size];
-        SysMsgPrintf(STATUS_WARNING, 2, "INVALID DEATH THUD SOUND: DEFAULTING TO ID %d", soundKitId);
+        SysMsgPrintf(SYSMSG_WARNING, 2, "INVALID DEATH THUD SOUND: DEFAULTING TO ID %d", soundKitId);
     }
 
     SI2::PlaySoundKit(soundKitId, &position, nullptr, nullptr, 0, nullptr, 1, 0);
@@ -249,7 +250,7 @@ void CGUnit_C::HandleFootfallAnimEvent(const C3Vector& position) {
         return;
     }
 
-    if ((this->m_obj->m_type & TYPEMASK_PLAYER) && (static_cast<CGPlayer_C*>(this)->m_player->m_playerFlags & 0x10)) {
+    if ((this->m_obj->m_type & TYPE_PLAYER) && (static_cast<CGPlayer_C*>(this)->m_player->m_playerFlags & 0x10)) {
         return;
     }
 
@@ -264,12 +265,12 @@ void CGUnit_C::HandleFootfallAnimEvent(const C3Vector& position) {
 
 // VERIFY: 63312a72 manual
 // OFFSET: 0x00747310
-void CGUnit_C::PlayUnitSound(uint32_t soundType, int32_t force) {
+void CGUnit_C::PlayUnitSound(UNITSOUNDTYPE soundType, int32_t force) {
     if (!force && static_cast<uint32_t>((static_cast<uint64_t>(CRandom::uint32_(g_rndSeed)) * 101) >> 32) > s_unitSoundChance[soundType]) {
         return;
     }
 
-    if (soundType == 5) {
+    if (soundType == UNITSOUNDTYPE_STAND) {
         if (static_cast<int32_t>(FrameTime::s_curTimeMs - s_lastStandSoundTime - 10000) < 0) {
             return;
         }
@@ -303,7 +304,7 @@ void CGUnit_C::PlayUnitSound(uint32_t soundType, int32_t force) {
         SE2SoundKitProperties properties;
         properties.ResetToDefaults();
 
-        if (soundType == 7) {
+        if (soundType == UNITSOUNDTYPE_WINGFLAP) {
             properties.m_maxAudibleBehavior = 0;
         }
 
@@ -320,13 +321,13 @@ void CGUnit_C::KillCreatureLoopSound() {
 
 // VERIFY: f678b1e1 auto
 // OFFSET: 0x00746360
-bool CGUnit_C::GetWeaponSwingType(bool offhand, int32_t* swingType) const {
-    if (!this->GetVirtualItemDisplayID(offhand == false)) {
-        *swingType = 0;
+bool CGUnit_C::GetWeaponSwingType(bool offhand, WEAPONSWING_SOUNDTYPES* swingType) const {
+    if (!this->GetVirtualItemDisplayID(static_cast<VIRTUAL_MONSTER_SLOT>(offhand == false))) {
+        *swingType = WEAPONSWING_LIGHT;
         return true;
     }
 
-    const CGUnitVirtualItem* item = this->GetVirtualItem(offhand == false, false);
+    const CGUnitVirtualItem* item = this->GetVirtualItem(static_cast<VIRTUAL_MONSTER_SLOT>(offhand == false), false);
 
     if (!item || item->m_classID != 2) {
         return false;
@@ -335,7 +336,7 @@ bool CGUnit_C::GetWeaponSwingType(bool offhand, int32_t* swingType) const {
     const ItemSubClassRec* subClass = SDBItemSubclassGetSubClassRec(2, item->m_subclassID);
 
     if (subClass) {
-        *swingType = subClass->m_weaponSwingSize;
+        *swingType = static_cast<WEAPONSWING_SOUNDTYPES>(subClass->m_weaponSwingSize);
     }
 
     return subClass != nullptr;
@@ -345,7 +346,7 @@ bool CGUnit_C::GetWeaponSwingType(bool offhand, int32_t* swingType) const {
 // OFFSET: 0x007465E0
 void CGUnit_C::PlayStandSound() {
     if (this->m_obj->m_guid != ClntObjMgrGetActivePlayer()) {
-        this->PlayUnitSound(5, 0);
+        this->PlayUnitSound(UNITSOUNDTYPE_STAND, 0);
     }
 }
 
@@ -389,23 +390,23 @@ int32_t CGUnit_C::GetNewNPCSoundCount(int32_t count, int32_t* soundKitId, int32_
 
     NPCSoundsRec* sounds = g_npcSoundsDB.GetRecord(this->m_displayInfo->m_npcsoundID);
 
-    if (!sounds || !sounds->m_soundID[0]) {
+    if (!sounds || !sounds->m_soundID[NPCSOUND_HELLO]) {
         return -1;
     }
 
     if (count < 5) {
-        *soundKitId = sounds->m_soundID[0];
+        *soundKitId = sounds->m_soundID[NPCSOUND_HELLO];
         *soundIndex = -1;
         return count + 1;
     }
 
-    if (count - 5 < SI2::GetNumSoundsInSoundKit(sounds->m_soundID[2])) {
+    if (count - 5 < SI2::GetNumSoundsInSoundKit(sounds->m_soundID[NPCSOUND_PISSED])) {
         *soundIndex = count - 5;
-        *soundKitId = sounds->m_soundID[2];
+        *soundKitId = sounds->m_soundID[NPCSOUND_PISSED];
         return count + 1;
     }
 
-    *soundKitId = sounds->m_soundID[0];
+    *soundKitId = sounds->m_soundID[NPCSOUND_HELLO];
     *soundIndex = -1;
     return 0;
 }
@@ -435,7 +436,7 @@ void CGUnit_C::PlayAISound(int32_t soundKitId) {
 void CGUnit_C::PlayEmoteStateSound(const C3Vector* position) {
     EmotesRec* emote = g_emotesDB.GetRecord(this->m_unit->m_unitNpcEmotestate);
 
-    if (emote && emote->m_emoteSpecProc == 2) {
+    if (emote && emote->m_emoteSpecProc == EMOTESPECPROC_EMOTESTATEHANDLER) {
         SI2::PlaySoundKit(emote->m_eventSoundID, position, nullptr, nullptr, 0, nullptr, 1, 0);
     }
 }
@@ -583,15 +584,15 @@ void CGUnit_C::CheckLoopSound() {
 
 // VERIFY: c9c84a2c manual
 // OFFSET: 0x00746B30
-int32_t CGUnit_C::GetUnitSoundKitIndex(uint32_t soundType) const {
+int32_t CGUnit_C::GetUnitSoundKitIndex(UNITSOUNDTYPE soundType) const {
     switch (soundType) {
-        case 0:
-        case 1:
+        case UNITSOUNDTYPE_EXERTION:
+        case UNITSOUNDTYPE_EXERTIONCRITICAL:
             return (this->m_creatureCacheEntry && (this->m_creatureCacheEntry->m_typeFlags & 0x20)) ? 15 : 9;
 
-        case 2:
-        case 3:
-        case 9:
+        case UNITSOUNDTYPE_INJURY:
+        case UNITSOUNDTYPE_INJURYCRITICAL:
+        case UNITSOUNDTYPE_INJURYCRUSHINGBLOW:
             return (this->m_creatureCacheEntry && (this->m_creatureCacheEntry->m_typeFlags & 0x20)) ? 16 : 11;
 
         default:
@@ -602,7 +603,7 @@ int32_t CGUnit_C::GetUnitSoundKitIndex(uint32_t soundType) const {
 // VERIFY: bae0a2ba manual
 // OFFSET: 0x00746D60
 void CGUnit_C::PlayEmoteSound(int32_t soundKitId, bool checkCVars, int32_t fileIndex) {
-    if ((this->m_obj->m_type & TYPEMASK_PLAYER) && this->m_unit->m_unitFieldHealth <= 0) {
+    if ((this->m_obj->m_type & TYPE_PLAYER) && this->m_unit->m_unitFieldHealth <= 0) {
         return;
     }
 
@@ -633,7 +634,7 @@ void CGUnit_C::PlayEmoteSound(int32_t soundKitId, bool checkCVars, int32_t fileI
         atCharacter = listenerAtCharacter ? 1 : 0;
     }
 
-    if ((this->m_obj->m_type & TYPEMASK_PLAYER) && static_cast<CGPlayer_C*>(this)->m_dance) {
+    if ((this->m_obj->m_type & TYPE_PLAYER) && static_cast<CGPlayer_C*>(this)->m_dance) {
         return;
     }
 
@@ -661,7 +662,7 @@ void CGUnit_C::PlayEmoteSound(int32_t soundKitId, bool checkCVars, int32_t fileI
         }
     }
 
-    if (soundKitId != 6576 && this->m_unit->m_unitFieldBytes0[1] == 6) {
+    if (soundKitId != 6576 && this->m_unit->m_unitFieldBytes0[1] == CLASS_DEATH_KNIGHT) {
         properties.m_useDspChain = 1;
         SI2::DK_GetPlayerFilterName(this, properties.m_dspChainName, sizeof(properties.m_dspChainName));
     }
@@ -779,7 +780,7 @@ void CGUnit_C::OnAiReaction(int32_t reaction) {
         properties.m_priority = 110;
         CGUnit_C* player = ClntObjMgrGetActivePlayerObj();
 
-        if (player && player->m_unit->m_unitFieldBytes0[1] == 6) {
+        if (player && player->m_unit->m_unitFieldBytes0[1] == CLASS_DEATH_KNIGHT) {
             properties.m_useDspChain = 1;
             SI2::DK_GetPlayerFilterName(player, properties.m_dspChainName, sizeof(properties.m_dspChainName));
         }

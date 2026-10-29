@@ -11,7 +11,21 @@ class CGItem_C;
 struct lua_State;
 
 struct AuctionSortCriteria {
-    /* 0000 */ int32_t m_column;
+    enum COLUMN : int32_t {
+        LEVEL = 0,
+        QUALITY = 1,
+        BUYOUT_THEN_BID = 2,
+        DURATION = 3,
+        BID_STATUS = 4,
+        NAME = 5,
+        MIN_BID_BUYOUT = 6,
+        SELLER = 7,
+        BID = 8,
+        QUANTITY = 9,
+        BUYOUT = 10,
+    };
+
+    /* 0000 */ COLUMN m_column;
     /* 0004 */ int32_t m_reverse;
     /* 0008 */ int32_t m_valid;
 };
@@ -40,12 +54,19 @@ struct AuctionInvType {
 };
 
 struct AuctionItemInfo {
+    static const int32_t NUM_ENCHANTMENTS = 7;
+
+    enum SALE_STATE : int32_t {
+        UNSOLD = 0,
+        SOLD = 1,
+    };
+
     /* 0000 */ int32_t m_auctionHouseID;
     /* 0004 */ uint32_t m_auctionID;
     /* 0008 */ uint32_t m_itemID;
-    /* 000C */ uint32_t m_enchantID[7];
-    /* 0028 */ uint32_t m_enchantDuration[7];
-    /* 0044 */ uint32_t m_enchantCharges[7];
+    /* 000C */ uint32_t m_enchantID[NUM_ENCHANTMENTS];
+    /* 0028 */ uint32_t m_enchantDuration[NUM_ENCHANTMENTS];
+    /* 0044 */ uint32_t m_enchantCharges[NUM_ENCHANTMENTS];
     /* 0060 */ uint32_t m_randomPropertyID;
     /* 0064 */ uint32_t m_suffixFactor;
     /* 0068 */ uint32_t m_count;
@@ -59,7 +80,7 @@ struct AuctionItemInfo {
     /* 008C */ uint32_t m_expireTime;
     /* 0090 */ WOWGUID m_bidder;
     /* 0098 */ uint32_t m_bid;
-    /* 009C */ int32_t m_sold;
+    /* 009C */ SALE_STATE m_sold;
 };
 
 struct AuctionNotifyInfo {
@@ -69,11 +90,71 @@ struct AuctionNotifyInfo {
 
 class CGAuctionHouse {
     public:
+    enum COMMAND_RESULT : uint32_t {
+        SUCCESS = 0,
+        INVENTORY_ERROR = 1,
+        NOT_ENOUGH_MONEY = 3,
+        ITEM_NOT_FOUND = 4,
+        HIGHER_BID = 5,
+        BID_INCREMENT = 7,
+        BID_OWN_AUCTION = 10,
+        RESTRICTED_ACCOUNT = 13,
+    };
+
+    enum TIME_LEFT_CATEGORY : uint32_t {
+        TIME_LEFT_SHORT = 1,
+        TIME_LEFT_MEDIUM = 2,
+        TIME_LEFT_LONG = 3,
+        TIME_LEFT_VERY_LONG = 4,
+    };
+
+    enum COMMAND_ACTION : uint32_t {
+        START_AUCTION = 0,
+        CANCEL_AUCTION = 1,
+        PLACE_BID = 2,
+    };
+
+    enum RUN_TIME : uint32_t {
+        RUN_TIME_SHORT = 720,
+        RUN_TIME_DEFAULT = 1440,
+        RUN_TIME_LONG = 2880,
+        NUM_RUN_TIMES = 3,
+    };
+
+    static const int32_t MIN_DEPOSIT = 100;
+    static const int32_t INITIAL_OUTBID_CAPACITY = 8;
+    static const int32_t HIGH_BID_THRESHOLD = 2000000000;
+    static const int32_t EXPIRY_GRACE_MS = 10000;
+    static const int32_t ITEMS_PER_PAGE = 50;
+    static const int32_t BID_EXTENSION_MS = 90000;
+    static const int32_t DEFAULT_QUERY_DELAY_MS = 5000;
+    static const int32_t GET_ALL_QUERY_COOLDOWN_MS = 900000;
+    static const int32_t NUM_SELL_ITEM_INFO_RESULTS = 9;
+    static const int32_t NUM_ITEM_INFO_RESULTS = 13;
+    static const int32_t NUM_TIME_LEFT_THRESHOLDS = 3;
+    static const int32_t NUM_CLASS_FILTERS = 12;
+    static const int32_t NUM_INVENTORY_FILTERS = 14;
+    static const int32_t MAX_SELL_ITEMS = 200;
+    static const int32_t MAX_SORT_CRITERIA = 12;
+
+    enum BIDDER_SORT_RANK : int32_t {
+        NO_BIDDER = 0,
+        OTHER_BIDDER = 1,
+        ACTIVE_PLAYER_MATCH = 2,
+    };
+
+    enum LIST_TYPE : int32_t {
+        BROWSE_LIST = 0,
+        BIDDER_LIST = 1,
+        OWNER_LIST = 2,
+        NUM_LIST_TYPES = 3,
+    };
+
     static void CloseAuctionHouse();
     static bool IsItemForSell(WOWGUID item);
-    static AuctionSortCriteria m_bidSortCriteria[12];
-    static AuctionSortCriteria m_ownedSortCriteria[12];
-    static AuctionSortCriteria m_listSortCriteria[12];
+    static AuctionSortCriteria m_bidSortCriteria[MAX_SORT_CRITERIA];
+    static AuctionSortCriteria m_ownedSortCriteria[MAX_SORT_CRITERIA];
+    static AuctionSortCriteria m_listSortCriteria[MAX_SORT_CRITERIA];
     static int32_t m_numOutbidItems;
     static uint32_t m_lastGetAllTime;
     static TSGrowableArray<OutbidItemInfo*> m_outbidItems;
@@ -87,15 +168,15 @@ class CGAuctionHouse {
     static WOWGUID m_multisellAuctioneer;
     static uint32_t m_multisellBid;
     static uint32_t m_multisellBuyout;
-    static uint32_t m_multisellDuration;
+    static RUN_TIME m_multisellDuration;
     static uint32_t m_multisellStackSize;
     static uint32_t m_multisellTotal;
     static uint32_t m_numSellItems;
-    static AuctionSellItem m_sellItems[200];
+    static AuctionSellItem m_sellItems[MAX_SELL_ITEMS];
     static int32_t m_havePendingSell;
     static WOWGUID m_sellItemContainer;
-    static uint32_t m_lastQueryTime[3];
-    static int32_t m_queryPending[3];
+    static uint32_t m_lastQueryTime[LIST_TYPE::NUM_LIST_TYPES];
+    static int32_t m_queryPending[LIST_TYPE::NUM_LIST_TYPES];
     static uint32_t m_numTotalOwned;
     static int32_t m_canGetOwnerList;
     static int32_t m_canGetBidderList;
@@ -130,7 +211,7 @@ class CGAuctionHouse {
     static void ClearOwnedSortCriteria();
     static void ClearBidSortCriteria();
     static const char* SortTypeToName(int32_t column);
-    static bool TableNameToType(const char* name, int32_t* type);
+    static bool TableNameToType(const char* name, LIST_TYPE* type);
     static void LockAllSellItems();
     static void UnlockAllSellItems();
     static void OnMultisellFailure(bool silent);
@@ -169,7 +250,7 @@ int32_t Packet_SMSG_AUCTION_LIST_PENDING_SALES(void* param, NETMESSAGE msgId, ui
 AuctionItemInfo* GetListAuction(uint32_t index);
 AuctionItemInfo* GetOwnerAuction(uint32_t index);
 AuctionItemInfo* GetBidderAuction(uint32_t index);
-bool AuctionSortToColumnIndex(const char* name, int32_t* column);
+bool AuctionSortToColumnIndex(const char* name, AuctionSortCriteria::COLUMN* column);
 int32_t AuctionListComparer(const void* a, const void* b);
 int32_t CompareFunction(const void* a, const void* b);
 int32_t AuctionBidderListComparer(const void* a, const void* b);

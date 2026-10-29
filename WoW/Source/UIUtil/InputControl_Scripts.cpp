@@ -21,7 +21,7 @@
 // VERIFY: 46af036c manual
 // OFFSET: 0x005FBF80
 static int32_t Script_JumpOrAscendStart(lua_State* L) {
-    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!mover) {
         return 0;
@@ -33,7 +33,7 @@ static int32_t Script_JumpOrAscendStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x2000, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_ASCEND_PLAYER_KEY, 1, CSimpleTop::s_eventTime, 0);
 
     if (mover->m_movement->m_flags & 0x2200000) {
         return 0;
@@ -48,7 +48,7 @@ static int32_t Script_JumpOrAscendStart(lua_State* L) {
     uint32_t time = CSimpleTop::s_eventTime;
 
     if (mover->GetClientStandState()) {
-        mover->ChangeStandState(0);
+        mover->ChangeStandState(UNIT_STANDING);
     }
 
     if (ClntObjMgrGetActivePlayerObj()) {
@@ -73,7 +73,7 @@ static int32_t Script_AscendStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x2000, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_ASCEND_PLAYER_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -86,7 +86,7 @@ static int32_t Script_DescendStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x4000, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_DESCEND_PLAYER_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -97,7 +97,7 @@ static int32_t Script_ToggleRun(lua_State* L) {
         return 0;
     }
 
-    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!mover) {
         return 0;
@@ -116,13 +116,13 @@ static int32_t Script_ToggleRun(lua_State* L) {
 // OFFSET: 0x005FC190
 static int32_t Script_ToggleAutoRun(lua_State* L) {
     CGInputControl* input = CGInputControl::s_inputControl;
-    int32_t enable = !(input->m_flags & 0x1000);
+    int32_t enable = !(input->m_flags & INPUT_MOVE_PLAYER_AUTORUN);
 
     if (!CGGameUI::CanPerformAction(0)) {
         return 0;
     }
 
-    input->ToggleControlBit(0x1000, enable, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_MOVE_PLAYER_AUTORUN, enable, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -135,7 +135,7 @@ static int32_t Script_MoveForwardStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x10, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_MOVE_PLAYER_FORWARD_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -148,7 +148,7 @@ static int32_t Script_MoveForwardStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x10, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_MOVE_PLAYER_FORWARD_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -161,7 +161,7 @@ static int32_t Script_MoveBackwardStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x20, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_MOVE_PLAYER_BACKWARD_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -174,7 +174,7 @@ static int32_t Script_MoveBackwardStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x20, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_MOVE_PLAYER_BACKWARD_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -187,7 +187,7 @@ static int32_t Script_TurnLeftStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x100, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_TURN_PLAYER_LEFT_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -200,7 +200,7 @@ static int32_t Script_TurnLeftStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x100, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_TURN_PLAYER_LEFT_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -213,7 +213,7 @@ static int32_t Script_TurnRightStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x200, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_TURN_PLAYER_RIGHT_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -226,7 +226,7 @@ static int32_t Script_TurnRightStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x200, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_TURN_PLAYER_RIGHT_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -239,7 +239,7 @@ static int32_t Script_StrafeLeftStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x40, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_STRAFE_PLAYER_LEFT_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -252,7 +252,7 @@ static int32_t Script_StrafeLeftStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x40, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_STRAFE_PLAYER_LEFT_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -265,7 +265,7 @@ static int32_t Script_StrafeRightStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x80, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_STRAFE_PLAYER_RIGHT_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -278,7 +278,7 @@ static int32_t Script_StrafeRightStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x80, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_STRAFE_PLAYER_RIGHT_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -291,7 +291,7 @@ static int32_t Script_VehicleAimUpStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x400, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_PITCH_PLAYER_UP_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -304,7 +304,7 @@ static int32_t Script_VehicleAimDownStop(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x800, 0, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_PITCH_PLAYER_DOWN_KEY, 0, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -317,7 +317,7 @@ static int32_t Script_VehicleAimUpStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x400, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_PITCH_PLAYER_UP_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -330,7 +330,7 @@ static int32_t Script_VehicleAimDownStart(lua_State* L) {
         return 0;
     }
 
-    input->ToggleControlBit(0x800, 1, CSimpleTop::s_eventTime, 0);
+    input->ToggleControlBit(INPUT_PITCH_PLAYER_DOWN_KEY, 1, CSimpleTop::s_eventTime, 0);
     return 0;
 }
 
@@ -342,13 +342,13 @@ static int32_t Script_TurnOrActionStart(lua_State* L) {
     if (CGGameUI::CanPerformAction(0)) {
         uint32_t time = CSimpleTop::s_eventTime;
 
-        if (!(input->m_flags & 0x3)) {
-            input->m_pendingDefaultAction = PENDING_ACTION_RIGHT;
+        if (!(input->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+            input->m_pendingDefaultAction = INPUT_RELEASE_ACTION;
             CGWorldFrame::s_currentWorldFrame->SetupDefaultAction();
         }
 
-        if (input->SetControlBit(1, time)) {
-            if ((input->m_flags & 0x1) && (input->m_flags & 0x2)) {
+        if (input->SetControlBit(INPUT_TURN_PLAYER, time)) {
+            if ((input->m_flags & INPUT_TURN_PLAYER) && (input->m_flags & INPUT_TURN_CAMERA)) {
                 CheckToCancelCurrentChannelSpell();
             }
 
@@ -367,7 +367,7 @@ static int32_t Script_TurnOrActionStop(lua_State* L) {
     if (CGGameUI::CanPerformAction(0)) {
         uint32_t time = CSimpleTop::s_eventTime;
 
-        if (input->UnsetControlBit(1, time, 0)) {
+        if (input->UnsetControlBit(INPUT_TURN_PLAYER, time, 0)) {
             input->UpdatePlayer(time, 1);
         }
     }
@@ -383,13 +383,13 @@ static int32_t Script_CameraOrSelectOrMoveStart(lua_State* L) {
     if (CGGameUI::CanPerformAction(0)) {
         uint32_t time = CSimpleTop::s_eventTime;
 
-        if (!(input->m_flags & 0x3)) {
-            input->m_pendingDefaultAction = PENDING_ACTION_LEFT;
+        if (!(input->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+            input->m_pendingDefaultAction = INPUT_RELEASE_SELECT;
             CGWorldFrame::s_currentWorldFrame->SetupDefaultAction();
         }
 
-        if (input->SetControlBit(2, time)) {
-            if ((input->m_flags & 0x1) && (input->m_flags & 0x2)) {
+        if (input->SetControlBit(INPUT_TURN_CAMERA, time)) {
+            if ((input->m_flags & INPUT_TURN_PLAYER) && (input->m_flags & INPUT_TURN_CAMERA)) {
                 CheckToCancelCurrentChannelSpell();
             }
 
@@ -408,7 +408,7 @@ static int32_t Script_CameraOrSelectOrMoveStop(lua_State* L) {
     if (CGGameUI::CanPerformAction(0)) {
         uint32_t time = CSimpleTop::s_eventTime;
 
-        if (input->UnsetControlBit(2, time, StringToBOOL(L, 1, 0))) {
+        if (input->UnsetControlBit(INPUT_TURN_CAMERA, time, StringToBOOL(L, 1, 0))) {
             input->UpdatePlayer(time, 1);
         }
     }
@@ -421,9 +421,9 @@ static int32_t Script_CameraOrSelectOrMoveStop(lua_State* L) {
 static int32_t Script_MouselookStop(lua_State* L) {
     CGInputControl* input = CGInputControl::s_inputControl;
     uint32_t time = CSimpleTop::s_eventTime;
-    input->m_pendingDefaultAction = PENDING_ACTION_NONE;
+    input->m_pendingDefaultAction = INPUT_RELEASE_NONE;
 
-    if (input->UnsetControlBit(1, time, 0)) {
+    if (input->UnsetControlBit(INPUT_TURN_PLAYER, time, 0)) {
         input->UpdatePlayer(time, 1);
     }
 
@@ -436,10 +436,10 @@ static int32_t Script_MouselookStop(lua_State* L) {
 static int32_t Script_MouselookStart(lua_State* L) {
     CGInputControl* input = CGInputControl::s_inputControl;
     uint32_t time = CSimpleTop::s_eventTime;
-    input->m_pendingDefaultAction = PENDING_ACTION_NONE;
+    input->m_pendingDefaultAction = INPUT_RELEASE_NONE;
 
-    if (input->SetControlBit(1, time)) {
-        if ((input->m_flags & 0x1) && (input->m_flags & 0x2)) {
+    if (input->SetControlBit(INPUT_TURN_PLAYER, time)) {
+        if ((input->m_flags & INPUT_TURN_PLAYER) && (input->m_flags & INPUT_TURN_CAMERA)) {
             CheckToCancelCurrentChannelSpell();
         }
 
@@ -460,7 +460,7 @@ static int32_t Script_VehicleAimGetNormPower(lua_State* L) {
 // VERIFY: 07912041 auto
 // OFFSET: 0x005F9DD0
 static int32_t Script_IsMouselooking(lua_State* L) {
-    if (CGInputControl::s_inputControl->m_flags & 0x2000001) {
+    if (CGInputControl::s_inputControl->m_flags & INPUT_PLAYER_LOOK_MASK) {
         lua_pushnumber(L, 1.0);
     } else {
         lua_pushnil(L);
@@ -546,11 +546,11 @@ static int32_t Script_MoveAndSteerStop(lua_State* L) {
     if (CGGameUI::CanPerformAction(0)) {
         uint32_t time = CSimpleTop::s_eventTime;
 
-        if (inputControl->UnsetControlBit(2, time, 0)) {
+        if (inputControl->UnsetControlBit(INPUT_TURN_CAMERA, time, 0)) {
             inputControl->UpdatePlayer(time, 1);
         }
 
-        if (inputControl->UnsetControlBit(1, time, 0)) {
+        if (inputControl->UnsetControlBit(INPUT_TURN_PLAYER, time, 0)) {
             inputControl->UpdatePlayer(time, 1);
         }
     }
@@ -638,7 +638,7 @@ static int32_t Script_VehicleAimGetNormAngle(lua_State* L) {
 static int32_t Script_VehicleAimRequestAngle(lua_State* L) {
     CGInputControl* inputControl = CGInputControl::s_inputControl;
     uint32_t time = CSimpleTop::s_eventTime;
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit) {
         VehicleRec* rec = unit->m_vehicle ? unit->m_vehicle->m_vehicleRec : nullptr;
@@ -697,7 +697,7 @@ static int32_t Script_DetectWowMouse(lua_State* L) {
 // VERIFY: 67de4681 manual
 // OFFSET: 0x005FB660
 static int32_t Script_VehicleExit(lua_State* L) {
-    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (!mover) {
         return 0;
@@ -715,7 +715,7 @@ static int32_t Script_VehicleExit(lua_State* L) {
 // VERIFY: aedf0962 manual
 // OFFSET: 0x005FB6D0
 static int32_t Script_VehiclePrevSeat(lua_State* L) {
-    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (mover && CGInputControl::s_inputControl->IsVehicleSeatFlagSet(0x4000000)) {
         mover->VehiclePrevSeat();
@@ -727,7 +727,7 @@ static int32_t Script_VehiclePrevSeat(lua_State* L) {
 // VERIFY: 5481f00f manual
 // OFFSET: 0x005FB720
 static int32_t Script_VehicleNextSeat(lua_State* L) {
-    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* mover = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(CGUnit_C::s_activeMover, TYPE_UNIT, __FILE__, __LINE__));
 
     if (mover && CGInputControl::s_inputControl->IsVehicleSeatFlagSet(0x4000000)) {
         mover->VehicleNextSeat();
@@ -772,26 +772,26 @@ static int32_t Script_MoveAndSteerStart(lua_State* L) {
 
     uint32_t time = CSimpleTop::s_eventTime;
 
-    if (!(input->m_flags & 3)) {
-        input->m_pendingDefaultAction = PENDING_ACTION_LEFT;
+    if (!(input->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+        input->m_pendingDefaultAction = INPUT_RELEASE_SELECT;
         CGWorldFrame::s_currentWorldFrame->SetupDefaultAction();
     }
 
-    if (input->SetControlBit(2, time)) {
-        if ((input->m_flags & 1) && (input->m_flags & 2)) {
+    if (input->SetControlBit(INPUT_TURN_CAMERA, time)) {
+        if ((input->m_flags & INPUT_TURN_PLAYER) && (input->m_flags & INPUT_TURN_CAMERA)) {
             CheckToCancelCurrentChannelSpell();
         }
 
         input->UpdatePlayer(time, 1);
     }
 
-    if (!(input->m_flags & 3)) {
-        input->m_pendingDefaultAction = PENDING_ACTION_RIGHT;
+    if (!(input->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+        input->m_pendingDefaultAction = INPUT_RELEASE_ACTION;
         CGWorldFrame::s_currentWorldFrame->SetupDefaultAction();
     }
 
-    if (input->SetControlBit(1, time)) {
-        if ((input->m_flags & 1) && (input->m_flags & 2)) {
+    if (input->SetControlBit(INPUT_TURN_PLAYER, time)) {
+        if ((input->m_flags & INPUT_TURN_PLAYER) && (input->m_flags & INPUT_TURN_CAMERA)) {
             CheckToCancelCurrentChannelSpell();
         }
 

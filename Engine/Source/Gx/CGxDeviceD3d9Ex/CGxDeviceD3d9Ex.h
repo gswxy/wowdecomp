@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <d3d9.h>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Gx/GxFrameLatency.h"
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Storm/H/stpl.h"
 
@@ -251,8 +252,18 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     /* 3C34 */ TSExplicitList<CGxTex, offsetof(CGxTex, m_link)> m_texDestroyList;
     /* 3C40 */ uint32_t m_texCacheUsed;
     /* 3C44 */ uint32_t m_texCacheSize;
-    /* 3C48 */ uint32_t m_deviceStates [182];
+    /* 3C48 */ uint32_t m_deviceStates [DeviceStates_Last];
     /* 3F20 */ bool m_texEnabled [8];
+    // VFOG (not 12340): INTZ depth bound as the device depth-stencil in place of the auto one, so the volumetric
+    // fog can sample it (DeviceCopySceneDepth). m_sceneDepthTex wraps it, lives for the device's lifetime and is
+    // never in m_textures, so texture recreation leaves it alone.
+    LPDIRECT3DTEXTURE9 m_sceneDepthTexture;
+    LPDIRECT3DSURFACE9 m_sceneDepthUnbound = nullptr;  // the depth-stencil DeviceSceneDepthBound(false) took off
+    bool m_sceneDepthResz = false;  // MSAA: INTZ is not bound; DeviceCopySceneDepth fills it from the MSAA depth by RESZ
+    bool m_sceneDepthFresh = false; // RESZ: INTZ still matches the depth (no depth-writing draw, depth clear or present since)
+    CGxTex* m_sceneDepthTex;
+    // CUSTOM (Badgermilk0 port); gxFixLag waits on the frame gxMaxFrameLatency back, not the one just submitted
+    CGxFrameLatency m_frameLatency;
 
     virtual void ITexMarkAsUpdated(CGxTex* texId);
     virtual void IRsSendToHw(EGxRenderState which);
@@ -275,6 +286,9 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     virtual void DeviceSaveDepthSurface();
     virtual void DeviceRestoreDepthSurface();
     virtual void DeviceResolveDepthBuffer(CGxTex* texture);
+    virtual CGxTex* DeviceCopySceneDepth(bool* transient = nullptr);
+    virtual void DeviceSceneDepthBound(bool bound);
+    virtual bool DeviceSceneDepthIsCopy() { return m_sceneDepthResz; }
     virtual void DeviceCopyTex(CGxTex* source, uint32_t sourcePlane, CGxTex* dest, uint32_t destPlane);
     virtual void DeviceOverride(EGxOverride override, uint32_t value);
     virtual void CapsWindowSize(CRect& rect);
@@ -318,11 +332,11 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     static const D3DFORMAT s_GxFormatToD3dFormat[CGxFormat::Formats_Last];
     static const D3DFORMAT s_GxTexFmtToD3dFmt[GxTexFormats_Last];
     static EGxTexFormat s_GxTexFormatToUse[GxTexFormats_Last];
-    static const D3DCUBEMAP_FACES s_faceTypes[6];
+    static const D3DCUBEMAP_FACES s_faceTypes[GxTexCubeFaces_Last];
     static const D3DPRIMITIVETYPE s_primitiveConversion[GxPrims_Last];
     static const D3DBLEND s_srcBlend[12];
     static const D3DBLEND s_dstBlend[12];
-    static const D3DCMPFUNC s_cmpFunc[4];
+    static const D3DCMPFUNC s_cmpFunc[GxCmps_Last];
     static const D3DCULL s_cullMode[3];
     static D3DTEXTUREFILTERTYPE s_filterModes[GxTexFilters_Last][3];
     static const D3DTEXTUREADDRESS s_wrapModes[2];
@@ -376,6 +390,8 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     void IShaderConstantsFlush();
     void IShaderCreateVertex(CGxShader* shader);
     void IStateSetD3DDefaults();
+    void ICreateSceneDepth();
+    void IReleaseSceneDepth();
     void IStateSync();
     void IStateSyncClipPlanes();
     void IStateSyncEnables();

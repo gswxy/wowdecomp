@@ -372,7 +372,7 @@ void CShaderEffect::SetTexMtx_Identity(uint32_t stage) {
 
     GxRsSet(static_cast<EGxRenderState>(GxRs_TextureShader0 + stage), 0);
     g_theGxDevicePtr->m_xforms[stage].Identity();
-    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), 0);
+    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), GxTexGen_Disabled);
 }
 
 // VERIFY: ce1f9620 manual
@@ -386,7 +386,7 @@ void CShaderEffect::SetTexMtx_SphereMap(uint32_t stage) {
 
     GxRsSet(static_cast<EGxRenderState>(GxRs_TextureShader0 + stage), 0);
     g_theGxDevicePtr->m_xforms[stage].Identity();
-    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), 6);
+    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), GxTexGen_SphereMap);
 }
 
 // VERIFY: d55e347c manual
@@ -405,7 +405,7 @@ void CShaderEffect::SetTexMtx(const C44Matrix& matrix, uint32_t stage) {
     stack.m_flags[stack.m_level] &= ~CGxMatrixStack::F_Identity;
     stack.m_mtx[stack.m_level] = matrix;
 
-    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), 0);
+    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), GxTexGen_Disabled);
 }
 
 // VERIFY: 571cb58b manual
@@ -441,7 +441,7 @@ void CShaderEffect::SetTexMtx_TexGen(EGxTexGen texGen, const C44Matrix& matrix, 
     stack.m_flags[stack.m_level] &= ~CGxMatrixStack::F_Identity;
     stack.m_mtx[stack.m_level] = matrix;
 
-    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), 2);
+    GxRsSet(static_cast<EGxRenderState>(GxRs_TexGen0 + stage), GxTexGen_World);
 }
 
 // VERIFY: f365063d manual

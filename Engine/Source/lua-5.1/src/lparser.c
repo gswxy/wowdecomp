@@ -529,7 +529,12 @@ static void lastlistfield (FuncState *fs, struct ConsControl *cc) {
 
 static void listfield (LexState *ls, struct ConsControl *cc) {
   expr(ls, &cc->v);
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.1-1: list constructors have wrong limit */
+  luaY_checklimit(ls->fs, cc->na, MAX_INT, "items in a constructor");
+#else
   luaY_checklimit(ls->fs, cc->na, MAXARG_Bx, "items in a constructor");
+#endif
   cc->na++;
   cc->tostore++;
 }
@@ -1004,6 +1009,14 @@ static void assignment (LexState *ls, struct LHS_assign *lh, int nvars) {
     primaryexp(ls, &nv.v);
     if (nv.v.k == VLOCAL)
       check_conflict(ls, lh, &nv.v);
+#if LUA_OUR_BUGFIXES
+    /* LUA_OUR_BUGFIXES 5.1.2-7: too many variables in an assignment may
+       overflow the C stack. Upstream limits this to LUAI_MAXCCALLS minus the
+       current depth; we use a limit just below the depth where 5.1.1 crashed,
+       so no assignment that used to load now fails (see luaconf.h). */
+    luaY_checklimit(ls->fs, nvars, LUA_OUR_MAXASSIGNVARS - ls->L->nCcalls,
+                    "variable names");
+#endif
     assignment(ls, &nv, nvars+1);
   }
   else {  /* assignment -> `=' explist1 */

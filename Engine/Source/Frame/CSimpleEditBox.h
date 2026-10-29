@@ -9,6 +9,15 @@
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Tempest/CRect.h"
 
+enum EDITBOX_FLAGS : uint32_t {
+    EDITBOX_AUTO_FOCUS = 0x1,
+    EDITBOX_MULTILINE = 0x2,
+    EDITBOX_NUMERIC = 0x4,
+    EDITBOX_PASSWORD = 0x8,
+    EDITBOX_ALT_ARROW_KEY_MODE = 0x10,
+    EDITBOX_COUNT_INVISIBLE_LETTERS = 0x20,
+};
+
 class CEvent;
 class CSimpleFontString;
 class CSimpleMessageFrame;

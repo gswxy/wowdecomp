@@ -1,6 +1,7 @@
 #ifndef WOW_SOURCE_NET_NETCLIENT_NETCLIENT_H
 #define WOW_SOURCE_NET_NETCLIENT_NETCLIENT_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "Engine/Source/Base/CDataStore.h"
@@ -52,7 +53,7 @@ typedef MESSAGE_HANDLER_interface MESSAGE_HANDLER;
 class NetClient;
 
 struct NETEVENTQUEUENODE : public TSLinkedNode<NETEVENTQUEUENODE> {
-    /* 0008 */ uint32_t m_eventId;
+    /* 0008 */ EVENTID m_eventId;
     /* 000C */ uint32_t m_timeReceived;
     /* 0010 */ void* m_data;
     /* 0014 */ uint32_t m_dataSize;
@@ -99,8 +100,10 @@ class NetClient : public WowConnectionResponse {
     /* 2E54 */ uint32_t m_latency [16];
     /* 2E94 */ uint32_t m_latencyStart;
     /* 2E98 */ uint32_t m_latencyEnd;
-    /* 2E9C */ uint32_t m_bytesSent;
-    /* 2EA0 */ uint32_t m_bytesReceived;
+    // Not stock: atomic, sent on the main and net threads, received on the net thread, reset/read under m_pingLock
+    // by others (same size and alignment).
+    /* 2E9C */ std::atomic<uint32_t> m_bytesSent;
+    /* 2EA0 */ std::atomic<uint32_t> m_bytesReceived;
     /* 2EA4 */ uint32_t m_connectedTimestamp;
     /* 2EA8 */ SCritSect m_pingLock;
     /* 2ED0 */ ClntObjMgr* m_objMgr;

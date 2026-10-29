@@ -1,0 +1,413 @@
+# Legion 7.3.5 feature ports into the 3.3.5a decomp client
+
+## 2026-10-18: Legion objcull
+
+Screen-size small-object culling (LEGION_SURVEY 2.5, Legion test 0x00C6EE2D). CPU only, every backend.
+
+**Where.** `CWorldScene::AddDoodadDefModelToModelScene` (World.cpp), the one point every doodad path goes through
+(exterior sort-table doodads, chunk doodads, interior/portal doodads, and the water reflection re-run). It runs after
+the stock distance fade and multiplies into the same `m_fadeAlpha`, so objects cross-fade instead of popping.
+`CWorldParam::s_lodObjectPixScale` = window height / tan(fovy / 2) is set once per frame in `CWorldScene::Render`.
+
+**Formula.** d' = |object centre - camera| - lodObjectCullDist, r = bounding-sphere radius.
+Projected height in pixels h = r * pixScale / d'. Threshold P = lodObjectCullSize / 5 pixels; fade band
+B = P * lodObjectFadeScale / 100. alpha *= clamp((h - P) / B, 0, 1); below 0.01 the doodad is not drawn.
+Legion's form `(3r)^2 < (d' * k)^2` is the same test at h = P, with k = 3 * P / pixScale = 3 * P * tan(fovy/2) / H.
+Legion's `d - r > maxDist` half is left out: the stock doodad fade distance already does it.
+
+**Defaults.** lodObjectCullSize 15 -> P = 3 px, fadeScale 100 -> fades between 6 px and 3 px tall. At 1080p and the
+stock 90 degree fov (pixScale 1080), a 1 yd tall bush (r 0.5) starts fading at ~120 yd and is gone at ~210 yd; a
+4 yd crate at ~390 / ~750 yd. Only objects a few pixels tall go, so the master `lodObjectCull` defaults to 1.
+
+**Exemptions.** Within lodObjectCullDist (30 yd); radius >= lodObjectMinSize / 10 yd (100 -> 10 yd: big trees, rocks);
+doodads flagged 0x800 (never distance-fade in stock either).
+
+**WMOs: not culled.** MapObj groups have no fade alpha path, so culling them would pop, and the 10 yd radius exemption
+would spare nearly all of them anyway.
+
+**Shadows.** The sun shadow maps gather doodads themselves (ShadowQuery.cpp, by fade distance and band size), not from
+the scene list, so a faded-out doodad keeps casting its shadow: no shadows vanish with the model.
+**Reflections.** The reflection pass re-culls with the mirrored camera, whose distance to the object equals the
+reflected path length, so the reflection fades the same doodads at the same apparent size.
+
+| CVar | Range (clamped) | Default |
+|---|---|---|
+| lodObjectCull | 0/1 | 1 |
+| lodObjectCullSize | 1-100 (5 = 1 px) | 15 |
+| lodObjectCullDist | 1-200 yd | 30 |
+| lodObjectMinSize | 0-1000 (radius in 1/10 yd) | 100 |
+| lodObjectFadeScale | 50-300 % | 100 |
+
+Options: Advanced page, "Fade tiny far objects" (lodObjectCull) and "Tiny object size" slider (lodObjectCullSize 5-50).
+lodObjectMinSize is our reading of the Legion CVar (its semantics are not verified).
+
+## 2026-10-18: Legion stream
+
+Survey 2.11 (Legion `worldLoadSort` / `componentTexLoadLimit`). CPU and async-loader only, every API.
+
+- **`worldLoadSort`** (0/1, default 1). Each `CAsyncObject` carries the world x/y of the thing it loads
+  (`AsyncLoadOrigin` scope in `Engine/Source/Services/AsyncFile.h`; tagged in `CMap::CreateDoodadDef` (ADT and WMO
+  doodads), `CMap::CreateMapObjDef` (ADT WMOs) and the WMO group reads in `CMap` def-group prep). Loads issued from a
+  postload callback (skins, textures, WMO groups after the root) inherit the parent's position. When a disk reader
+  pops the queue (`AsyncPickNearest`, under `g_queueLock`) it takes the entry nearest the camera
+  (`World::PrepareAreaOfInterest` → `AsyncFileReadSetViewPos`) among the first 64 sharing the head's priority, so the
+  stock priority bands (WMO root 124, skins 125, models/groups 126, textures 129-131) still decide first.
+  Untagged loads, the object `AsyncFileReadWait` is blocking on, and anything queued over 120 frames keep stock
+  head-first order, so nothing starves. ADT tiles were already queued nearest-first by stock (`qsort` in CMap).
+  The streaming (net) queues are untouched.
+- **`texUploadLimit`** (count per frame, default 24, 0 = unlimited). The per-frame poll (`EVENT_ID_POLL`) runs at most
+  this many `AsyncTextureSuccessCallback`s (BLP parse + `TextureAllocGxTex` + `GxTexUpdate`); further finished
+  textures move to a defer list and run first on the next frames. Everything else in the post list (models, WMOs,
+  ADTs) still runs that frame. `AsyncFileReadWait` and `AsyncFileReadWaitAll` (loading screens) poll uncapped, so
+  waits and loading always drain; `AsyncFileReadIsReading` / unload see the defer list.
+  Why 24: the texture read budget is 4 MB in flight (`s_asyncLoadBufferUsed`), roughly 50-100 typical world BLPs, so a
+  full burst spreads over 2-4 frames while sustained streaming (well under 24 x 60 = 1440 textures/s) is never held
+  back. Deferred textures keep their read buffers, which throttles new texture reads a little: natural back-pressure.
+- Options: Advanced page, "Load nearest first" (check) and "Textures per frame" (8 / 16 / 24 / 48 / Unlimited).
+- Not done: Legion `worldPreloadSort` / preload distances (no preload pass in 3.3.5a beyond the area-of-interest),
+  character `componentTexLoadLimit` (component textures are composited on the CPU, not uploads). Untested in game.
+
+## 2026-10-18: Legion shadowmask (survey item 6, 2.7)
+
+Mountains (near ADT and far WDL) now cast the sun's shadow onto the world: terrain, WMOs, M2s, detail doodads and the
+far horizon land, plus the modern water's sun glint, foam and in-scatter sun.
+
+**Pass.** `VFogShadowMask` (ours; Legion's `shadowmask` ps was read for its role only) is one full-res quad over the
+world viewport, drawn by `VolumetricFog::RenderShadowMask` from `VolumetricFog::OnSolidDone()` (WorldFrame.cpp, after
+`M2PASS_0` and `RenderDetailDoodads`, before liquids, the fog composite and the transparents). It reads the scene depth
+(`DeviceCopySceneDepth`), rebuilds the view position, tests it against gfxTerrainShadow's lit-height texture
+(`TerrainSunShadow::Update`, the same s7/c63 row as the fog, plus a 4 yd surface bias for the ADT between WDL vertices)
+and multiplies the colour (`GxBlend_Mod`, RGB) by
+
+    (ambient + diffuse * ndl * min(T, C)) / (ambient + diffuse * ndl * C)
+
+with T the land's visibility, C the engine cascades' visibility (vf_shadow.hlsli `CascadeSunVisibility`, bands 1-2),
+ambient and diffuse the DNInfo light colours, and ndl from a normal rebuilt from the depth (the smaller-step neighbour
+per axis, so silhouettes keep their own side). So:
+- a sun-lit surface under a mountain goes to its ambient; a surface facing away from the sun (ndl 0) is unchanged;
+- a pixel a stock receiver already shadowed with the cascades (C = 0) is unchanged: **no double darkening**, and the
+  ratio is never above 1, so nothing is brightened;
+- sky pixels and fully lit pixels return after one depth and one land tap; the fog is applied afterwards, so it lies
+  over the shadow. With the volumetric fog off (or vfogStockFog 0) the stock fog is already in the colour, so the
+  darkening fades by the stock fog's linear factor. It fades out by DNInfo `m_interiorFogBlend` in WMO interiors.
+- The frame inputs come from `OnOpaqueDone`, which now also captures (with its DNInfo half) when only the mask wants
+  them; local lights are captured only for the fog.
+
+**Water.** VFogWater{1,2,3} read the same texture (s13, the free slot; row c68) and multiply `SunVisibility()` per
+pixel (`LandSunVisibility(w.position)`).
+
+**Reflection pass.** The native client has no second world pass for water reflections (VFogWater's are screen space),
+so nothing to skip; `OnWorldRender` is the only caller.
+
+**CVars** (TerrainSunShadow.cpp, Video Options > Advanced > Shadows):
+| CVar | Range | Default | |
+|---|---|---|---|
+| `shadowMask` | 0/1 | 1 | the pass and the water tap; needs `gfxTerrainShadow` 1 (the land texture) |
+| `shadowSoft` | 0..4 | 1 | the penumbra: yards under the lit height to full dark, 16 x this (min 2). Low sun = long soft edge |
+
+**Cost** (estimate, not measured: no rig run by the rules): one full-res pass; lit and sky pixels 2 taps and ~15
+instructions, shadowed pixels 6 depth taps, 1-2 cascade taps, 1 land tap, ~60 instructions. About the cost of the
+god-ray composite: well under 0.5 ms at 1440p on a mid GPU, so default on. The land texture is shared with the fog
+(rebuilt only when the light turns or the camera moves 533 yd).
+
+**Backends.** SPIR-V through Tools/VulkanShaders (Vulkan), ps_4_0 through build_shaders.py (D3D11; s5/s6 compare slots
+as the fog), ps_3_0 (D3D9) compiled by fxc.
+
+**Ceiling (`ponytail:` in VolumetricFogRenderer.cpp).** The mask is applied after the receivers, not read by them.
+- The stock receivers keep their own cascade sampling, so the cascades are not softened or widened here (Legion's
+  shadowSoft PCF). That needs the receivers to read the mask before they shade: a depth pre-pass (or two-phase opaque)
+  plus a one-tap mask read in the terrain/WMO/M2 shaders. That replaces SHADOW_PORT_PLAN S4a/S4b (no per-receiver
+  cascade rewrites needed) and is the next step.
+- The ratio assumes stock lighting = ambient + diffuse * ndl (gamma space); specular and emissive parts are darkened
+  with the rest. A stock receiver's own cascade shadow that does not go fully to ambient stays at its own strength in
+  a mountain's shadow.
+- WDL is 33 yd per vertex: mountain-scale shadows only. A cave interior under a mountain seen from outside is
+  darkened by the sun's share (from inside, the interior fade removes it).
+- Underwater frames take the mask too (it draws before the liquid in both branches).
+
+## 2026-10-18: Legion post (survey items 10, 5, 9: depth users, FXAA, colour blindness)
+
+### Depth-consumer registry (item 10, Legion `SetDepthUser` 0x006C4343, count at 0x013CCDDC)
+
+`CGxDevice::s_depthUsers` is a bitmask of the scene-depth consumers this frame (CGxDevice.h). While it is 0, every
+backend's `DeviceCopySceneDepth` (Vulkan, D3D11, both D3D9 through `d3d9scenedepth::Copy`) returns nullptr with
+`*transient = true`, so no copy, blit or RESZ resolve runs and callers retry next frame. A bit instead of Legion's
+counter: setting it twice is harmless, so a consumer can set it from its state every frame.
+
+Registered now:
+
+| bit | set where | on while |
+|---|---|---|
+| `DepthUser_Fog` | `VolumetricFog::SetDepthUsers` (DecideFrame, OnViewerLiquid) | vfog draws this frame (`s_active`) |
+| `DepthUser_FadeStencil` | same | vfog draws and `vfogFadeEarly` and `vfogFadeStencil` |
+| `DepthUser_Water` | `WaterArm` (cleared at its top, set once armed) | modern water draws in this liquid pass |
+| `DepthUser_ShadowMask` | `VolumetricFog::OnOpaqueDone` | `shadowMask` wanted (`TerrainSunShadow::MaskWanted`) and the renderer ready |
+
+The fog, fade and water users are inside vfog, and the copy was already demand-driven (only callers pay, and the Vulkan/D3D11/RESZ
+"fresh" flags share one snapshot per frame), so this saves nothing measurable yet. What it adds is the contract: a
+consumer that does not register gets no depth.
+
+**Registering a new consumer** (screen-space shadow mask, SSAO, refraction, light buffer, soft particles):
+1. add a bit to the enum in `Engine/Source/Gx/CGxDevice/CGxDevice.h` (`DepthUser_ShadowMask = 1u << 3`, ...);
+2. once per frame, before its `DeviceCopySceneDepth` call, `CGxDevice::SetDepthUser(CGxDevice::DepthUser_X, on)`
+   with `on` from its CVar state (and whatever else gates its pass). Nothing else.
+The shadow mask is the first consumer outside vfog's `s_active` (it runs with vfog off), registered this way.
+
+### FXAA (item 5) and colour blindness (item 9): one post pass
+
+`VolumetricFog::PreparePost` (in `OnWorldDone`, which sees the world viewport) reads the CVars;
+`RenderPost` (VolumetricFogRenderer.cpp, beside `RenderGrade`) draws in `OnWorldRendered`, after the colour grade and
+the glow, before names (`WorldTextRenderBatch`) and the UI, so neither is anti-aliased or colour-shifted. It copies
+the world viewport (the grade's bilinear `CopySceneBeforeFog`) and draws one quad, opaque, RGB, scissored to the world.
+Runs whether or not vfog is on; skipped entirely when both features are off.
+
+Shaders (ours, `Tools/CustomMpq/ShaderSrc/LegionPost.hlsl`, FXAA 3.11 quality after Lottes' public algorithm, flat
+code with no dynamic branches): `LegionPost0` colour shift only, `LegionPost1` FXAA low (preset 12: 5 search steps,
+edge threshold 0.166/0.0833) + shift, `LegionPost2` FXAA high (preset 39: 12 steps, 0.125/0.0625) + shift; subpix
+0.75. Constants: c0 world viewport px, c10 FXAA (subpix, threshold, threshold min), c11-c13 the colour matrix rows.
+The matrix is applied in linear light (gamma 2.2 decode/encode) and is the identity when colour blindness is off.
+
+| CVar | range | default | |
+|---|---|---|---|
+| `ffxAntiAliasingMode` | 0-2 | 0 | 0 off, 1 FXAA low, 2 FXAA high (Legion's 3 = CMAA not ported) |
+| `colorblindSimulator` | 0-3 | 0 | 0 off, 1 protanopia, 2 deuteranopia, 3 tritanopia |
+| `daltonize` | 0/1 | 0 | 0 simulate the type, 1 correct for it |
+| `colorblindWeaknessFactor` | 0-1 | 0.5 | severity: sim = I + f (M - I) |
+
+Matrices: Machado, Oliveira and Fernandes 2009 at severity 1.0 (linear RGB); daltonize is Fidaner et al. 2005's error
+shift, `I + E (I - sim)` with E = [[0,0,0],[0.7,1,0],[0.7,0,1]], folded into one 3x3 on the CPU
+(`ColourShiftMatrix`). Legion's 11 types are not mirrored (its table is not used); `colorblindMode` (the stock UI text
+labels CVar) is untouched and independent.
+
+Options: Video Options > Advanced > Post Processing ("Anti-Aliasing & Colour").
+
+## 2026-10-18: Legion ssao (survey item 2.1, FEATURE_BACKLOG #5)
+
+Screen-space ambient occlusion from the scene depth, laid over the opaque world as a multiply (v1, as backlog #5;
+ambient-only needs S4). Drawn in `VolumetricFog::OnSolidDone` (after the detail doodads, before liquids, the early fog
+composite, weather and the transparents), beside the shadow mask; runs with vfog on or off. `OnOpaqueDone` captures
+the frame inputs for it and registers `DepthUser_Ssao` (bit 4) while `SSAO > 0`. Sky, the WDL horizon band and past
+the far clip get none; it fades out over the second half of `SSAODistance`, and where the stock fog is still in the
+colour (vfog off) by the fog factor, so fogged distance is not darkened. Not on names or the UI (world pass only).
+
+Passes (`RenderSsao`, VolumetricFogRenderer.cpp; shaders ours, `Tools/CustomMpq/ShaderSrc/LegionSsao.hlsl`,
+northlight effects.hlsl AO/AOBlur (MIT, lepola) for the depth-derivative normals and depth-weighted blur):
+
+| shader | res | taps | what |
+|---|---|---|---|
+| `LegionSsao` | world / 2 (SSAO 1) or / 1 (SSAO 2) | 1 + 4 normal + 16 | view position from depth, normal from the nearer neighbour per axis, 16 hemisphere taps (golden-angle spiral, stratified elevation, longer taps last) turned per texel by a 4x4 Bayer index (Legion's 4x4 randomRotation without the texture), radius 1.5 yd, range check |
+| `LegionSsaoBox` | AO res | 4 bilinear | 4x4 box over the AO: cancels the 4x4 rotation pattern exactly (Legion gauss) |
+| `LegionSsaoBilateral` | AO res | 16 + 16 depth + 1 | the same box, each texel weighted by exp2(-dz / (0.02 z + 0.05)) (Legion bilateral) |
+| `LegionSsaoApply` | full, GxBlend_Mod, RGB | 1 bilinear | multiplies the colour; reads half a texel on when blurred (the 4x4 box is centred at k - 0.5) |
+
+Constants: c0-c3, c8 (AO target), c99 as vf_common.hlsli; c10 (radius, fade start, 1/fade length, strength), c11 stock fog.
+Targets: two Argb8888 bilinear, `s_targets.ao[2]`, freed with the vfog targets on device reset.
+
+| CVar | range | default | |
+|---|---|---|---|
+| `SSAO` | 0-2 | 0 | 0 off, 1 half res, 2 full res (Legion's 3 = HBAO, SM5 only, not ported) |
+| `SSAODistance` | yd | 100 | Legion default; fades over its second half |
+| `SSAOBlur` | 0-2 | 2 | 0 off (noisy), 1 box, 2 depth-weighted |
+| `SSAOStrength` | 0-2 | 1 | not in Legion |
+
+Cost at 2560x1440, SSAO 1 + SSAOBlur 2: AO 0.92 M texels x 21 fetches (19 M) + blur 0.92 M x 33 (30 M) + apply 3.7 M x 1,
+about 53 M fetches and ~1 G ALU ops: an estimated 0.2-0.4 ms on a current desktop GPU (not measured). SSAO 2 is about 4x
+that. Default 0 anyway: v1 darkens lit surfaces too (multiply, not ambient-only), so the look wants a verdict first;
+with vfog off it also wakes the depth copy. Options: Video Options > Advanced > Post Processing.
+ponytail: the apply upsamples bilinearly, so at half res the AO can bleed about one pixel past a silhouette.
+## 2026-10-18: Legion refraction (survey item 7, 2.6: heat haze)
+
+Legion's `refraction` writes UV offsets from `Particle_Refraction` particles into a distortion target and
+`refractionapply` offsets a scene copy by them. 3.3.5a M2 particles have no refraction blend, so we tag emitters and
+draw the haze ourselves (cheapest workable design, one pass, no distortion target):
+
+- **Tagging** (`HotEmitter`, VolumetricFog.cpp): a blended particle element (type 4 in M2 passes 1 and 2, blend not
+  opaque/modulate) whose model path or particle texture contains `fire flame lava magma brazier torch burn exhaust
+  immolat inferno`, and neither contains `smoke steam mist fog cloud firefl firework candle frost` (the texture's
+  "cool" word wins, so a fire model's smoke emitter is left out). Same idea as `groundDecals`' name test.
+- **Sources** (`CollectRefraction`, in `OnOpaqueDone` after Animate built the pass lists): each emitter's
+  `WorldBounds()` (world space, from its last draw, so one frame old), skipped when inverted (not drawn yet) or over
+  50 yd; widened 15% and raised by 0.75 x its height; the nearest 12 within 80 yd (`refraction 1`) or 32 within 160 yd
+  (`2`). `DepthUser_Refraction` (bit 5) is set only while there is at least one source, so no fire = no cost.
+- **Draw** (`RenderRefraction`, VolumetricFogRenderer.cpp; `VolumetricFog::OnHeatHaze` right after `OnLiquidDone` in
+  WorldFrame): above water only, after the liquids and the early fog composite, before the blended M2 pass, weather and
+  barriers. One copy of the world viewport (`CopySceneBeforeFog`) and the scene depth; each box is projected on the
+  CPU to a screen rect and drawn as one `LegionRefraction` quad scissored to it, opaque RGB. The shader reads the copy
+  at an offset: rising two-axis sine noise in the source's yards (a second octave at `2`), an elliptical fade to the
+  rect's edge, zero on pixels in front of the source (scene depth < its near depth, 1 yd ramp) and zero where the tap
+  lands in front of it (no foreground smear). Amplitude ~2 cm per yard of flame height (0.5-4 yd) x
+  `refractionStrength`, in pixels at the source's distance, capped at 12 px x strength.
+- Pass-2 particles (the common case above water) are drawn before the haze, so the flames themselves shimmer a little
+  with what is behind them; split-lighting (liquid plane) ones in pass 1 draw after it, sharp.
+
+| CVar | range | default | |
+|---|---|---|---|
+| `refraction` | 0-2 | 1 | 0 off, 1 on (12 sources, 80 yd), 2 high (32, 160 yd, second noise octave) |
+| `refractionStrength` | 0-4 | 1 | haze amplitude scale |
+
+Options: Video Options > Advanced > Post Processing ("Heat haze", "Heat haze strength").
+Shader: `Tools/CustomMpq/ShaderSrc/LegionRefraction.hlsl` (ours; s0 depth, s1 scene copy; c0-c3/c99 vf_common,
+c10 rect px, c11 near yd / offset px / seconds / high, c12 rect size yd).
+
+Known limits (ponytail): no lava liquid surfaces (only lava/magma particle emitters); none under water (that branch has
+no `OnLiquidDone`); overlapping sources do not add up (each reads the undistorted copy, last drawn wins); a box the near
+plane cuts (camera inside the fire) is skipped; names are tested per element per frame (cache on CM2Shared if it ever
+shows in a profile); the tag word list is a guess, untested in game: check torches/braziers/spell auras and trim it.
+## 2026-10-18: Legion lights (survey item 3, 2.8; FEATURE_BACKLOG #7 lamp lighting)
+
+Legion 7.3.5 draws light volumes into a light buffer that every material reads (light pre-pass). v1 here is the
+screen-space half of that: the frame's lamps resolved once from the scene depth and added onto the frame.
+
+**Pass** (`LegionLights.cpp`, shader `LegionLights.hlsl`). The lights are the CM2Scene light grid's visible point
+lights, the list vfog's fog scattering walks (`CaptureLocalLights`), without its 8-light cap: every M2 lamp, torch,
+brazier and candle. CPU: camera distance cull (`maxLightDist` + radius), behind-camera cull, nearest `maxLightCount`
+kept (`nth_element`), positions into view space. Radius = where the stock M2 attenuation (CM2Light: 0 / 0.7 / 0.03,
+the same for every M2 light) leaves 1/32 of the light's peak colour, capped at 40 yd (about 23 yd for a colour-1
+lamp). GPU: one full-screen quad per 16 lights (constants c10 control, c11-c58 three registers a light; literal
+indices, no relative addressing for the translators), position from the depth, normal rebuilt from the depth
+(VFogShadowMask's nearer-neighbour cross), per light `colour * min(stock attenuation, 1.5) * window^2 * N.L` with
+`window = saturate(1 - d^2 / r^2)` (northlight local_light_effects.hlsl's smooth window, MIT; modern-wow-renderer
+read for ideas only). Sky and the WDL horizon (depth past the world viewport's maxZ) are skipped; the light fades to
+0 over the last quarter of `maxLightDist`; pixels with less than 1/512 of light are discarded.
+Blend `GxBlend_ModAdd` (dst * src + dst): `colour += colour * light`, so the frame's own colour is the albedo proxy,
+black stays black, and a surface at most doubles. The light is divided by the stock light level (luma of DNInfo
+ambient + half the diffuse, at least 0.2), so a lamp adds about albedo x lamp as Legion's buffer does: strong at
+night, faint at noon. Depth through `DepthUser_Lights` (bit 6), set only while the pass draws.
+
+**Where, and the double-lighting question.** Stock 3.3.5a lights M2s (models, characters) and grass with up to 4
+of these point lights each, and terrain chunks (3) and WMO groups (4) too: `CMapRenderChunk::SetVertexShader` and
+`CWorldScene::RenderMapObjDefGroups` gather them from `World::s_m2Scene` into the vertex shader constants, lit per
+vertex (corrected 2026-10-24, fix/pointlight: an earlier note here said never terrain or WMO). Per vertex, on WMO
+floors of 5 sq yd triangles with leaning MONR normals, a torch draws a patchwork of triangles. So while the pass
+lights terrain and WMOs (`LegionLights::LightsWorldGeometry`), their stock point lights are left out
+(`g_m2SkipPointLights`, M2Light.h) and the pass replaces them per pixel.
+- `lightMode 1` (the default for the morning of 2026-10-24, then 2) runs right after `CWorld::Render` (terrain, WMO groups, horizon, sky) and before
+  `scene->Draw(M2PASS_0)`: the depth then holds only terrain and WMO, and every model drawn after covers its pixels
+  with its own stock-lit colour. So models are never double lit.
+- `lightMode 2` runs after the solid world (after `VolumetricFog::OnSolidDone`, so after the shadow mask): models
+  and grass take the lamps too. Since 2026-10-24 (lightocc) the models' stock per-vertex point lights are left out
+  (`g_m2PixelLitScene`, set by `OnWorld(false)`, read in `CM2Model::SetupLighting`), so nothing is lit twice, and
+  this is the default: only with the models in the depth can a post or a palisade block a lamp. Ceiling: models
+  drawn after the pass (blended batches, M2PASS_1) get no lamp light at all.
+- With the forward `lightDynamic` owning the lights (D3D11/Vulkan shaderLighting, `g_m2ShaderOwnedLightScene`) the pass
+  stays off, so nothing is lit twice.
+- Ceiling: `GxBlend_ModAdd` on an 8-bit target at most doubles a pixel, where stock's per-vertex light could reach
+  about 3x the night ambient right under a torch; `lightIntensity` lifts the mid range.
+Both run before liquids, transparents and the fog composite, so the fog fogs the lit surfaces.
+
+**CVars** (LegionLights.cpp, Video Options > Advanced > Lights, "Lamps & Torches"):
+| CVar | Range | Default | |
+|---|---|---|---|
+| `lightMode` | 0/1/2 | 2 | 0 off (stock per-vertex lamps), 1 terrain + WMO before the models, 2 the whole solid world (Legion "Quality of lighting" 0-2) |
+| `maxLightCount` | 1..128 | 64 | lights kept, largest radius / distance first (Legion 128); 16 a full-screen pass, so 64 = 4 passes; the kept ones within 1.25x of the cut fade in (no switching at the cap) |
+| `maxLightDist` | 20..2048 | 200 | yd; lights farther than this plus their radius are dropped, the light fades over the last quarter (Legion 2048) |
+| `lightIntensity` | 0..4 | 1 | scale on the added light |
+| `lightShadows` | 0..1 | 1 | screen-space shadow rays toward each lamp; a fully blocked lamp keeps 1 - 0.85 x this of its light |
+| `lightBakedShadows` | 0..1 | 1 | baked occlusion per static lamp (lightbake), combined as min() with the rays; same 0.85 x this floor |
+| `lightBakedShadowAtlas` | 64..4096 | 512 | texels high of the bake atlas (power of two): 10 lamps per 16 rows, 512 = 320 lamps, 2 MB GPU + 2 MB CPU |
+
+**Which lamps** (2026-10-24, lightocc; Undercity lanterns dark from afar, on with the camera close). The gate was
+the doodads' animation, not the light count: a CM2Light is refreshed (stamp, visible, position) only in
+`CM2Model::AnimateST`, and the world animates a doodad only while it is drawn (`CWorldScene::AddDoodadDefModelToModelScene`:
+the doodad fade distance `s_fadeDistSqr[fadeLevel]` and the Legion objcull pixel-size test, both measured from the camera)
+or, frustum- or occlusion-culled, within 10 yd of the camera (World.cpp, the three doodad cull loops; static flag 0x400
+excepted). Past that the light keeps an old stamp and `CM2Scene::SelectLights` clears its `m_visible`. Now the pass keeps,
+per light in the grid, what it was on its last refreshed frame (`s_seen`), and lights a stale one from that when it was on,
+was refreshed at least twice and never moved (a static doodad, not a carried torch); it drops out when its model unlinks
+it. Stock vertex lighting is unchanged. Ceiling: a lamp never animated since it loaded (camera far all along) is unknown.
+Every light's sphere is then culled against the view frustum (was: behind the camera only), and the `maxLightCount`
+kept are the largest radius / distance, not the nearest.
+
+**Shadows** (2026-10-24, lightocc; `LegionLights.hlsl` `LightVisibility`, docs/shadow-research/03-screenspace-cheap.md
+1a, Bend-style contact shadows as a plain tap loop). For each pixel and each lamp that reaches it (more than 1/512 of
+light), a ray from just off the surface toward the lamp, in view space, ending 0.75 yd short of the lamp (its own
+fire and holder) and capped at 12 yd; a lamp behind the camera is marched toward until the ray reaches view depth
+0.5 yd, and a ray that leaves the viewport stops (counted open). 12 taps up to ~25 yd, down to 6 at 100 yd, none past
+120 yd, one interleaved-gradient jitter a pixel. A tap is blocked when it lies behind the depth there by more than
+0.03 + 0.003 z and less than 2.5 yd (thickness: a character in front of a wall does not shadow the wall), ramped
+both ways; the light is scaled by 1 - max(blocked) x 0.85 x `lightShadows`. Constants c59. Cost estimate: 6-12
+depth taps + ~20 ALU per tap per lit lamp per pixel; a pixel near one or two lamps pays 12-24 taps, about
+0.2-0.5 ms at 1440p in a lamp-heavy town on a mid GPU, nothing where no lamp reaches. ps_3_0 31 KB (fxc accepts the
+slot count; D3D9 runs it too).
+
+**Static light list** (2026-10-24, lightbake; closes the "never animated since load" ceiling above). `CMapDoodadDef::UpdateBounds`
+(every placed doodad: ADT MDDF via `PrepareMapDoodadDefs`, WMO MODD sets via `UpdateDoodadDefBounds`; the model is loaded
+there) calls `LegionLights::AddDoodad`: each M2Light of type 1 (point) whose visibility track's first key is on, at
+`m_position * m_mat` (the bone's rest pose taken as identity), colour = first key of diffuse colour x first key of diffuse
+intensity (1 when absent), attenuation CM2Light's 0 / 0.7 / 0.03. `~CMapDoodadDef` (after `CMap::FreeDoodadDef`, every
+Purge) removes them. Keyed by the model's own `CM2Light` (`&m_lights[i].m_light`), with its `m_stamp` when placed: while
+the stamp is unchanged (the model never animated) the static entry lights; once it changes the grid (live value) owns it,
+on when linked and off when the model left it off, and a grid light known to be static needs one refresh, not two, to be
+kept stale. WMO MOLT is not read: nothing in 12340 loads it at run time (its lights are baked into MOCV), and the lamps it
+stands for are doodads with their own M2 lights. Cost: one loop over the list a frame (a few thousand entries in Undercity).
+
+**Placed lamps always on** (2026-10-24, lampson; Undercity lamps still switching with the camera, video 18-21-29).
+Cause: the lightbake rule "the live light wins once the model has animated". `CM2Scene::SelectLights` (run by every
+lit model's `SetupLighting` and the terrain/WMO gathers) calls `SetVisible(0)` on a light whose stamp is old, and
+`SetVisible(0)` UNLINKS it from `m_lightGrid`. So a lamp whose doodad animated once (camera near or in view) and was then
+culled (the camera passed under it) left the grid, and its static entry was skipped for its changed stamp: dark until
+the model was drawn again. Now every static-list lamp is lit every frame at its static colour; the grid walk skips
+them; the live light only supplies the position on frames its model animated (stamp == frame stamp, visible). Carried
+or moving lights (not in the static list) stay live, as before. `maxLightCount` default 32 -> 64.
+
+**Baked shadows** (2026-10-24, lightbake; `RunBake`, `LegionLights.hlsl` `BakedVisibility`). Not a rendered cube depth
+map: each static lamp's cube is 6 x 16 x 16 rays cast once through `World::Intersect` (flags 0x111: terrain, WMO and
+doodad collision), from 0.5 yd out to the lamp's radius, hit distance / 40 yd in 8 bits (255 = open). Chosen over a GPU
+bake because it is backend-free (D3D9, D3D11 and Vulkan sample the same ps_3_0 texture) and could be written without
+the rig; ceiling: props without collision (fences, banners, many small doodads) do not cast, the screen-space rays still
+catch the visible ones; WMO groups not yet loaded when the lamp bakes are missed until the slot is evicted. A lamp with
+more than half its rays blocked inside 1 yd (shut in its own holder's collision) is marked `noBake`. Atlas: `GxTex_Argb8888`
+1024 x `lightBakedShadowAtlas`, point filtered, 10 slots of 96 x 16 a row (faces side by side, face f = axis f / 2,
+negative when f & 1, u along axis + 1, v along axis + 2), CPU mirror uploaded per slot (`GxTexUpdate`). LRU: a selected
+static lamp without a slot gets the free one or the least recently selected; one lamp bakes at a time, at most 1 ms of
+rays a frame (checked every 16 rays), best radius / distance first. Shader: the slot's texel origin rides in colour.w
+(y, -1 none) and attenuation.w (x), c4-c7 view to world, c60 (1 / w, 1 / h, 16, 0.85 x `lightBakedShadows`), s1 the atlas;
+2x2 PCF on the face, a texel open when its distance >= |lamp to p + 0.15 n| - 0.4 - L x 2 / 16 yd; result min() with
+`LightVisibility`, and applied past the rays' 120 yd too. ps_3_0 52 KB (fxc fits it, so D3D9 has it too).
+
+Default on since 2026-10-24 (it replaces the stock per-vertex lamps on terrain and WMOs); cost not measured (no rig by the rules). Estimate:
+per pass 5 depth taps and ~16 x 14 ALU a pixel over the world viewport, about 0.2-0.4 ms a pass at 1440p on a mid GPU
+(discarded pixels still pay the loop). With the shader cost confirmed, `lightMode 1` is the candidate default.
+
+**Backends.** SPIR-V through Tools/VulkanShaders (Vulkan), ps_4_0 through build_shaders.py (D3D11), ps_3_0 (D3D9)
+compiled by fxc.
+
+**Known limits (v1).**
+- Lights that are not M2 lights (WMO MOLT lights, spell lights) are not in the grid: not lit. Map lights are area
+  lighting (DNInfo), not points.
+- A lamp lights through walls (no shadowing); the N.L from rebuilt normals is per pixel and noisy on bumpy ground.
+- WMO interiors already carry baked lamp light in MOCV: the lamp adds on top (lower `lightIntensity` indoors if it
+  is too bright; no interior weight yet).
+- The stock fog is in the colour when vfog is off (`vfogStockFog 0` or vfog off): a fogged pixel within reach is
+  brightened with its fog. With vfog on the stock fog is pushed out, so the lit colour is unfogged here.
+- Every pass covers the whole world viewport. ponytail in LegionLights.cpp: scissor each pass to its lights' screen
+  rect if the cost shows.
+
+**Next phase: a light pre-pass the receivers read (Legion's shape).** Draw each light as a volume (sphere or screen
+rect) into an RGBA16F light buffer before the opaque world (needs a depth + normal pre-pass, or the normals rebuilt
+from the depth as here) and have the terrain, WMO and M2 pixel shaders add `albedo * lightBuffer` in their own
+lighting. That adds: true albedo (no division by the stock light level, so dark-textured and fogged surfaces are
+right), lamps lighting under the stock fog, specular, per-material response, no 2x ceiling, models lit by more than 4
+lights (their 4 stock point lights could be dropped), and spot lights (`lightbuffer_spotlight`). The cost is every
+receiver shader (terrain 4-layer, WMO, M2 families) getting one more tap: 3-4 pieces, the survey estimate.
+
+## 2026-10-18: vfog34, integration of SSAO, refraction, lights (+ bl-soft, bl-catarefl)
+
+Branch legion-int2 on vfog e62d446: legion-ssao 49f36ef, legion-refract 0e0b4b8, legion-lights e2246fd, bl-soft 8fbb852
+(soft particles, docs/BACKLOG_PORT.md) and bl-catarefl 4199897 (Cata water planar reflection, docs/BACKLOG_PORT.md).
+Each item took depth-user bit 4; the merge gives one bit each in `CGxDevice.h`: `DepthUser_Ssao` 1u << 4,
+`DepthUser_Refraction` 1u << 5, `DepthUser_Lights` 1u << 6, `DepthUser_SoftParticles` 1u << 7 (each set by one caller).
+
+| CVar | default | |
+|---|---|---|
+| `SSAO` / `SSAODistance` / `SSAOBlur` / `SSAOStrength` | 0 / 100 / 2 / 1 | off until the look gets a verdict |
+| `refraction` / `refractionStrength` | 1 / 1 | heat haze over tagged fire emitters |
+| `lightMode` / `maxLightCount` / `maxLightDist` / `lightIntensity` | 0 / 32 / 200 / 1 | lamp light, own options page |
+| `softParticles` / `softParticlesDistance` | 1 / 1 | |
+| `waterCataReflection` / `waterCataReflScale` | 3 / 0.6 | waterStyle 1 only |
+
+Shaders: the committed ps_3_0 / ps_4_0 .bls of each branch (no rebuild); SPIR-V translated in full with the merged
+translator (bl-soft's `dcl vPos` emitter patch): 1653 records + 2 companions, spirv-val clean, 9 new pixel modules
+(LegionSsao x4, LegionRefraction, LegionLights, SoftParticle0/1, CataWaterAboveP). custom.MPQ 5234 files (SM4 pack
+shadow-s1); against vfog33's only the lua, the 18 new .bls, their 27 SPIR-V files and manifest/index differ (plus the
+.spvasm disassembly text, whose header names the output folder; every .spv and .glsl is byte-identical).

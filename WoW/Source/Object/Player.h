@@ -98,7 +98,7 @@ class CGPlayerLocalData : public CGPlayerData {
     /* 0FF8 */ uint32_t m_playerFieldCoinage;
     /* 0FFC */ uint32_t m_playerFieldModDamageDonePos [7];
     /* 1018 */ uint32_t m_playerFieldModDamageDoneNeg [7];
-    /* 1034 */ uint32_t m_playerFieldModDamageDonePct [7];
+    /* 1034 */ float m_playerFieldModDamageDonePct [7];
     /* 1050 */ uint32_t m_playerFieldModHealingDonePos;
     /* 1054 */ float m_playerFieldModHealingPct;
     /* 1058 */ float m_playerFieldModHealingDonePct;

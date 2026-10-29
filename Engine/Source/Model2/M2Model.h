@@ -220,7 +220,10 @@ class CM2Model {
     /* 02E0 */ void* m_hitTestOwner;
     /* 02E4 */ uint32_t m_hitTestGroup;
     /* 02E8 */ uint32_t m_handle;
-    /* 02EC */ uint32_t unused_02EC;
+    /* 02EC */ uint32_t m_pbrArmor;   // CUSTOM (ARMORMETAL, unused in stock): an attached item's GxLightingMaterial
+    CTexture* m_pbrMask;             // CUSTOM (ARMORMASK, appended): its metal mask (ArmorMask.h), own handle, or null
+    C44Matrix m_lodMatrixF4;         // CUSTOM (BENILLA animation LOD, appended): m_matrixF4 of the last full pose
+    uint32_t m_lodPosed = 0;         // CUSTOM (BENILLA animation LOD): m_lodMatrixF4 is valid
 
     static void (*s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
     static TSGrowableArray<M2ModelCallback> s_sequenceCallbacks;
@@ -349,7 +352,8 @@ class CM2Model {
     void AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C3Vector& emissive, float alpha, float alpha2);
     void AnimateMTSimple(const C44Matrix* view, const C3Vector& diffuse, const C3Vector& emissive, float alpha, float alpha2);
     void AnimateParticleST(float deltaTime, uint32_t index);
-    void AnimateST();
+    void AnimateST(uint32_t pass = 0);
+    int32_t CanAnimateSTThreaded();
     int32_t GetRegionBounds(M2SkinSection* section, CAaBox& box, C44Matrix& matrix);
     int32_t Initialize(CM2Scene* scene, CM2Shared* shared, CM2Model* source, uint32_t flags);
     int32_t InitializeLoaded();

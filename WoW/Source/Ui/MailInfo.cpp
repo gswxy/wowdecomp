@@ -29,7 +29,7 @@
 #include "WoW/Source/UIUtil/Tooltip.h"
 
 // STATIC: 0x00BEB038
-SendMailItem CGMailInfo::m_sendItems[16];
+SendMailItem CGMailInfo::m_sendItems[CGMailInfo::NUM_SEND_ITEM_SLOTS];
 
 // STATIC: 0x00BEB1B8
 uint8_t CGMailInfo::m_lockSendItems;
@@ -38,7 +38,7 @@ uint8_t CGMailInfo::m_lockSendItems;
 uint32_t CGMailInfo::m_sendPending;
 
 // STATIC: 0x00BEAFE8
-MailSenderInfo s_recentSenders[3];
+MailSenderInfo s_recentSenders[CGMailInfo::NUM_RECENT_SENDERS];
 
 // STATIC: 0x00BEB1BC
 uint32_t CGMailInfo::m_sendMoney;
@@ -98,7 +98,7 @@ MailAttachmentInfo* GetFirstAttachment(MailboxMessageInfo* message) {
         return nullptr;
     }
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < MailboxMessageInfo::MAX_ATTACHMENTS; i++) {
         if (message->m_attachments[i].m_itemID) {
             return &message->m_attachments[i];
         }
@@ -128,7 +128,7 @@ MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index) {
         return GetFirstAttachment(message);
     }
 
-    if (index < 16) {
+    if (index < MailboxMessageInfo::MAX_ATTACHMENTS) {
         return &message->m_attachments[index];
     }
 
@@ -140,7 +140,7 @@ MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index) {
 int32_t GetNumAttachments(const MailboxMessageInfo* message) {
     int32_t count = 0;
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < MailboxMessageInfo::MAX_ATTACHMENTS; i++) {
         if (message->m_attachments[i].m_itemID) {
             count++;
         }
@@ -177,7 +177,7 @@ void InboxItemQueryCallback(int32_t id, const WOWGUID& guid, void* param, bool s
 // VERIFY: f71662b9 auto
 // OFFSET: 0x0056D8A0
 void CGMailInfo::ClearSendItem(uint32_t index) {
-    if (index < 12) {
+    if (index < CGMailInfo::MAX_SEND_ITEMS) {
         CGMailInfo::m_sendItems[index].m_guid = WOWGUID();
         CGMailInfo::m_sendItems[index].m_container = WOWGUID();
         CGMailInfo::m_sendItems[index].m_slot = 0;
@@ -198,7 +198,7 @@ static StationeryInfo* GetStationery(uint32_t index) {
 // OFFSET: 0x005717B0
 int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg) {
     uint32_t itemGuid = 0;
-    uint32_t inventoryError = 40;
+    uint32_t inventoryError = BAG_INTERNAL_BAG_ERROR;
     uint32_t itemCount = 0;
     uint32_t messageID;
     uint32_t action;
@@ -207,9 +207,9 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
     msg->Get(action);
     msg->Get(result);
 
-    if (result == 1) {
+    if (result == CGMailInfo::COMMAND_RESULT::INVENTORY_ERROR) {
         msg->Get(inventoryError);
-    } else if (action == 2 && (!result || result == 21)) {
+    } else if (action == 2 && (!result || result == CGMailInfo::COMMAND_RESULT::ATTACHMENT_EXPIRED)) {
         msg->Get(itemGuid);
         msg->Get(itemCount);
     }
@@ -219,7 +219,7 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
     }
 
     switch (result) {
-        case 0: {
+        case CGMailInfo::COMMAND_RESULT::SUCCESS: {
             switch (action) {
                 case 0: {
                     CGGameUI::DisplayError(ERR_MAIL_SENT);
@@ -252,66 +252,66 @@ int32_t Packet_SMSG_SEND_MAIL_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             break;
         }
 
-        case 1: {
+        case CGMailInfo::COMMAND_RESULT::INVENTORY_ERROR: {
             CGGameUI::DisplayError(static_cast<UIErrors>(GetDisplayErrorByInventoryError(inventoryError)));
             break;
         }
 
-        case 2: {
+        case CGMailInfo::COMMAND_RESULT::TO_SELF: {
             CGGameUI::DisplayError(ERR_MAIL_TO_SELF);
             break;
         }
 
-        case 3: {
+        case CGMailInfo::COMMAND_RESULT::NOT_ENOUGH_MONEY: {
             CGGameUI::DisplayError(ERR_NOT_ENOUGH_MONEY);
             break;
         }
 
-        case 4: {
+        case CGMailInfo::COMMAND_RESULT::TARGET_NOT_FOUND: {
             CGGameUI::DisplayError(ERR_MAIL_TARGET_NOT_FOUND);
             break;
         }
 
-        case 5: {
+        case CGMailInfo::COMMAND_RESULT::WRONG_FACTION: {
             CGGameUI::DisplayError(ERR_PLAYER_WRONG_FACTION);
             break;
         }
 
-        case 14: {
+        case CGMailInfo::COMMAND_RESULT::RESTRICTED_ACCOUNT: {
             CGGameUI::DisplayError(ERR_RESTRICTED_ACCOUNT);
             break;
         }
 
-        case 15: {
+        case CGMailInfo::COMMAND_RESULT::REACHED_CAP: {
             CGGameUI::DisplayError(ERR_MAIL_REACHED_CAP);
             break;
         }
 
-        case 16: {
+        case CGMailInfo::COMMAND_RESULT::WRAPPED_COD: {
             CGGameUI::DisplayError(ERR_MAIL_WRAPPED_COD);
             break;
         }
 
-        case 17: {
+        case CGMailInfo::COMMAND_RESULT::SQUELCHED: {
             CGGameUI::DisplayError(ERR_USER_SQUELCHED);
             break;
         }
 
-        case 18: {
+        case CGMailInfo::COMMAND_RESULT::TOO_MANY_ATTACHMENTS: {
             CGGameUI::DisplayError(ERR_MAIL_TOO_MANY_ATTACHMENTS);
             break;
         }
 
-        case 19: {
+        case CGMailInfo::COMMAND_RESULT::INVALID_ATTACHMENT: {
             CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT);
             break;
         }
 
-        case 20: {
+        case CGMailInfo::COMMAND_RESULT::NO_DISPLAY_ERROR: {
             break;
         }
 
-        case 21: {
+        case CGMailInfo::COMMAND_RESULT::ATTACHMENT_EXPIRED: {
             CGGameUI::DisplayError(ERR_MAIL_ATTACHMENT_EXPIRED);
             CGMailInfo::RemoveItem(messageID, itemGuid);
             break;
@@ -399,7 +399,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
         memset(message->m_attachments, 0, sizeof(message->m_attachments));
 
         TSBitField<TSGrowableArray<uint32_t> > used;
-        used.m_count = 16;
+        used.m_count = MailboxMessageInfo::MAX_ATTACHMENTS;
         used.m_bits.ReallocData(1);
 
         if (used.m_count) {
@@ -410,13 +410,13 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             uint8_t index;
             msg->Get(index);
 
-            if (index >= 16) {
+            if (index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                 index = 0;
             }
 
             if (used.m_bits.m_data[index >> 5] & (1 << (index & 0x1F))) {
                 for (index = 0; used.m_bits.m_data[index >> 5] & (1 << (index & 0x1F)); ) {
-                    if (++index >= 16) {
+                    if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                         break;
                     }
                 }
@@ -425,7 +425,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             MailAttachmentInfo unused;
             MailAttachmentInfo* attachment;
 
-            if (index >= 16) {
+            if (index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
                 attachment = &unused;
             } else {
                 attachment = &message->m_attachments[index];
@@ -435,7 +435,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
             msg->Get(attachment->m_itemGuid);
             msg->Get(reinterpret_cast<uint32_t&>(attachment->m_itemID));
 
-            for (uint32_t k = 0; k < 7; k++) {
+            for (uint32_t k = 0; k < MailAttachmentInfo::NUM_ENCHANTMENTS; k++) {
                 msg->Get(reinterpret_cast<uint32_t&>(attachment->m_enchantIDs[k]));
                 msg->Get(attachment->m_enchantDurations[k]);
                 msg->Get(reinterpret_cast<uint32_t&>(attachment->m_enchantCharges[k]));
@@ -454,7 +454,7 @@ int32_t Packet_SMSG_MAIL_LIST_RESULT(void* param, NETMESSAGE msgId, uint32_t tim
 
         message->m_invoiceItemID = 0;
         message->m_invoiceRandomPropertiesID = 0;
-        message->m_invoiceType = -1;
+        message->m_invoiceType = CGMailInfo::INVOICE_TYPE::UNSET;
 
         if (!type && FriendList::s_friendList->IsIgnored(message->m_sender, true) && !(message->m_flags & 0x20A)) {
             CDataStore reply;
@@ -531,9 +531,9 @@ void CGMailInfo::InitializeGame() {
         CGMailInfo::m_stationeries.m_data[i]->m_itemGUID = WOWGUID{ 0 };
     }
 
-    CGMailInfo::m_inbox.SetCount(8);
+    CGMailInfo::m_inbox.SetCount(CGMailInfo::INITIAL_INBOX_RECORDS);
 
-    for (uint32_t i = 0; i < 8; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::INITIAL_INBOX_RECORDS; i++) {
         CGMailInfo::m_inbox.m_data[i] = static_cast<MailboxMessageInfo*>(SMemAlloc(sizeof(MailboxMessageInfo), __FILE__, __LINE__, 0));
     }
 
@@ -551,7 +551,7 @@ void CGMailInfo::InitializeGame() {
 void CGMailInfo::UpdateRecentSenders() {
     bool changed = false;
 
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
 
         if (!sender.m_guid && !sender.m_entry) {
@@ -594,7 +594,7 @@ void CGMailInfo::UpdateRecentSenders() {
 // VERIFY: 2350f8eb auto
 // OFFSET: 0x0056DED0
 void CGMailInfo::UpdatePendingMail(float elapsed) {
-    for (int32_t i = 0; i < 3; i++) {
+    for (int32_t i = 0; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
 
         if ((sender.m_guid || sender.m_entry) && sender.m_timeLeft > 0.0f) {
@@ -763,7 +763,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
             return;
         }
 
-        char itemName[256];
+        char itemName[CGMailInfo::ITEM_NAME_BUFFER_SIZE];
         CGItem_C::BuildItemName(itemName, sizeof(itemName), itemID, randomPropertiesID);
         const char* format;
 
@@ -773,12 +773,12 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
                 break;
             }
 
-            case 1: {
+            case CGMailInfo::INVOICE_TYPE::BUYER: {
                 format = FrameScript_GetText("AUCTION_WON_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
 
-            case 2: {
+            case CGMailInfo::INVOICE_TYPE::SELLER: {
                 format = FrameScript_GetText("AUCTION_SOLD_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
@@ -794,7 +794,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
                 break;
             }
 
-            case 6: {
+            case CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE: {
                 format = FrameScript_GetText("AUCTION_INVOICE_MAIL_SUBJECT", -1, GENDER_NOT_APPLICABLE);
                 break;
             }
@@ -811,7 +811,7 @@ void CGMailInfo::ParseInboxSubject(MailboxMessageInfo* message) {
             message->m_subject[0] = '\0';
         }
 
-        if (type == 1 || type == 2 || type == 6) {
+        if (type == CGMailInfo::INVOICE_TYPE::BUYER || type == CGMailInfo::INVOICE_TYPE::SELLER || type == CGMailInfo::INVOICE_TYPE::SELLER_TEMP_INVOICE) {
             message->m_invoiceItemID = itemID;
             message->m_invoiceRandomPropertiesID = randomPropertiesID;
             message->m_invoiceType = type;
@@ -895,7 +895,7 @@ void CGMailInfo::RemoveItem(uint32_t messageID, uint32_t itemGuid) {
     uint32_t index = 0;
 
     while (!message->m_attachments[index].m_itemID || message->m_attachments[index].m_itemGuid != itemGuid) {
-        if (++index >= 16) {
+        if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
             return;
         }
     }
@@ -934,7 +934,7 @@ bool CGMailInfo::CanComplain(uint32_t index) {
     }
 
     MailboxMessageInfo* message = CGMailInfo::m_inbox.m_data[index];
-    return message && !message->m_messageType && !(message->m_flags & 0x2) && message->m_stationery != 61 && message->m_sender != player->m_obj->m_guid && !FriendList::s_friendList->IsFriend(message->m_sender);
+    return message && !message->m_messageType && !(message->m_flags & 0x2) && message->m_stationery != CGMailInfo::GM_STATIONERY_ID && message->m_sender != player->m_obj->m_guid && !FriendList::s_friendList->IsFriend(message->m_sender);
 }
 
 // VERIFY: 56c85263 auto
@@ -982,7 +982,7 @@ void CGMailInfo::Complain(uint32_t index) {
 // VERIFY: 77c88115 manual
 // OFFSET: 0x0056FC80
 void CGMailInfo::UpdateStationeryList() {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -1069,7 +1069,7 @@ void CGMailInfo::QueryNextMailTime() {
 // VERIFY: db821221 manual
 // OFFSET: 0x0056FFF0
 bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID container, uint8_t slot) {
-    CGItem_C* object = static_cast<CGItem_C*>(ClntObjMgrObjectPtr(item, TYPEMASK_ITEM, __FILE__, __LINE__));
+    CGItem_C* object = static_cast<CGItem_C*>(ClntObjMgrObjectPtr(item, TYPE_ITEM, __FILE__, __LINE__));
 
     if (!object) {
         return false;
@@ -1094,18 +1094,18 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
             return false;
         }
 
-        if (!(stats->m_flags[0] & 0x8000000)) {
+        if (!(stats->m_flags[0] & ITEM_STATIC_FLAGS::ITEM_FLAG_IS_BOUND_TO_ACCOUNT)) {
             CGGameUI::DisplayError(ERR_MAIL_BOUND_ITEM);
             return false;
         }
     }
 
-    if (object->GetItemStaticFlags(0) & 0x2) {
+    if (object->GetItemStaticFlags(0) & ITEM_FLAG_CONJURED) {
         CGGameUI::DisplayError(ERR_MAIL_CONJURED_ITEM);
         return false;
     }
 
-    if ((object->GetItemStaticFlags(0) & 0x10000) || object->m_item->m_itemFieldDuration || stats->m_holidayId) {
+    if ((object->GetItemStaticFlags(0) & ITEM_STATIC_FLAGS::ITEM_FLAG_REAL_DURATION) || object->m_item->m_itemFieldDuration || stats->m_holidayId) {
         CGGameUI::DisplayError(ERR_MAIL_LIMITED_DURATION_ITEM);
         return false;
     }
@@ -1115,7 +1115,7 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
         return false;
     }
 
-    if (object->m_obj->m_type & TYPEMASK_CONTAINER) {
+    if (object->m_obj->m_type & TYPE_CONTAINER) {
         CGBag_C* bag = object->GetBag();
 
         if (bag && bag->GetNumItems()) {
@@ -1128,21 +1128,21 @@ bool CGMailInfo::AddItemToOutgoingMail(uint32_t index, WOWGUID item, WOWGUID con
 
     if (index == static_cast<uint32_t>(-1)) {
         for (sendIndex = 0; CGMailInfo::GetSendItemGuid(sendIndex); sendIndex++) {
-            if (sendIndex + 1 >= 12) {
+            if (sendIndex + 1 >= CGMailInfo::MAX_SEND_ITEMS) {
                 CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT_SLOT);
                 return false;
             }
         }
     }
 
-    if (sendIndex > 11) {
+    if (sendIndex > CGMailInfo::MAX_SEND_ITEM_INDEX) {
         CGGameUI::DisplayError(ERR_MAIL_INVALID_ATTACHMENT_SLOT);
         return false;
     }
 
     CGMailInfo::SetSendItem(sendIndex, item, container, slot);
     CGGameUI::LockItem(item);
-    SndInterfacePlayItemSound(1, object);
+    SndInterfacePlayItemSound(ITEMSOUND_DROP, object);
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
     if (player) {
@@ -1178,7 +1178,7 @@ void CGMailInfo::ProcessAutoLootAttachments(MailboxMessageInfo* message) {
             break;
         }
 
-        if (++index >= 16) {
+        if (++index >= MailboxMessageInfo::MAX_ATTACHMENTS) {
             return;
         }
     }
@@ -1192,7 +1192,7 @@ void CGMailInfo::ProcessAutoLootAttachments(MailboxMessageInfo* message) {
     ClientServices::Send2(&msg);
     CGMailInfo::m_commandPending = 1;
 
-    for (index++; index < 16; index++) {
+    for (index++; index < MailboxMessageInfo::MAX_ATTACHMENTS; index++) {
         MailAttachmentInfo* next = GetAttachment(message, index);
 
         if (next && next->m_itemID) {
@@ -1292,12 +1292,12 @@ void CGMailInfo::EnterWorld() {
 // VERIFY: a233ad46 auto
 // OFFSET: 0x0056D290
 void CGMailInfo::SetSendItem(uint32_t index, WOWGUID item, WOWGUID container, uint8_t slot) {
-    if (index >= 12) {
+    if (index >= CGMailInfo::MAX_SEND_ITEMS) {
         return;
     }
 
     if (item) {
-        for (uint32_t i = 0; i < 12; i++) {
+        for (uint32_t i = 0; i < CGMailInfo::MAX_SEND_ITEMS; i++) {
             if (i != index && CGMailInfo::m_sendItems[i].m_guid == item) {
                 memset(&CGMailInfo::m_sendItems[i], 0, sizeof(SendMailItem));
             }
@@ -1312,7 +1312,7 @@ void CGMailInfo::SetSendItem(uint32_t index, WOWGUID item, WOWGUID container, ui
 // VERIFY: 84774f72 auto
 // OFFSET: 0x0056D320
 void CGMailInfo::GetSendItem(uint32_t index, WOWGUID& item, WOWGUID& container, uint8_t& slot) {
-    if (index >= 16) {
+    if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
         item = WOWGUID();
         container = WOWGUID();
         slot = 0;
@@ -1326,7 +1326,7 @@ void CGMailInfo::GetSendItem(uint32_t index, WOWGUID& item, WOWGUID& container, 
 // VERIFY: 0362ced0 manual
 // OFFSET: 0x0056D390
 WOWGUID CGMailInfo::GetSendItemGuid(uint32_t index) {
-    if (index >= 16) {
+    if (index >= CGMailInfo::NUM_SEND_ITEM_SLOTS) {
         return WOWGUID();
     }
 
@@ -1338,7 +1338,7 @@ WOWGUID CGMailInfo::GetSendItemGuid(uint32_t index) {
 uint32_t CGMailInfo::GetNumSendItems() {
     uint32_t count = 0;
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         if (CGMailInfo::m_sendItems[i].m_guid) {
             count++;
         }
@@ -1354,7 +1354,7 @@ bool CGMailInfo::IsSendItem(WOWGUID item) {
         return false;
     }
 
-    for (uint32_t i = 0; i < 16; i++) {
+    for (uint32_t i = 0; i < CGMailInfo::NUM_SEND_ITEM_SLOTS; i++) {
         if (CGMailInfo::m_sendItems[i].m_guid == item) {
             return true;
         }
@@ -1369,7 +1369,7 @@ const char* GetSenderName(int32_t entry, int32_t type, WOWGUID guid, int32_t sta
     switch (type) {
         case 0:
         case 5: {
-            if (stationery == 61) {
+            if (stationery == CGMailInfo::GM_STATIONERY_ID) {
                 return FrameScript_GetText("GM_EMAIL_NAME", -1, GENDER_NOT_APPLICABLE);
             }
 
@@ -1434,7 +1434,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
     msg->Get(count);
 
     for (uint32_t i = 0; i < count; i++) {
-        if (i >= 3) {
+        if (i >= CGMailInfo::NUM_RECENT_SENDERS) {
             break;
         }
 
@@ -1446,7 +1446,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
         msg->Get(sender.m_timeLeft);
     }
 
-    for (uint32_t i = count; i < 3; i++) {
+    for (uint32_t i = count; i < CGMailInfo::NUM_RECENT_SENDERS; i++) {
         MailSenderInfo& sender = s_recentSenders[i];
         sender.m_timeLeft = 0.0f;
         sender.m_guid = WOWGUID();

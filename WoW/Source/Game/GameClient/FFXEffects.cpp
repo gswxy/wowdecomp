@@ -59,9 +59,9 @@ PassFogCombine::~PassFogCombine() {
 // VERIFY: 874a5f41 manual
 // OFFSET: 0x007E86A0
 PassDeath::PassDeath(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, EGxBlend blend, bool unk) : FFX::Pass(inputs, count, output, blend, unk) {
-    this->m_useRect = 0;
-    this->m_shaders[0] = nullptr;
-    this->m_shaders[1] = nullptr;
+    this->m_useRect = PassDeath::SHADER_SELECTION::PRIMARY_VARIANT;
+    this->m_shaders[PassDeath::SHADER_SELECTION::PRIMARY_VARIANT] = nullptr;
+    this->m_shaders[PassDeath::SHADER_SELECTION::RECTANGLE_PERMUTATION] = nullptr;
 
     if (g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 8 || g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 9 || g_theGxDevicePtr->Caps().m_shaderTargets[GxSh_Pixel] == 10) {
         g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", FFX::s_useRECT ? "FFXDeath_nvts_rect" : "FFXDeath_nvts_2d", 1);
@@ -69,10 +69,10 @@ PassDeath::PassDeath(FFX::Tex** inputs, uint32_t count, FFX::Tex* output, EGxBle
     }
 
     if (FFX::s_useRECT) {
-        this->m_useRect = 1;
+        this->m_useRect = PassDeath::SHADER_SELECTION::RECTANGLE_PERMUTATION;
     }
 
-    g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", "FFXDeath", 2);
+    g_theGxDevicePtr->ShaderCreate(this->m_shaders, GxSh_Pixel, "Shaders\\Pixel", "FFXDeath", PassDeath::SHADER_SELECTION::VARIANT_CAPACITY);
 }
 
 // VERIFY: 5970ea32 manual
@@ -233,17 +233,17 @@ PassNetherBlur::PassNetherBlur(FFX::Tex** inputs, uint32_t count, FFX::Tex* outp
     g_theGxDevicePtr->ShaderCreate(&this->m_vertexShader, GxSh_Vertex, "Shaders\\Vertex", "FFXNetherBlur", 1);
     this->m_seed.SetSeed(0xABCDEF01);
 
-    for (uint32_t table = 0; table < 3; table++) {
+    for (uint32_t table = 0; table < NOISE_TABLE_ROLE::ROLE_COUNT; table++) {
         for (uint32_t i = 0; i < 36; i++) {
             float value = CRandom::ufloat_(this->m_seed);
             this->m_noise[table][i] = fmodf(value + value - 1.0f, 1.0f);
         }
     }
 
-    this->m_noiseTables[0] = this->m_noise[0];
+    this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM] = this->m_noise[0];
     this->m_noiseBlend = 0.0f;
-    this->m_noiseTables[1] = this->m_noise[1];
-    this->m_noiseTables[2] = this->m_noise[2];
+    this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO] = this->m_noise[1];
+    this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE] = this->m_noise[2];
 }
 
 // VERIFY: 32e95e2f auto
@@ -460,20 +460,20 @@ void PassNetherBlur::Execute() {
 
     if (this->m_noiseBlend > 1.0f) {
         this->m_noiseBlend = static_cast<float>(fmod(this->m_noiseBlend, 1.0));
-        float* oldest = this->m_noiseTables[0];
-        this->m_noiseTables[0] = this->m_noiseTables[1];
-        this->m_noiseTables[1] = this->m_noiseTables[2];
-        this->m_noiseTables[2] = oldest;
+        float* oldest = this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM];
+        this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM] = this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO];
+        this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO] = this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE];
+        this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE] = oldest;
 
         for (uint32_t i = 0; i < 36; i++) {
             uint32_t bits = (CRandom::uint32_(this->m_seed) & 0x7FFFFF) | 0x3F800000;
             float random = *reinterpret_cast<float*>(&bits) - 1.0f;
-            this->m_noiseTables[2][i] = static_cast<float>(fmod(random + random - 1.0f, 1.0));
+            this->m_noiseTables[NOISE_TABLE_ROLE::REGENERATE][i] = static_cast<float>(fmod(random + random - 1.0f, 1.0));
         }
     }
 
     for (uint32_t i = 0; i < 36; i++) {
-        this->m_blendedNoise[i] = (1.0f - this->m_noiseBlend) * this->m_noiseTables[0][i] + this->m_noiseTables[1][i] * this->m_noiseBlend;
+        this->m_blendedNoise[i] = (1.0f - this->m_noiseBlend) * this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_FROM][i] + this->m_noiseTables[NOISE_TABLE_ROLE::BLEND_TO][i] * this->m_noiseBlend;
     }
 
     this->m_noiseBlend = elapsed * 1.5f + this->m_noiseBlend;
@@ -517,7 +517,7 @@ void PassNetherBlur::Execute() {
     GxRsSet(GxRs_ScissorTest, 0);
     g_theGxDevicePtr->DeviceSetRenderTarget(GxBuffers_Color, target, 0);
     GxXformSetViewport(0.0f, static_cast<float>(FFX::s_quart[1].m_size.x) / FFX::s_quart[1].m_texSize.x, 0.0f, static_cast<float>(FFX::s_quart[1].m_size.y) / FFX::s_quart[1].m_texSize.y, 0.0f, 1.0f);
-    GxSceneClear(1, CImVector(0xFF, 0xFF, 0xFF, 0xFF));
+    GxSceneClear(GxBufferBit_Color, CImVector(0xFF, 0xFF, 0xFF, 0xFF));
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(this->m_inputs[0]->m_texture, 1, nullptr));
@@ -535,7 +535,7 @@ void PassNetherBlur::Execute() {
     GxRsSet(GxRs_ScissorTest, 0);
     g_theGxDevicePtr->DeviceSetRenderTarget(GxBuffers_Color, target, 0);
     GxXformSetViewport(0.0f, static_cast<float>(this->m_output->m_size.x) / this->m_output->m_texSize.x, 0.0f, static_cast<float>(this->m_output->m_size.y) / this->m_output->m_texSize.y, 0.0f, 1.0f);
-    GxSceneClear(1, CImVector(0xFF, 0xFF, 0xFF, 0xFF));
+    GxSceneClear(GxBufferBit_Color, CImVector(0xFF, 0xFF, 0xFF, 0xFF));
 
     g_theGxDevicePtr->RsSet(GxRs_Texture0, TextureGetGxTex(FFX::s_quart[1].m_texture, 1, nullptr));
     g_theGxDevicePtr->RsSet(GxRs_Texture1, TextureGetGxTex(FFX::s_quart[1].m_texture, 1, nullptr));
@@ -602,9 +602,9 @@ void PassPropagateFog::Execute() {
 // VERIFY: 7f8524f4 auto
 // OFFSET: 0x007E9010
 void EffectSwirlingFog::SetParameters(int32_t count, const int32_t* params) {
-    static_cast<PassFogSeed*>(this->m_passes[0])->m_color = params[0];
-    static_cast<PassPropagateFog*>(this->m_passes[1])->unk_005C = params[1] * 0.0039215689f;
-    PassFogCombine* combine = static_cast<PassFogCombine*>(this->m_passes[2]);
+    static_cast<PassFogSeed*>(this->m_passes[PASS_STAGE::SEED_PASS])->m_color = params[0];
+    static_cast<PassPropagateFog*>(this->m_passes[PASS_STAGE::PROPAGATION_PASS])->unk_005C = params[1] * 0.0039215689f;
+    PassFogCombine* combine = static_cast<PassFogCombine*>(this->m_passes[PASS_STAGE::COMBINE_PASS]);
     combine->m_density = params[2] * 0.0099999998f;
     combine->m_fadeTime = 3.0f;
 }
@@ -612,8 +612,8 @@ void EffectSwirlingFog::SetParameters(int32_t count, const int32_t* params) {
 // VERIFY: d2fd534c auto
 // OFFSET: 0x007E8E20
 void EffectNetherWorld::End() {
-    if (this->m_passes.Count() >= 2) {
-        static_cast<PassNetherCombine*>(this->m_passes[1])->m_fade = 0.0f;
+    if (this->m_passes.Count() >= PASS_STAGE::PASS_COUNT) {
+        static_cast<PassNetherCombine*>(this->m_passes[PASS_STAGE::COMBINE_PASS])->m_fade = 0.0f;
     }
 }
 

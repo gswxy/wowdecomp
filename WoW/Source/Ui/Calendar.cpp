@@ -11,6 +11,7 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/DB/Rec/FactionTemplateRec.h"
 #include "WoW/Source/DB/Rec/LfgDungeonsRec.h"
+#include "WoW/Source/Ui/LFGInfo.h"
 #include "WoW/Source/Object/ObjectClient/Unit_C.h"
 #include "WoW/Source/Object/Unit.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
@@ -218,7 +219,7 @@ void CGCalendar::EnterWorld() {
         return;
     }
 
-    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -246,9 +247,9 @@ void CGCalendar::EnterWorld() {
             }
         }
 
-        if (rec->m_typeID == 1) {
+        if (rec->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_DUNGEON) {
             counts[0]++;
-        } else if (rec->m_typeID == 2) {
+        } else if (rec->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RAID) {
             counts[1]++;
         }
     }
@@ -276,9 +277,9 @@ void CGCalendar::EnterWorld() {
             }
         }
 
-        if (rec->m_typeID == 1) {
+        if (rec->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_DUNGEON) {
             s_eventTextures[0].m_data[counts[0]++] = rec->m_id;
-        } else if (rec->m_typeID == 2) {
+        } else if (rec->m_typeID == CGLookingForGroup::DUNGEON_TYPE::LFG_TYPE_RAID) {
             s_eventTextures[1].m_data[counts[1]++] = rec->m_id;
         }
     }

@@ -9,8 +9,14 @@ class CGxShader;
 
 class PassDeath : public FFX::Pass {
     public:
-    /* 0030 */ int32_t m_useRect;
-    /* 0034 */ CGxShader* m_shaders[2];
+    enum SHADER_SELECTION : int32_t {
+        PRIMARY_VARIANT = 0,
+        RECTANGLE_PERMUTATION = 1,
+        VARIANT_CAPACITY = 2,
+    };
+
+    /* 0030 */ SHADER_SELECTION m_useRect;
+    /* 0034 */ CGxShader* m_shaders[SHADER_SELECTION::VARIANT_CAPACITY];
 
     virtual ~PassDeath();
     virtual bool Valid();

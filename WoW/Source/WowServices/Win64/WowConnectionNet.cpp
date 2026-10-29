@@ -43,18 +43,36 @@ void WowConnectionNet::PlatformRun() {
         WowConnection* connections[MAXIMUM_WAIT_OBJECTS];
         HANDLE handles[MAXIMUM_WAIT_OBJECTS];
 
+        // Not stock: stock read each connection's send list, write-ready flag and lag-test list here under
+        // m_connectionsLock only, racing Send/DoWrites (they guard them with the connection's m_lock). Taking m_lock
+        // inside m_connectionsLock would invert DoDisconnect's order (m_lock, then Remove), so collect referenced
+        // candidates under m_connectionsLock first, then select events per connection under its own m_lock.
+        WowConnection* candidates[MAXIMUM_WAIT_OBJECTS];
+        DWORD numCandidates = 0;
+
         this->m_connectionsLock.Enter();
+
+        for (WowConnection* connection = this->m_connections.Head(); connection && numCandidates < MAXIMUM_WAIT_OBJECTS - 1; connection = this->m_connections.Next(connection)) {
+            if (connection->m_serviceCount) {
+                continue;
+            }
+
+            connection->m_refCount.Increment();
+            candidates[numCandidates++] = connection;
+        }
+
+        this->m_connectionsLock.Leave();
 
         connections[0] = nullptr;
         handles[0] = this->m_event;
         DWORD count = 1;
 
-        for (WowConnection* connection = this->m_connections.Head(); connection; connection = this->m_connections.Next(connection)) {
-            if (connection->m_serviceCount) {
-                continue;
-            }
-
+        for (DWORD c = 0; c < numCandidates; c++) {
+            WowConnection* connection = candidates[c];
             HANDLE event = connection->m_event;
+            bool wait = true;
+
+            connection->m_lock.Enter();
 
             switch (connection->m_connState) {
                 case WOWC_CONNECTING:
@@ -74,22 +92,24 @@ void WowConnectionNet::PlatformRun() {
                     break;
 
                 default:
-                    continue;
+                    wait = false;
+                    break;
             }
 
-            if (count < MAXIMUM_WAIT_OBJECTS) {
-                connection->m_refCount.Increment();
+            if (wait && connection->m_lagTestRecvList.Head()) {
+                timeout = 0;
+            }
+
+            connection->m_lock.Leave();
+
+            if (wait) {
                 handles[count] = event;
                 connections[count] = connection;
                 count++;
-
-                if (connection->m_lagTestRecvList.Head()) {
-                    timeout = 0;
-                }
+            } else {
+                connection->Release();
             }
         }
-
-        this->m_connectionsLock.Leave();
 
         DWORD result = WaitForMultipleObjects(count, handles, FALSE, timeout);
 

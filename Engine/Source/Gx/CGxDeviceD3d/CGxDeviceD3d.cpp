@@ -1,9 +1,12 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <malloc.h>
+#include "Engine/Source/Base/FrameProfile.h"
 #include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
 #include "Engine/Source/Gx/Blit.h"
+#include "Engine/Source/Gx/CGxDeviceD3d/D3d9SceneDepth.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/CGxTex.h"
@@ -12,8 +15,12 @@
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "ThirdParty/nvapi/nvapi.h"
+#include "Engine/Source/ShaderEffect/Types.h"
+#include "GameVersion.h"
 
 typedef IDirect3D9* (WINAPI* Direct3DCreate9Proc)(UINT sdkVersion);
+
+static const float MaxLightRange = 10000.0f;
 
 // STATIC: 0x00A2E4A8
 const D3DFORMAT CGxDeviceD3d::s_GxFormatToD3dFormat[CGxFormat::Formats_Last] = { D3DFMT_R5G6B5, D3DFMT_X8R8G8B8, D3DFMT_A8R8G8B8, D3DFMT_A2R10G10B10, D3DFMT_D16, D3DFMT_D24X8, D3DFMT_D24S8, D3DFMT_D32 };
@@ -25,13 +32,13 @@ const uint32_t CGxDeviceD3d::s_gxAttribToD3dAttribSize[7] = { 4, 4, 4, 8, 12, 4,
 static const D3DQUERYTYPE s_d3dQueryTypes[1] = { D3DQUERYTYPE_OCCLUSION };
 
 // STATIC: 0x00A2F7E8
-const EGxTexFormat CGxDeviceD3d::s_tolerableTexFmtMapping[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8 };
+const EGxTexFormat CGxDeviceD3d::s_tolerableTexFmtMapping[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Argb4444, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8, GxTex_Abgr16161616F };
 
 // STATIC: 0x00A2F850
-const D3DCUBEMAP_FACES CGxDeviceD3d::s_faceTypes[6] = { D3DCUBEMAP_FACE_POSITIVE_X, D3DCUBEMAP_FACE_NEGATIVE_X, D3DCUBEMAP_FACE_POSITIVE_Y, D3DCUBEMAP_FACE_NEGATIVE_Y, D3DCUBEMAP_FACE_POSITIVE_Z, D3DCUBEMAP_FACE_NEGATIVE_Z };
+const D3DCUBEMAP_FACES CGxDeviceD3d::s_faceTypes[GxTexCubeFaces_Last] = { D3DCUBEMAP_FACE_POSITIVE_X, D3DCUBEMAP_FACE_NEGATIVE_X, D3DCUBEMAP_FACE_POSITIVE_Y, D3DCUBEMAP_FACE_NEGATIVE_Y, D3DCUBEMAP_FACE_POSITIVE_Z, D3DCUBEMAP_FACE_NEGATIVE_Z };
 
 // STATIC: 0x00A2F81C
-const D3DFORMAT CGxDeviceD3d::s_GxTexFmtToD3dFmt[GxTexFormats_Last] = { D3DFMT_UNKNOWN, D3DFMT_A8B8G8R8, D3DFMT_A8R8G8B8, D3DFMT_A4R4G4B4, D3DFMT_A1R5G5B5, D3DFMT_R5G6B5, D3DFMT_DXT1, D3DFMT_DXT3, D3DFMT_DXT5, D3DFMT_V8U8, D3DFMT_G16R16F, D3DFMT_R32F, D3DFMT_D24X8 };
+const D3DFORMAT CGxDeviceD3d::s_GxTexFmtToD3dFmt[GxTexFormats_Last] = { D3DFMT_UNKNOWN, D3DFMT_A8B8G8R8, D3DFMT_A8R8G8B8, D3DFMT_A4R4G4B4, D3DFMT_A1R5G5B5, D3DFMT_R5G6B5, D3DFMT_DXT1, D3DFMT_DXT3, D3DFMT_DXT5, D3DFMT_V8U8, D3DFMT_G16R16F, D3DFMT_R32F, D3DFMT_D24X8, D3DFMT_A16B16G16R16F };
 
 // STATIC: 0x00A2F8D4
 const D3DPRIMITIVETYPE CGxDeviceD3d::s_primitiveConversion[GxPrims_Last] = { D3DPT_POINTLIST, D3DPT_LINELIST, D3DPT_LINESTRIP, D3DPT_TRIANGLELIST, D3DPT_TRIANGLESTRIP, D3DPT_TRIANGLEFAN };
@@ -52,19 +59,19 @@ const D3DBLEND CGxDeviceD3d::s_dstBlend[12] = { D3DBLEND_ZERO, D3DBLEND_ZERO, D3
 const D3DTEXTUREADDRESS CGxDeviceD3d::s_wrapModes[2] = { D3DTADDRESS_CLAMP, D3DTADDRESS_WRAP };
 
 // STATIC: 0x00A2F9CC
-static const D3DTEXTUREOP s_texOp[6] = { D3DTOP_MODULATE, D3DTOP_MODULATE2X, D3DTOP_ADD, D3DTOP_SELECTARG2, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDDIFFUSEALPHA };
+static const D3DTEXTUREOP s_texOp[GxTexOps_Last] = { D3DTOP_MODULATE, D3DTOP_MODULATE2X, D3DTOP_ADD, D3DTOP_SELECTARG2, D3DTOP_BLENDCURRENTALPHA, D3DTOP_BLENDDIFFUSEALPHA };
 
 // STATIC: 0x00A2F9E4
-static const uint32_t s_texArgs[6][2] = { { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_CURRENT, D3DTA_TEXTURE }, { D3DTA_TEXTURE, D3DTA_CURRENT } };
+static const uint32_t s_texArgs[GxTexOps_Last][2] = { { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_TEXTURE, D3DTA_CURRENT }, { D3DTA_CURRENT, D3DTA_TEXTURE }, { D3DTA_TEXTURE, D3DTA_CURRENT } };
 
 // STATIC: 0x00A2FA14
-const D3DCMPFUNC CGxDeviceD3d::s_cmpFunc[4] = { D3DCMP_LESSEQUAL, D3DCMP_EQUAL, D3DCMP_GREATEREQUAL, D3DCMP_LESS };
+const D3DCMPFUNC CGxDeviceD3d::s_cmpFunc[GxCmps_Last] = { D3DCMP_LESSEQUAL, D3DCMP_EQUAL, D3DCMP_GREATEREQUAL, D3DCMP_LESS };
 
 // STATIC: 0x00A2FA24
 const D3DCULL CGxDeviceD3d::s_cullMode[3] = { D3DCULL_NONE, D3DCULL_CW, D3DCULL_CCW };
 
 // STATIC: 0x00AD8EF0
-EGxTexFormat CGxDeviceD3d::s_GxTexFormatToUse[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Abgr8888, GxTex_Argb8888, GxTex_Argb4444, GxTex_Argb1555, GxTex_Rgb565, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8 };
+EGxTexFormat CGxDeviceD3d::s_GxTexFormatToUse[GxTexFormats_Last] = { GxTex_Unknown, GxTex_Abgr8888, GxTex_Argb8888, GxTex_Argb4444, GxTex_Argb1555, GxTex_Rgb565, GxTex_Dxt1, GxTex_Dxt3, GxTex_Dxt5, GxTex_Uv88, GxTex_Gr1616F, GxTex_R32F, GxTex_D24X8, GxTex_Abgr16161616F };
 
 // STATIC: 0x00AD8F24
 D3DDECLTYPE CGxDeviceD3d::s_gxAttribToD3dAttribType[7] = { D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_UBYTE4, D3DDECLTYPE_UBYTE4N, D3DDECLTYPE_FLOAT2, D3DDECLTYPE_FLOAT3, D3DDECLTYPE_SHORT2, D3DDECLTYPE_FLOAT1 };
@@ -245,6 +252,8 @@ CGxDeviceD3d::CGxDeviceD3d() : m_desktopDisplayMode() {
     this->m_defColorSurface = nullptr;
     this->m_defDepthSurface = nullptr;
     this->m_surface3B44 = nullptr;
+    this->m_sceneDepthTexture = nullptr;
+    this->m_sceneDepthTex = nullptr;
     this->m_eventQuery = nullptr;
     this->m_hwCursorDirty = 1;
     this->m_hwCursorTexture = nullptr;
@@ -493,11 +502,11 @@ bool CGxDeviceD3d::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t&
     }
 
     switch (param) {
-        case GxQueryParam_Unk0:
+        case GxQueryParam_DataSize:
             data = static_cast<LPDIRECT3DQUERY9>(query->m_apiSpecific)->GetDataSize();
             return true;
 
-        case GxQueryParam_Unk1:
+        case GxQueryParam_ResultAvailable:
             data = static_cast<LPDIRECT3DQUERY9>(query->m_apiSpecific)->GetData(nullptr, 0, 0) == D3D_OK;
             return false;
 
@@ -611,7 +620,7 @@ void CGxDeviceD3d::DeviceOverride(EGxOverride override, uint32_t value) {
 
     if (override == GxOverride_PixelShader) {
         this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
-    } else if (override == GxOverride_Unk7) {
+    } else if (override == GxOverride_TexNonPow2) {
         this->m_caps.m_texNonPow2 = value != 0;
     }
 }
@@ -819,6 +828,9 @@ void CGxDeviceD3d::IShaderCreatePixel(CGxShader* shader) {
     if (shader->m_code.Count() && this->m_d3dDevice->CreatePixelShader(reinterpret_cast<const DWORD*>(shader->m_code.m_data), &pixelShader) == D3D_OK) {
         shader->m_apiSpecific = pixelShader;
         shader->m_valid = 1;
+        // GBUFFER: `mov oC1, r#` (normals.py), the only oC1 write any of our shaders makes.
+        const uint32_t* tok = reinterpret_cast<const uint32_t*>(shader->m_code.m_data);
+        shader->m_writesNormal = std::find(tok, tok + shader->m_code.Count() / 4, 0x800F0801u) != tok + shader->m_code.Count() / 4;
     }
 }
 
@@ -1325,8 +1337,8 @@ void CGxDeviceD3d::ISetTexCoordIndex(uint32_t tmu, int32_t texGen, uint32_t coor
             break;
 
         case GxTexGen_ObjectLinear:
-        case GxTexGen_EyeLinear:
-        case GxTexGen_Unk3:
+        case GxTexGen_World:
+        case GxTexGen_View:
             this->DsSet(state, tmu | D3DTSS_TCI_CAMERASPACEPOSITION);
             break;
 
@@ -1367,19 +1379,19 @@ void CGxDeviceD3d::ISetAlphaOp(uint32_t tmu, uint32_t op) {
 // VERIFY: c7d0427b auto
 // OFFSET: 0x006A4250
 void CGxDeviceD3d::ISetMaterial(CImVector diffuse, CImVector emissive, CImVector specular, float specularExp) {
-    s_d3dMaterial.Diffuse.r = diffuse.r * (1.0f / 255.0f);
-    s_d3dMaterial.Diffuse.g = diffuse.g * (1.0f / 255.0f);
-    s_d3dMaterial.Diffuse.b = diffuse.b * (1.0f / 255.0f);
-    s_d3dMaterial.Diffuse.a = diffuse.a * (1.0f / 255.0f);
+    s_d3dMaterial.Diffuse.r = diffuse.r * oo255;
+    s_d3dMaterial.Diffuse.g = diffuse.g * oo255;
+    s_d3dMaterial.Diffuse.b = diffuse.b * oo255;
+    s_d3dMaterial.Diffuse.a = diffuse.a * oo255;
     s_d3dMaterial.Ambient = s_d3dMaterial.Diffuse;
-    s_d3dMaterial.Emissive.r = emissive.r * (1.0f / 255.0f);
-    s_d3dMaterial.Emissive.g = emissive.g * (1.0f / 255.0f);
-    s_d3dMaterial.Emissive.b = emissive.b * (1.0f / 255.0f);
-    s_d3dMaterial.Emissive.a = emissive.a * (1.0f / 255.0f);
-    s_d3dMaterial.Specular.r = specular.r * (1.0f / 255.0f);
-    s_d3dMaterial.Specular.g = specular.g * (1.0f / 255.0f);
-    s_d3dMaterial.Specular.b = specular.b * (1.0f / 255.0f);
-    s_d3dMaterial.Specular.a = specular.a * (1.0f / 255.0f);
+    s_d3dMaterial.Emissive.r = emissive.r * oo255;
+    s_d3dMaterial.Emissive.g = emissive.g * oo255;
+    s_d3dMaterial.Emissive.b = emissive.b * oo255;
+    s_d3dMaterial.Emissive.a = emissive.a * oo255;
+    s_d3dMaterial.Specular.r = specular.r * oo255;
+    s_d3dMaterial.Specular.g = specular.g * oo255;
+    s_d3dMaterial.Specular.b = specular.b * oo255;
+    s_d3dMaterial.Specular.a = specular.a * oo255;
     s_d3dMaterial.Power = specularExp;
     this->m_d3dDevice->SetMaterial(&s_d3dMaterial);
 }
@@ -1438,7 +1450,7 @@ void CGxDeviceD3d::IStateSyncLights() {
             s_d3dLight.Specular.g = light.m_specColor.y;
             s_d3dLight.Specular.b = light.m_specColor.z;
             s_d3dLight.Specular.a = 0.0f;
-            s_d3dLight.Range = 10000.0f;
+            s_d3dLight.Range = MaxLightRange;
             s_d3dLight.Falloff = 1.0f;
             s_d3dLight.Attenuation0 = light.m_constantAttenuation;
             s_d3dLight.Attenuation1 = light.m_linearAttenuation;
@@ -1586,7 +1598,7 @@ void CGxDeviceD3d::ISetTexGen(uint32_t tmu, int32_t texGen) {
 
     C44Matrix matrix;
 
-    if (texGen == GxTexGen_ObjectLinear || texGen == GxTexGen_EyeLinear) {
+    if (texGen == GxTexGen_ObjectLinear || texGen == GxTexGen_World) {
         CGxMatrixStack& view = this->m_xforms[GxXform_View];
         matrix = view.m_mtx[view.m_level];
         matrix = matrix.AffineInverse();
@@ -1897,9 +1909,24 @@ void CGxDeviceD3d::IRsSendToHw(EGxRenderState which) {
             this->m_d3dDevice->SetRenderState(D3DRS_POINTSPRITEENABLE, value.m_data.i[0] != 0);
             break;
 
-        case Unk84: {
+        case GxRs_BlendFactor: {
             uint32_t factor = static_cast<uint32_t>(value.m_data.f[0] * 255.0f);
             this->m_d3dDevice->SetRenderState(D3DRS_BLENDFACTOR, (((((factor << 8) | factor) << 8) | factor) << 8) | factor);
+            break;
+        }
+
+        case GxRs_StencilTest:
+        case GxRs_StencilFunc:
+        case GxRs_StencilRef:
+        case GxRs_StencilReadMask:
+        case GxRs_StencilWriteMask:
+        case GxRs_StencilFail:
+        case GxRs_StencilZFail:
+        case GxRs_StencilPass: {
+            // DECOMP: stencil (not in the stock client); EGxStencilCmp/Op are the D3DCMP/D3DSTENCILOP values.
+            static const D3DRENDERSTATETYPE s_stencilRs[] = { D3DRS_STENCILENABLE, D3DRS_STENCILFUNC, D3DRS_STENCILREF, D3DRS_STENCILMASK, D3DRS_STENCILWRITEMASK, D3DRS_STENCILFAIL, D3DRS_STENCILZFAIL, D3DRS_STENCILPASS };
+            DWORD v = which == GxRs_StencilTest ? (value.m_data.i[0] && this->m_caps.m_stencilBits) : value.m_data.u[0];
+            this->m_d3dDevice->SetRenderState(s_stencilRs[which - GxRs_StencilTest], v);
             break;
         }
 
@@ -2019,6 +2046,7 @@ void CGxDeviceD3d::IStateSync() {
         this->IStateSyncXforms();
     }
 
+    this->INormalSync();
     this->IStateSyncEnables();
     this->IStateSyncClipPlanes();
     this->IStateSyncScissorRect();
@@ -2363,7 +2391,7 @@ int32_t CGxDeviceD3d::ICreateWindow(CGxFormat& format) {
         height += CGxDevice::s_clientAdjust.y;
     }
 
-    this->m_hwnd = CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassD3d", "World of Warcraft", style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, this);
+    this->m_hwnd = CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassD3d", CLIENT_NAME, style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, this);
 
     if (this->m_hwnd && format.m_maximize != 2) {
         ShowWindow(this->m_hwnd, SW_SHOWNORMAL);
@@ -2461,7 +2489,7 @@ void CGxDeviceD3d::ISetCaps(const CGxFormat& format) {
         this->m_caps.m_shaderConstants[GxSh_Vertex] = 192;
     }
 
-    for (uint32_t i = 0; i < GxTexFormats_Last; i++) {
+    for (uint32_t i = 0; i < GxTexCapsFormats; i++) {
         if (i) {
             this->m_caps.m_texFmt[i] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, 0, D3DRTYPE_TEXTURE, s_GxTexFmtToD3dFmt[i]) == D3D_OK;
         } else {
@@ -2480,6 +2508,8 @@ void CGxDeviceD3d::ISetCaps(const CGxFormat& format) {
     this->m_caps.m_rttFormat[GxTex_Rgb565] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_RENDERTARGET, D3DRTYPE_TEXTURE, D3DFMT_R5G6B5) == D3D_OK;
     this->m_caps.m_rttFormat[GxTex_Gr1616F] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_RENDERTARGET, D3DRTYPE_TEXTURE, D3DFMT_G16R16F) == D3D_OK;
     this->m_caps.m_rttFormat[GxTex_R32F] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_RENDERTARGET, D3DRTYPE_TEXTURE, D3DFMT_R32F) == D3D_OK;
+    // VFOG: RGBA half float fog targets, only where it renders and filters (the fog upsamples it bilinearly).
+    this->m_caps.m_rttAbgr16161616F = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_RENDERTARGET | D3DUSAGE_QUERY_FILTER, D3DRTYPE_TEXTURE, D3DFMT_A16B16G16R16F) == D3D_OK;
     this->m_caps.m_rttFormat[GxTex_D24X8] = this->m_d3d->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, this->m_devAdapterFormat, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, D3DFMT_D24X8) == D3D_OK;
 
     this->m_caps.m_colorWrite = (this->m_d3dCaps.PrimitiveMiscCaps & D3DPMISCCAPS_COLORWRITEENABLE) != 0;
@@ -2513,11 +2543,9 @@ void CGxDeviceD3d::ISetCaps(const CGxFormat& format) {
     this->m_caps.m_pointSprite = this->m_d3dCaps.MaxPointSize > 1.0f;
     this->m_caps.m_blendFactor = (this->m_d3dCaps.SrcBlendCaps & D3DPBLENDCAPS_BLENDFACTOR) != 0;
     this->m_caps.m_shaderAlphaRef = 1;
-    this->m_caps.unused_0114[1] = 0;
-    this->m_caps.unused_0114[0] = 0;
-    this->m_caps.unused_0114[2] = 0;
-    this->m_caps.unused_0114[3] = 0;
-    this->m_caps.unused_0114[4] = 0;
+    this->m_caps.unused_0118[0] = 0;
+    this->m_caps.unused_0118[1] = 0;
+    this->m_caps.unused_0118[2] = 0;
     this->m_caps.unk_0134 = this->m_caps.m_shaderTargets[GxSh_Pixel] != 4;
     this->m_caps.unk_0138 = this->m_caps.m_shaderTargets[GxSh_Pixel] != 4;
 }
@@ -2629,6 +2657,7 @@ int32_t CGxDeviceD3d::ICreateD3dDevice(const CGxFormat& format) {
     this->m_devDepthFormat = d3dpp.AutoDepthStencilFormat;
 
     this->ISetCaps(format);
+    this->m_caps.m_stencilBits = this->m_devDepthFormat == D3DFMT_D24S8 ? 8 : 0;  // DECOMP
     this->Log(this->m_caps);
     CGxDevice::Log("\tNVAPI: %d", this->m_d3dNVAPI);
     CGxDevice::Log("\tstereoHandle: %x", this->m_d3dStereoHandle);
@@ -2670,6 +2699,9 @@ void CGxDeviceD3d::IReleaseD3dResources(int32_t freeTextures) {
         this->m_defDepthSurface = nullptr;
     }
 
+    this->IReleaseSceneDepth();
+    this->INormalRelease();
+
     if (this->m_defDepthStencilSurface) {
         this->m_defDepthStencilSurface->Release();
         this->m_defDepthStencilSurface = nullptr;
@@ -2685,6 +2717,9 @@ void CGxDeviceD3d::IReleaseD3dResources(int32_t freeTextures) {
         this->m_eventQuery = nullptr;
     }
 
+    // CUSTOM (Badgermilk0 port)
+    this->m_frameLatency.Release();
+
     this->IReleaseD3dQueries();
 
     if (this->m_d3dDevice) {
@@ -2697,7 +2732,7 @@ void CGxDeviceD3d::IReleaseD3dResources(int32_t freeTextures) {
 int32_t CGxDeviceD3d::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
     switch (wm) {
         case GxWM_Size:
-            if (param2 == 1 || param2 == 2) {
+            if (param2 == Gx_SizeMinimized || param2 == Gx_SizeMaxHide) {
                 this->m_windowVisible = 0;
                 break;
             }
@@ -2772,6 +2807,9 @@ void CGxDeviceD3d::IDestroyD3d() {
         this->m_eventQuery->Release();
         this->m_eventQuery = nullptr;
     }
+
+    // CUSTOM (Badgermilk0 port)
+    this->m_frameLatency.Release();
 
     if (this->m_texture3B58) {
         GxTexDestroy(this->m_texture3B58);
@@ -2857,6 +2895,11 @@ void CGxDeviceD3d::DeviceDestroy() {
     }
 
     this->IDestroyD3d();
+
+    if (this->m_sceneDepthTex) {
+        delete this->m_sceneDepthTex;
+        this->m_sceneDepthTex = nullptr;
+    }
 
     if (this->m_d3d) {
         this->m_d3d->Release();
@@ -2980,7 +3023,7 @@ void CGxDeviceD3d::ITexForceRecreation(int32_t all) {
 
         uint32_t texelStrideInBytes;
         const void* texels;
-        texId->m_userFunc(GxTex_3, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+        texId->m_userFunc(GxTex_Recreate, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
     }
 
     if (this->m_hwnd && this->m_d3dDevice) {
@@ -3073,7 +3116,7 @@ void CGxDeviceD3d::ITexUpload(CGxTex* texId) {
     this->ITexWHDStartEnd(texId, width, height, baseMip, mipCount);
 
     int32_t compressed = texId->m_dataFormat >= GxTex_Dxt1 && texId->m_dataFormat <= GxTex_Dxt5;
-    uint32_t faceCount = texId->m_target == GxTex_CubeMap ? 6 : 1;
+    uint32_t faceCount = texId->m_target == GxTex_CubeMap ? GxTexCubeFaces_Last : 1;
 
     for (uint32_t face = 0; face < faceCount; face++) {
         uint32_t mipWidth = width;
@@ -3225,18 +3268,21 @@ void CGxDeviceD3d::ISceneBegin() {
 void CGxDeviceD3d::ScenePresent() {
     if (this->m_context) {
         int32_t scrShotClick = this->m_scrShotClick;
+        this->m_sceneDepthFresh = false;    // VFOG
+        this->m_normalCleared = false;      // GBUFFER
+        // CUSTOM (Badgermilk0 port): performance diagnostics (GxFrameStats)
+        uint64_t frameStart = GxFrameStatsNow();
 
         CGxDevice::ScenePresent();
         this->ISceneEnd();
         this->ICursorDraw();
 
+        uint64_t gpuWaitStart = GxFrameStatsNow();
+
         if (this->m_format.m_fixLag) {
             if (this->m_eventQuery) {
-                this->m_eventQuery->Issue(D3DISSUE_END);
-
-                while (this->m_eventQuery->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE) {
-                    OsSleep(0);
-                }
+                // CUSTOM (Badgermilk0 port); the frame gxMaxFrameLatency back, not the one just submitted (GxFrameLatency.h)
+                this->m_frameLatency.EndFrame(this->m_d3dDevice);
             } else {
                 LPDIRECT3DSURFACE9 backBuffer;
 
@@ -3259,11 +3305,15 @@ void CGxDeviceD3d::ScenePresent() {
             this->DeviceScreenShot();
         }
 
+        uint64_t capStart = GxFrameStatsNow();
         this->WaitForFPSCap();
+        uint64_t presentStart = GxFrameStatsNow();
 
         if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
             this->m_context = 0;
         }
+
+        GxFrameStatsRecord(frameStart, gpuWaitStart, capStart, presentStart, GxFrameStatsNow());
 
         if (this->m_d3dStereoHandle && this->m_d3dStereoDirty) {
             this->m_d3dStereoDirty = 0;
@@ -3286,7 +3336,14 @@ void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
         return;
     }
 
+    // CUSTOM (Badgermilk0 port): performance diagnostics (FrameProfile.h), API draw calls per frame
+    FrameProfileCount(FRAMEPROFILE_DRAW_CALLS, static_cast<uint32_t>(count));
+
     this->IStateSync();
+
+    if (this->m_deviceStates[Ds_ZWriteEnable] != 0) {
+        this->m_sceneDepthFresh = false;    // VFOG: the next RESZ copy resolves again
+    }
 
     uint32_t baseVertexIndex = 0;
 
@@ -3332,6 +3389,8 @@ void CGxDeviceD3d::IStateSetD3DDefaults() {
     }
 
     this->m_d3dDevice->GetRenderTarget(0, &this->m_defColorSurface);
+    this->ICreateSceneDepth();
+    this->INormalCreate();
     this->m_d3dDevice->GetDepthStencilSurface(&this->m_defDepthSurface);
     this->InitLights();
     this->m_ambientOnlyMode = 0;
@@ -3395,14 +3454,25 @@ void CGxDeviceD3d::SceneClear(uint32_t mask, CImVector color) {
         return;
     }
 
-    DWORD flags = (mask & 0x1) != 0;
+    DWORD flags = (mask & GxBufferBit_Color) != 0;
 
-    if (mask & 0x2) {
+    if (mask & GxBufferBit_Depth) {
         flags |= D3DCLEAR_ZBUFFER;
+        this->m_sceneDepthFresh = false;    // VFOG
+    }
+
+    // DECOMP: stencil clear (an error on a depth buffer without stencil)
+    if ((mask & GxBufferBit_Stencil) && this->m_caps.m_stencilBits) {
+        flags |= D3DCLEAR_STENCIL;
     }
 
     if (this->m_viewportDirty) {
         this->IXformSetViewport();
+    }
+
+    if (this->m_normalBound) {      // GBUFFER: Clear would fill RT1 with the clear colour too
+        this->m_d3dDevice->SetRenderTarget(1, nullptr);
+        this->m_normalBound = false;
     }
 
     this->m_d3dDevice->Clear(0, nullptr, flags, D3DCOLOR_ARGB(color.a, color.r, color.g, color.b), 1.0f, 0);
@@ -3439,9 +3509,9 @@ LRESULT CALLBACK CGxDeviceD3d::WindowProcD3d(HWND hwnd, UINT message, WPARAM wpa
             uint32_t resizeType = 0;
 
             if (wparam == SIZE_MINIMIZED) {
-                resizeType = 1;
+                resizeType = Gx_SizeMinimized;
             } else if (wparam == SIZE_MAXHIDE) {
-                resizeType = 2;
+                resizeType = Gx_SizeMaxHide;
             }
 
             device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), resizeType);
@@ -3456,7 +3526,7 @@ LRESULT CALLBACK CGxDeviceD3d::WindowProcD3d(HWND hwnd, UINT message, WPARAM wpa
                     rect.minX = 0.0f;
                     rect.maxY = 0.0f;
                     rect.maxX = 0.0f;
-                    device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                    device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
                 }
             } else if (LOWORD(wparam) == WA_ACTIVE && !device->IDevIsWindowed()) {
                 CRect rect;
@@ -3710,7 +3780,9 @@ void CGxDeviceD3d::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint
             if (texture->m_target == GxTex_CubeMap) {
                 static_cast<IDirect3DCubeTexture9*>(texture->m_apiSpecificData)->GetCubeMapSurface(s_faceTypes[plane], 0, reinterpret_cast<LPDIRECT3DSURFACE9*>(&target.m_apiSpecific));
             } else {
-                static_cast<IDirect3DTexture9*>(texture->m_apiSpecificData)->GetSurfaceLevel(0, reinterpret_cast<LPDIRECT3DSURFACE9*>(&target.m_apiSpecific));
+                // RTT MIPS: not in 12340 (level 0). plane = mip level (Gx.h GxRenderTargetSet); the auto-paired depth
+                // below stays sized for level 0, which D3D9 allows for a smaller colour surface.
+                static_cast<IDirect3DTexture9*>(texture->m_apiSpecificData)->GetSurfaceLevel(plane, reinterpret_cast<LPDIRECT3DSURFACE9*>(&target.m_apiSpecific));
             }
         }
     }
@@ -3734,6 +3806,10 @@ void CGxDeviceD3d::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint
         depthSurface = static_cast<LPDIRECT3DSURFACE9>(this->m_textureTarget[GxBuffers_Depth].m_apiSpecific);
     }
 
+    if (this->m_normalBound && colorSurface != this->m_defColorSurface) {     // GBUFFER: RT1 is back-buffer size
+        this->m_d3dDevice->SetRenderTarget(1, nullptr);
+        this->m_normalBound = false;
+    }
     this->m_d3dDevice->SetRenderTarget(0, colorSurface);
     this->m_d3dDevice->SetDepthStencilSurface(depthSurface);
 
@@ -3741,6 +3817,123 @@ void CGxDeviceD3d::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint
 
     this->m_viewportDirty = 1;
     this->m_scissorRectDirty = 1;
+}
+
+// GBUFFER: not in 12340. GBUF-STATUS.md. Needs 2 MRTs, independent write masks and blending with MRT bound (else
+// binding RT1 would turn blending off for every transparent draw).
+void CGxDeviceD3d::INormalCreate() {
+    D3DSURFACE_DESC desc;
+    const DWORD misc = D3DPMISCCAPS_INDEPENDENTWRITEMASKS | D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING;
+    if (this->m_normalTexture || !this->m_defColorSurface || FAILED(this->m_defColorSurface->GetDesc(&desc))
+        || this->m_d3dCaps.NumSimultaneousRTs < 2 || (this->m_d3dCaps.PrimitiveMiscCaps & misc) != misc) {
+        return;
+    }
+    if (FAILED(this->m_d3dDevice->CreateTexture(desc.Width, desc.Height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &this->m_normalTexture, nullptr))) {
+        this->m_normalTexture = nullptr;
+        return;
+    }
+    // MSAA back buffer: RT1 must match its sample count; resolved into the texture when read.
+    HRESULT hr = desc.MultiSampleType == D3DMULTISAMPLE_NONE
+        ? this->m_normalTexture->GetSurfaceLevel(0, &this->m_normalSurface)
+        : this->m_d3dDevice->CreateRenderTarget(desc.Width, desc.Height, D3DFMT_A8R8G8B8, desc.MultiSampleType, desc.MultiSampleQuality, FALSE, &this->m_normalSurface, nullptr);
+    if (FAILED(hr)) {
+        this->m_normalSurface = nullptr;
+        this->INormalRelease();
+    }
+}
+
+void CGxDeviceD3d::INormalRelease() {
+    if (this->m_normalBound && this->m_d3dDevice) {
+        this->m_d3dDevice->SetRenderTarget(1, nullptr);
+    }
+    this->m_normalBound = false;
+    this->m_normalCleared = false;
+    this->m_normalWriteMask = 0xFFFFFFFF;
+    if (this->m_normalTex) {
+        this->m_normalTex->m_apiSpecificData = nullptr;
+    }
+    if (this->m_normalSurface) {
+        this->m_normalSurface->Release();
+        this->m_normalSurface = nullptr;
+    }
+    if (this->m_normalTexture) {
+        this->m_normalTexture->Release();
+        this->m_normalTexture = nullptr;
+    }
+}
+
+// Every draw (IStateSync): RT1 bound and written only for an oC1 shader drawing opaque or alpha-keyed onto the back
+// buffer with colour writes on; every other draw keeps it bound with its write mask 0 (no rebind churn).
+void CGxDeviceD3d::INormalSync() {
+    if (!this->m_normalSurface) {
+        return;
+    }
+    const CGxShader* ps = static_cast<const CGxShader*>(this->m_appRenderStates[GxRs_PixelShader].m_value.m_data.p);
+    const int32_t blend = this->m_appRenderStates[GxRs_BlendingMode].m_value.m_data.i[0];
+    const bool write = CGxDevice::s_normalBuffer && ps && ps->m_writesNormal
+        && (blend == GxBlend_Opaque || blend == GxBlend_AlphaKey || this->m_appRenderStates[GxRs_DepthWrite].m_value.m_data.i[0])   // grassshadow
+        && this->m_appRenderStates[GxRs_ColorWrite].m_value.m_data.i[0] != 0 && !this->m_textureTarget[GxBuffers_Color].m_apiSpecific;
+    if (write && !this->m_normalBound) {
+        if (!this->m_normalCleared) {
+            this->m_d3dDevice->ColorFill(this->m_normalSurface, nullptr, 0);
+            this->m_normalCleared = true;
+        }
+        this->m_d3dDevice->SetRenderTarget(1, this->m_normalSurface);
+        this->m_normalBound = true;
+    }
+    const DWORD mask = write ? 0xF : 0;
+    if (this->m_normalBound && mask != this->m_normalWriteMask) {
+        this->m_d3dDevice->SetRenderState(D3DRS_COLORWRITEENABLE1, mask);
+        this->m_normalWriteMask = mask;
+    }
+}
+
+CGxTex* CGxDeviceD3d::DeviceNormalBuffer() {
+    if (!this->m_context || !this->m_normalSurface || !this->m_normalCleared || !CGxDevice::s_normalBuffer) {
+        return nullptr;
+    }
+    if (this->m_normalBound) {      // sampled next: not a target meanwhile; the next oC1 draw binds it again
+        this->m_d3dDevice->SetRenderTarget(1, nullptr);
+        this->m_normalBound = false;
+    }
+    LPDIRECT3DSURFACE9 level0 = nullptr;
+    if (SUCCEEDED(this->m_normalTexture->GetSurfaceLevel(0, &level0))) {
+        if (level0 != this->m_normalSurface) {
+            this->m_d3dDevice->StretchRect(this->m_normalSurface, nullptr, level0, nullptr, D3DTEXF_NONE);
+        }
+        level0->Release();
+    }
+    D3DSURFACE_DESC desc;
+    this->m_normalTexture->GetLevelDesc(0, &desc);
+    if (!this->m_normalTex) {
+        CGxTexFlags flags(GxTex_Nearest);
+        flags.m_renderTarget = 1;
+        this->m_normalTex = new CGxTex(GxTex_2d, desc.Width, desc.Height, 0, GxTex_Argb8888, GxTex_Argb8888, flags, nullptr, nullptr, "GxNormalBuffer");
+    }
+    CGxTex* texture = this->m_normalTex;
+    texture->m_width = desc.Width;
+    texture->m_height = desc.Height;
+    texture->m_apiSpecificData = this->m_normalTexture;
+    texture->m_needsCreation = 0;
+    texture->m_needsUpdate = 0;
+    return texture;
+}
+
+// VFOG: INTZ/RESZ scene depth, shared with the other D3D9 backend (D3d9SceneDepth.h).
+void CGxDeviceD3d::ICreateSceneDepth() {
+    d3d9scenedepth::Create(this);
+}
+
+void CGxDeviceD3d::IReleaseSceneDepth() {
+    d3d9scenedepth::Release(this);
+}
+
+void CGxDeviceD3d::DeviceSceneDepthBound(bool bound) {
+    d3d9scenedepth::Bound(this, bound);
+}
+
+CGxTex* CGxDeviceD3d::DeviceCopySceneDepth(bool* transient) {
+    return d3d9scenedepth::Copy(this, transient);
 }
 
 // VERIFY: 312f9bf5 auto

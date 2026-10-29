@@ -1,6 +1,7 @@
 #ifndef WOW_SOURCE_WOWSERVICES_WOWCONNECTIONNET_H
 #define WOW_SOURCE_WOWSERVICES_WOWCONNECTIONNET_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "Engine/Source/Storm/H/stpl.h"
@@ -18,7 +19,7 @@ class WowConnectionNet {
         /* 0008 */ int32_t m_index;
         /* 000C */ WowConnection* m_connection;
         /* 0010 */ SEvent m_event;
-        /* 0014 */ bool m_quit;
+        /* 0014 */ std::atomic<bool> m_quit; // Not stock: atomic, set by Stop, read by the worker (1 byte)
         /* 0015 */ SCritSect m_lock;
         /* 003D */ uint8_t unused_003D[3];
         /* 0040 */ uint32_t m_lastTime;
@@ -29,7 +30,7 @@ class WowConnectionNet {
 
     /* 0000 */ SThread m_thread;
     /* 0004 */ SEvent m_stopEvent;
-    /* 0008 */ bool m_stop;
+    /* 0008 */ std::atomic<bool> m_stop; // Not stock: atomic, set by Stop, polled by the network thread (1 byte)
     /* 0009 */ uint8_t unused_0009[3];
     /* 000C */ int32_t m_numWorkers;
     /* 0010 */ WowConnectionNet::WORKER m_workers[32];
@@ -42,7 +43,7 @@ class WowConnectionNet {
     /* 08E4 */ void (*m_threadInit)();
     /* 08E8 */ void* m_event;
     /* 08EC */ uint8_t unused_08EC;
-    /* 08ED */ bool m_networkStarted;
+    /* 08ED */ std::atomic<bool> m_networkStarted; // Not stock: atomic, set by the network thread, spun on by Start (1 byte)
     /* 08EE */ uint8_t unused_08EE[2];
 
     WowConnectionNet(int32_t numThreads, void (*threadInit)());

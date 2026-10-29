@@ -3,9 +3,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "WoW/Common/Types.h"
 
 struct TEXTEMOTELOOKUP {
-    /* 0000 */ int32_t m_soundIds[22][2];
+    /* 0000 */ int32_t m_soundIds[NUM_RACES + 1][2];
     /* 00B0 */ int32_t m_emotesTextId;
 
     TEXTEMOTELOOKUP();

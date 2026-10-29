@@ -108,6 +108,10 @@ typedef struct global_State {
   UpVal uvhead;  /* head of double-linked list of all open upvalues */
   struct Table *mt[NUM_TAGS];  /* metatables for basic types */
   TString *tmname[TM_N];  /* array with tag-method names */
+#if LUA_OUR_BUGFIXES
+  /* LUA_OUR_BUGFIXES 5.1.2-4: nested lua_resume calls, shared by all threads */
+  unsigned short nCresume;
+#endif
 } global_State;
 
 

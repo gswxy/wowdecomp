@@ -26,6 +26,8 @@ struct StationeryInfo {
 };
 
 struct MailAttachmentInfo {
+    static const int32_t NUM_ENCHANTMENTS = 7;
+
     /* 0000 */ uint32_t m_itemGuid;
     /* 0004 */ int32_t m_itemID;
     /* 0008 */ int32_t m_randomPropertiesID;
@@ -33,34 +35,39 @@ struct MailAttachmentInfo {
     /* 0010 */ uint32_t unused_0010;
     /* 0014 */ uint32_t m_count;
     /* 0018 */ int32_t m_spellCharges;
-    /* 001C */ int32_t m_enchantIDs[7];
-    /* 0038 */ uint32_t m_enchantDurations[7];
-    /* 0054 */ int32_t m_enchantCharges[7];
+    /* 001C */ int32_t m_enchantIDs[NUM_ENCHANTMENTS];
+    /* 0038 */ uint32_t m_enchantDurations[NUM_ENCHANTMENTS];
+    /* 0054 */ int32_t m_enchantCharges[NUM_ENCHANTMENTS];
     /* 0070 */ uint32_t m_maxDurability;
     /* 0074 */ uint32_t m_durability;
     /* 0078 */ uint32_t unk_0078;
 };
 
 struct MailboxMessageInfo {
+    static const int32_t SUBJECT_BUFFER_SIZE = 256;
+    static const int32_t BODY_BUFFER_SIZE = 8000;
+
+    static const int32_t MAX_ATTACHMENTS = 16;
+
     /* 0000 */ int32_t m_messageID;
     /* 0004 */ int32_t m_messageType;
     /* 0008 */ WOWGUID m_sender;
     /* 0010 */ int32_t m_senderEntry;
-    /* 0014 */ char m_subject[256];
-    /* 0114 */ char m_body[8000];
+    /* 0014 */ char m_subject[SUBJECT_BUFFER_SIZE];
+    /* 0114 */ char m_body[BODY_BUFFER_SIZE];
     /* 2054 */ int32_t m_package;
     /* 2058 */ int32_t m_stationery;
     /* 205C */ int32_t m_money;
     /* 2060 */ int32_t m_cod;
     /* 2064 */ uint32_t m_flags;
     /* 2068 */ float m_expireTime;
-    /* 206C */ char m_invoiceSubject[256];
+    /* 206C */ char m_invoiceSubject[SUBJECT_BUFFER_SIZE];
     /* 216C */ int32_t m_invoiceItemID;
     /* 2170 */ int32_t m_invoiceRandomPropertiesID;
     /* 2174 */ int32_t m_invoiceType;
     /* 2178 */ int32_t m_mailTemplateID;
     /* 217C */ uint32_t m_invoiceValue;
-    /* 2180 */ MailAttachmentInfo m_attachments[16];
+    /* 2180 */ MailAttachmentInfo m_attachments[MAX_ATTACHMENTS];
     /* 2940 */ uint32_t m_deletePending;
     /* 2944 */ uint32_t unused_2944;
 };
@@ -74,7 +81,70 @@ struct SendMailItem {
 
 class CGMailInfo {
     public:
-    static SendMailItem m_sendItems[16];
+    static const int32_t COD_SUBJECT_BUFFER_SIZE = 512;
+    static const int32_t MULTI_ATTACHMENT_ICON_DISPLAY_ID = 7913;
+
+    static const int32_t ITEM_NAME_BUFFER_SIZE = 256;
+
+    static const int32_t NUM_SEND_ITEM_SLOTS = 16;
+
+    static const int32_t TEXTURE_PATH_BUFFER_SIZE = 260;
+
+    static const int32_t INITIAL_INBOX_RECORDS = 8;
+
+    static const int32_t INBOX_QUERY_INTERVAL_MS = 60000;
+
+    enum INVOICE_TYPE : int32_t {
+        UNSET = -1,
+        BUYER = 1,
+        SELLER = 2,
+        SELLER_TEMP_INVOICE = 6,
+    };
+
+    static const int32_t NUM_INBOX_COUNT_RESULTS = 2;
+
+    static const int32_t NUM_PACKAGE_INFO_RESULTS = 3;
+
+    static const int32_t NUM_STATIONERY_INFO_RESULTS = 3;
+
+    static const int32_t NUM_SEND_MAIL_ITEM_RESULTS = 4;
+
+    static const int32_t NUM_INBOX_TEXT_RESULTS = 4;
+
+    static const int32_t NUM_INBOX_ITEM_RESULTS = 5;
+
+    static const int32_t MAX_SEND_ITEMS = 12;
+    static const int32_t MAX_SEND_ITEM_INDEX = 11;
+
+    static const int32_t NUM_EMPTY_INBOX_INVOICE_INFO_RESULTS = 7;
+    static const int32_t NUM_INBOX_INVOICE_INFO_RESULTS = 10;
+
+    static const int32_t GM_STATIONERY_ID = 61;
+
+    static const int32_t POSTAGE_PER_ITEM = 30;
+
+    static const int32_t NUM_INBOX_HEADER_INFO_RESULTS = 14;
+
+    enum COMMAND_RESULT : uint32_t {
+        SUCCESS = 0,
+        INVENTORY_ERROR = 1,
+        TO_SELF = 2,
+        NOT_ENOUGH_MONEY = 3,
+        TARGET_NOT_FOUND = 4,
+        WRONG_FACTION = 5,
+        RESTRICTED_ACCOUNT = 14,
+        REACHED_CAP = 15,
+        WRAPPED_COD = 16,
+        SQUELCHED = 17,
+        TOO_MANY_ATTACHMENTS = 18,
+        INVALID_ATTACHMENT = 19,
+        NO_DISPLAY_ERROR = 20,
+        ATTACHMENT_EXPIRED = 21,
+    };
+
+    static const int32_t NUM_RECENT_SENDERS = 3;
+
+    static SendMailItem m_sendItems[NUM_SEND_ITEM_SLOTS];
     static uint8_t m_lockSendItems;
     static uint32_t m_sendPending;
     static void ClearSendMail(bool signal);
@@ -139,7 +209,7 @@ int32_t Packet_MSG_QUERY_NEXT_MAIL_TIME(void* param, NETMESSAGE msgId, uint32_t 
 int32_t Packet_SMSG_RECEIVED_MAIL(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg);
 int32_t Packet_SMSG_SHOW_MAILBOX(void* param, NETMESSAGE msgId, uint32_t time, CDataStore* msg);
 
-extern MailSenderInfo s_recentSenders[3];
+extern MailSenderInfo s_recentSenders[CGMailInfo::NUM_RECENT_SENDERS];
 
 MailAttachmentInfo* GetFirstAttachment(MailboxMessageInfo* message);
 MailAttachmentInfo* GetAttachment(MailboxMessageInfo* message, uint32_t index);

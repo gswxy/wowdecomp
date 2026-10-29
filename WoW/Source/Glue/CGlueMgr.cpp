@@ -101,10 +101,12 @@ static const LoginErrorURL s_loginErrorURLs[5] = {
 };
 
 // STATIC: 0x00AC3DA0
-int32_t CGlueMgr::m_loginResult = -1;
+// Not stock: atomic, written by the net thread (SetLoginStateAndResult), read by the main thread.
+std::atomic<int32_t> CGlueMgr::m_loginResult{-1};
 
 // STATIC: 0x00AC3DA4
-int32_t CGlueMgr::m_loginState = -1;
+// Not stock: atomic, see m_loginResult.
+std::atomic<int32_t> CGlueMgr::m_loginState{-1};
 
 // STATIC: 0x00AC3DA8
 int32_t CGlueMgr::m_lastLoginResult = -1;
@@ -221,7 +223,8 @@ int32_t CGlueMgr::m_rereadContest;
 int32_t CGlueMgr::m_acceptedContest;
 
 // STATIC: 0x00B6AF78
-uint8_t CGlueMgr::m_authenticated;
+// Not stock: atomic, see m_loginResult.
+std::atomic<uint8_t> CGlueMgr::m_authenticated;
 
 // STATIC: 0x00B6AF79
 bool CGlueMgr::s_scriptFunctionsLoaded;
@@ -245,7 +248,8 @@ int32_t CGlueMgr::m_processServerAlert;
 uint32_t CGlueMgr::m_pendingTimerAlert;
 
 // STATIC: 0x00B6AF94
-int32_t CGlueMgr::m_accountMsgAvailable;
+// Not stock: atomic, see m_loginResult.
+std::atomic<int32_t> CGlueMgr::m_accountMsgAvailable;
 
 // STATIC: 0x00B6AF98
 static int32_t s_disconnectReason;
@@ -832,9 +836,9 @@ void CGlueMgr::UpdateCurrentScreen(const char* screen) {
     SStrCopy(CGlueMgr::m_currentScreen, screen, sizeof(CGlueMgr::m_currentScreen));
 
     if (!SStrCmpI(CGlueMgr::m_currentScreen, "charselect", STORM_MAX_STR)) {
-        EventRegisterEx(EVENT_ID_IDLE, CCharacterSelection::Idle, nullptr, 0.0f);
+        EventRegisterEx(EVENT_ID_IDLE, CCharacterSelection::Idle, nullptr, EVENT_PRIORITY_NORMAL);
     } else if (!SStrCmpI(CGlueMgr::m_currentScreen, "charcreate", STORM_MAX_STR)) {
-        EventRegisterEx(EVENT_ID_IDLE, CCharacterCreation::Idle, nullptr, 0.0f);
+        EventRegisterEx(EVENT_ID_IDLE, CCharacterCreation::Idle, nullptr, EVENT_PRIORITY_NORMAL);
     }
 }
 
@@ -857,7 +861,7 @@ int32_t CGlueMgr::ShowChangedOptionWarnings() {
 // VERIFY: 253dd4f3 auto
 // OFFSET: 0x004D84A0
 int32_t CGlueMgr::HandleBattlenetDisconnect() {
-    if (CGlueMgr::m_loginState != 5 || CGlueMgr::m_loginResult != 21 || CGlueMgr::m_showedDisconnect) {
+    if (CGlueMgr::m_loginState != LOGIN_STATE_FAILED || CGlueMgr::m_loginResult != LOGIN_DISCONNECTED || CGlueMgr::m_showedDisconnect) {
         return 0;
     }
 
@@ -1068,7 +1072,7 @@ void CGlueMgr::Initialize() {
     FrameXML_RegisterFactory("ModelFFX", CSimpleModelFFX::Create, false);
     CGlueMgr::Resume();
     CRealmList::Initialize();
-    EventRegisterEx(EVENT_ID_IDLE, CGlueMgr::Idle, nullptr, 0.0f);
+    EventRegisterEx(EVENT_ID_IDLE, CGlueMgr::Idle, nullptr, EVENT_PRIORITY_NORMAL);
     CGLCD::Initialize();
     CKBPage::Initialize();
     CKBSystem::Initialize();
@@ -1146,7 +1150,7 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
     int32_t complete = connection->PollStatus(op, &statusText, result, errorCode);
 
     if (CGlueMgr::m_idleState == IDLE_LOGIN_SERVER_LOGIN) {
-        if (CGlueMgr::m_loginState != 9) {
+        if (CGlueMgr::m_loginState != LOGIN_STATE_PIN_WAIT) {
             CGlueMgr::DisplayLoginStatus();
         }
 
@@ -1159,14 +1163,14 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
         }
 
         switch (CGlueMgr::m_loginState) {
-            case 5: {
+            case LOGIN_STATE_FAILED: {
                 ClientServices::LoginConnection()->Logoff();
                 CGlueMgr::m_idleState = IDLE_NONE;
                 CGlueMgr::m_showedDisconnect = 0;
                 return 1;
             }
 
-            case 6: {
+            case LOGIN_STATE_DOWNLOADFILE: {
                 const char* fileName = ClientServices::LoginConnection()->m_fileName;
 
                 if (!SStrCmpI(fileName, "Patch", STORM_MAX_STR)) {
@@ -1181,15 +1185,15 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
                 return 1;
             }
 
-            case 8: {
+            case LOGIN_STATE_PIN: {
                 FrameScript_SignalEvent(GLUE_EVENT_CLOSE_STATUS_DIALOG, nullptr);
                 const uint8_t* keyMap = ClientServices::LoginConnection()->GetKeyMap();
                 FrameScript_SignalEvent(GLUE_EVENT_PLAYER_ENTER_PIN, "%d%d%d%d%d%d%d%d%d%d", keyMap[0], keyMap[1], keyMap[2], keyMap[3], keyMap[4], keyMap[5], keyMap[6], keyMap[7], keyMap[8], keyMap[9]);
-                CGlueMgr::m_loginState = 9;
+                CGlueMgr::m_loginState = LOGIN_STATE_PIN_WAIT;
                 return 1;
             }
 
-            case 10: {
+            case LOGIN_STATE_MATRIX: {
                 uint32_t width;
                 uint32_t height;
                 uint32_t minDigits;
@@ -1200,21 +1204,21 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
 
                 CGlueMgr::m_matrixChallengeCount = challengeCount;
                 CGlueMgr::m_matrixRemaining = challengeCount;
-                CGlueMgr::m_loginState = 11;
+                CGlueMgr::m_loginState = LOGIN_STATE_MATRIX_WAIT;
 
                 FrameScript_SignalEvent(GLUE_EVENT_CLOSE_STATUS_DIALOG, nullptr);
                 FrameScript_SignalEvent(GLUE_EVENT_PLAYER_ENTER_MATRIX, "%d%d%d%d%b%d", width, height, minDigits, maxDigits, flipCoords, challengeCount);
                 return 1;
             }
 
-            case 12: {
-                CGlueMgr::m_loginState = 13;
+            case LOGIN_STATE_TOKEN: {
+                CGlueMgr::m_loginState = LOGIN_STATE_TOKEN_WAIT;
                 FrameScript_SignalEvent(GLUE_EVENT_CLOSE_STATUS_DIALOG, nullptr);
                 FrameScript_SignalEvent(GLUE_EVENT_PLAYER_ENTER_TOKEN, nullptr);
                 return 1;
             }
 
-            case 14: {
+            case LOGIN_STATE_CHECKINGVERSIONS: {
                 uint8_t versionChecksum[20];
                 ChecksumExecutables(ClientServices::LoginConnection()->GetVersionChallenge(), 16, versionChecksum);
                 ClientServices::LoginConnection()->ProveVersion(versionChecksum);
@@ -1268,7 +1272,7 @@ int32_t CGlueMgr::Idle(const void* data, void* param) {
     }
 
     if (idleState == IDLE_ACCOUNT_LOGIN) {
-        if (ClientServices::LoginConnection()->GetLoginServerType() == 1 && CGlueMgr::m_loginState == 5) {
+        if (ClientServices::LoginConnection()->GetLoginServerType() == 1 && CGlueMgr::m_loginState == LOGIN_STATE_FAILED) {
             CGlueMgr::DisplayLoginStatus();
             ClientServices::Connection()->Cancel(2);
             ClientServices::LoginConnection()->Logoff();
@@ -2109,42 +2113,47 @@ WOWGUID CGlueMgr::GetActive() {
 // VERIFY: db8aba56 manual
 // OFFSET: 0x004D80C0
 void CGlueMgr::DisplayLoginStatus() {
-    if (CGlueMgr::m_lastLoginState == CGlueMgr::m_loginState && CGlueMgr::m_lastLoginResult == CGlueMgr::m_loginResult) {
+    // Not stock: the net thread writes m_loginState/m_loginResult; read each once and use
+    // only the copies below, so a write between the range check and the string-table index cannot index out of range.
+    int32_t loginState = CGlueMgr::m_loginState;
+    int32_t loginResult = CGlueMgr::m_loginResult;
+
+    if (CGlueMgr::m_lastLoginState == loginState && CGlueMgr::m_lastLoginResult == loginResult) {
         return;
     }
 
-    CGlueMgr::m_lastLoginState = CGlueMgr::m_loginState;
-    CGlueMgr::m_lastLoginResult = CGlueMgr::m_loginResult;
+    CGlueMgr::m_lastLoginState = loginState;
+    CGlueMgr::m_lastLoginResult = loginResult;
 
-    if (CGlueMgr::m_loginState == LOGIN_STATE_FAILED) {
-        if (CGlueMgr::m_loginResult < 0 || CGlueMgr::m_loginResult >= LOGIN_RESULT_MAX) {
+    if (loginState == LOGIN_STATE_FAILED) {
+        if (loginResult < 0 || loginResult >= LOGIN_RESULT_MAX) {
             return;
         }
 
-        if (CGlueMgr::m_loginResult == LOGIN_PARENTALCONTROL) {
+        if (loginResult == LOGIN_PARENTALCONTROL) {
             FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s%s", "PARENTAL_CONTROL", FrameScript_GetText(g_LoginResultStringNames[LOGIN_PARENTALCONTROL], -1, GENDER_NOT_APPLICABLE), "AUTH_PARENTAL_CONTROL_URL");
             return;
         }
 
-        const char* text = FrameScript_GetText(g_LoginResultStringNames[CGlueMgr::m_loginResult], -1, GENDER_NOT_APPLICABLE);
+        const char* text = FrameScript_GetText(g_LoginResultStringNames[loginResult], -1, GENDER_NOT_APPLICABLE);
         const char* button;
 
         if (SStrStrUTF8I(text, "<HTML>")) {
             button = "OKAY_HTML";
 
-            if (CGlueMgr::m_loginResult == LOGIN_FAILED) {
+            if (loginResult == LOGIN_FAILED) {
                 FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s", "CONNECTION_HELP_HTML", text);
                 return;
             }
         } else {
-            button = CGlueMgr::m_loginResult == LOGIN_FAILED ? "CONNECTION_HELP" : "OKAY";
+            button = loginResult == LOGIN_FAILED ? "CONNECTION_HELP" : "OKAY";
         }
 
         FrameScript_SignalEvent(GLUE_EVENT_OPEN_STATUS_DIALOG, "%s%s", button, text);
         return;
     }
 
-    int32_t state = CGlueMgr::m_loginState;
+    int32_t state = loginState;
     bool show = state >= 0 && state < LOGIN_STATE_MAX;
 
     if (state == LOGIN_STATE_DISCONNECTED || state == LOGIN_STATE_SURVEY) {

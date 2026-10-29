@@ -52,4 +52,11 @@ void SynthesizePaint(EvtContext* context);
 void SynthesizePoll(EvtContext* context);
 uint32_t STORMAPI WaitPumpingNetwork(void* param);
 
+#if defined(WOWDECOMP_ARCH_64)
+// Not stock (hangdiag): main-thread hang watchdog. HangWatchdogTick runs once per main-loop pass; HangLog appends one
+// line to Logs\hang.txt beside the exe.
+void HangWatchdogTick();
+void HangLog(const char* format, ...);
+#endif
+
 #endif

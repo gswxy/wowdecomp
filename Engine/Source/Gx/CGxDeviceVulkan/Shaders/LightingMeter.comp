@@ -1,0 +1,34 @@
+// BENILLA auto-exposure (Lighting.hlsl MeterPs, benilla meter.wgsl): the scene before any exposure, averaged into a
+// 64x36 grid of log2 luminance (one texel a cell of the R32F output); the CPU takes the grid's mean (Lighting.cpp
+// IAutoExposure). gxColor the scene, gxSource.xy 1 / its size, gxTarget the grid. The grid covers the world viewport.
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "Lighting.glsl"
+
+layout(set = 0, binding = 3, r32f) uniform writeonly image2D gxOut;
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    if (any(greaterThanEqual(id, ivec2(gxTarget.xy)))) {
+        return;
+    }
+
+    // taps a side in each cell; bilinear, so a cell reads a 2x box around each
+    const uint taps = 4u;
+    // the floor under a black pixel: ten stops below the target, so one cannot sink the mean
+    const float lumaFloor = 0.0001;
+    vec2 cell = vec2(id);
+    float sum = 0.0;
+
+    for (uint j = 0u; j < taps; j++) {
+        for (uint k = 0u; k < taps; k++) {
+            vec2 tap = (vec2(k, j) + 0.5) / float(taps);
+            vec2 uv = (gxViewportPx.xy + (cell + tap) / gxTarget.xy * gxViewportPx.zw) * gxSource.xy;
+            vec3 c = GxDec(textureLod(gxColor, uv, 0.0).rgb);
+            sum += log2(max(dot(c, vec3(0.2126, 0.7152, 0.0722)), lumaFloor));
+        }
+    }
+
+    imageStore(gxOut, id, vec4(sum / float(taps * taps), 0.0, 0.0, 1.0));
+}

@@ -13,6 +13,10 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "Engine/Source/ShaderEffect/Types.h"
+#include "GameVersion.h"
+
+static const uint32_t kNullTmu = 0xFFFFFFFF;
 
 // STATIC: 0x00A2E000
 static const GLenum s_glBufferTarget[GxPoolTargets_Last] = { GL_ARRAY_BUFFER_ARB, GL_ELEMENT_ARRAY_BUFFER_ARB };
@@ -21,7 +25,7 @@ static const GLenum s_glBufferTarget[GxPoolTargets_Last] = { GL_ARRAY_BUFFER_ARB
 static const CGxDeviceOpenGl::EDeviceState s_bufferState[GxPoolTargets_Last] = { CGxDeviceOpenGl::Ds_ArrayBuffer, CGxDeviceOpenGl::Ds_ElementArrayBuffer };
 
 // STATIC: 0x00A2E010
-static const GLenum s_glBufferUsage[3] = { GL_STATIC_DRAW_ARB, GL_DYNAMIC_DRAW_ARB, GL_STREAM_DRAW_ARB };
+static const GLenum s_glBufferUsage[GxPoolUsages_Last] = { GL_STATIC_DRAW_ARB, GL_DYNAMIC_DRAW_ARB, GL_STREAM_DRAW_ARB };
 
 // STATIC: 0x00A2E05C
 static const GLenum s_glTexTarget[4] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP_ARB, GL_TEXTURE_RECTANGLE_ARB, GL_TEXTURE_2D };
@@ -42,7 +46,7 @@ static const GLint s_glMagFilter[GxTexFilters_Last] = { GL_NEAREST, GL_LINEAR, G
 static const uint32_t s_glBytesPerPixel[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0 };
 
 // STATIC: 0x00A2F2E0
-static const GLenum s_glCubeFaces[6] = { 0x8515, 0x8516, 0x8517, 0x8518, 0x8519, 0x851A };
+static const GLenum s_glCubeFaces[GxTexCubeFaces_Last] = { 0x8515, 0x8516, 0x8517, 0x8518, 0x8519, 0x851A };
 
 // STATIC: 0x00A2F278
 static const GLenum s_glFormat[GxTexFormats_Last] = { 0, GL_RGBA, 0x80E1, 0x80E1, 0x80E1, GL_RGB, 0, 0, 0, 0x86F5, GL_RGB, GL_RGB, GL_DEPTH_COMPONENT };
@@ -60,7 +64,7 @@ struct GlTexEnvOp {
 };
 
 // STATIC: 0x00AD8DF0
-static GlTexEnvOp s_texEnvOps[6] = {
+static GlTexEnvOp s_texEnvOps[GxTexOps_Last] = {
     { GL_REPLACE, 1.0f, 0x8578, GL_TEXTURE, 0x8576, GL_MODULATE },
     { GL_MODULATE, 2.0f, 0x8578, GL_TEXTURE, 0x8576, GL_MODULATE },
     { GL_ADD, 1.0f, 0x8578, GL_TEXTURE, 0x8576, GL_ADD },
@@ -88,7 +92,7 @@ static GLenum s_glBlendSrc[12] = { GL_ONE, GL_ONE, GL_SRC_ALPHA, GL_SRC_ALPHA, G
 static GLenum s_glBlendDst[12] = { GL_ZERO, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO, GL_SRC_COLOR, GL_ONE, GL_ONE, GL_ZERO, GL_ZERO, GL_ONE, GL_ONE_MINUS_CONSTANT_ALPHA_EXT };
 
 // STATIC: 0x00AD8E80
-static GLenum s_glDepthFunc[4] = { GL_LEQUAL, GL_EQUAL, GL_GEQUAL, GL_LESS };
+static GLenum s_glDepthFunc[GxCmps_Last] = { GL_LEQUAL, GL_EQUAL, GL_GEQUAL, GL_LESS };
 
 // STATIC: 0x00AD8E90
 static GLenum s_glColorMaterial[3] = { GL_AMBIENT_AND_DIFFUSE, GL_SPECULAR, GL_EMISSION };
@@ -144,7 +148,7 @@ CGxDeviceOpenGl::CGxDeviceOpenGl() {
     this->m_sphereMapMode = GL_SPHERE_MAP;
 
     for (uint32_t target = 0; target < GxPoolTargets_Last; target++) {
-        for (uint32_t usage = 0; usage < 3; usage++) {
+        for (uint32_t usage = 0; usage < GxPoolUsages_Last; usage++) {
             this->m_useVbo[target][usage] = 1;
             this->m_useVboBroker[target][usage] = 0;
         }
@@ -529,50 +533,50 @@ void CGxDeviceOpenGl::DeviceOverride(EGxOverride override, uint32_t value) {
     CGxDevice::DeviceOverride(override, value);
 
     switch (override) {
-        case 0:
+        case GxOverride_PixelShader:
             this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
             break;
 
-        case 1:
+        case GxOverride_VertexBufferObject:
             if (!value) {
                 glARBVertexBufferObject = 0;
             }
 
             break;
 
-        case 2:
+        case GxOverride_StreamVertexBufferObject:
             if (!value) {
                 this->m_useVbo[0][2] = 0;
             }
 
             break;
 
-        case 3:
+        case GxOverride_StreamIndexBufferObject:
             if (!value) {
                 this->m_useVbo[1][2] = 0;
             }
 
             break;
 
-        case 4:
+        case GxOverride_StreamVertexBufferBroker:
             if (value) {
                 this->m_useVboBroker[0][2] = 1;
             }
 
             break;
 
-        case 5:
+        case GxOverride_StreamIndexBufferBroker:
             if (value) {
                 this->m_useVboBroker[1][2] = 1;
             }
 
             break;
 
-        case 6:
+        case GxOverride_SphereMapReflection:
             this->m_sphereMapMode = value != 0 ? GL_REFLECTION_MAP_ARB : GL_SPHERE_MAP;
             break;
 
-        case 7:
+        case GxOverride_TexNonPow2:
             this->m_caps.m_texNonPow2 = value != 0;
             break;
 
@@ -824,11 +828,10 @@ void CGxDeviceOpenGl::ISetCaps(const CGxFormat& format) {
 
     this->m_caps.m_shaderAlphaRef = 1;
     this->m_caps.unk_0134 = 1;
-    this->m_caps.unused_0114[1] = 0;
-    this->m_caps.unused_0114[0] = 0;
-    this->m_caps.unused_0114[2] = 0;
-    this->m_caps.unused_0114[3] = 0;
-    this->m_caps.unused_0114[4] = 0;
+    this->m_caps.unused_0118[0] = 0;
+    this->m_caps.unused_0118[1] = 0;
+    this->m_caps.unused_0118[2] = 0;
+    this->m_caps.m_stencilBits = 0;  // DECOMP: no stencil path here
     this->m_caps.m_stereoAvailable = 0;
     this->m_caps.unk_0138 = this->m_caps.m_shaderTargets[GxSh_Pixel] != 12;
     this->Log(this->m_caps);
@@ -958,7 +961,7 @@ bool CGxDeviceOpenGl::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32
 
     GLenum error = GL_INVALID_OPERATION;
 
-    if (param == 0) {
+    if (param == GxQueryParam_DataSize) {
         GLint bits;
         glGetQueryivARB(s_glQueryTarget[query->m_type], GL_QUERY_COUNTER_BITS_ARB, &bits);
         error = glGetError();
@@ -966,7 +969,7 @@ bool CGxDeviceOpenGl::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32
         if (!error) {
             data = bits / 8;
         }
-    } else if (param == 1) {
+    } else if (param == GxQueryParam_ResultAvailable) {
         GLuint available;
         glGetQueryObjectuivARB(static_cast<GLuint>(reinterpret_cast<uintptr_t>(query->m_apiSpecific)), GL_QUERY_RESULT_AVAILABLE_ARB, &available);
         error = glGetError();
@@ -1216,7 +1219,7 @@ void CGxDeviceOpenGl::IDeviceSetRenderTargetFBO(EGxBuffer buffer, CGxTex* textur
         }
 
         if (texture->m_needsCreation) {
-            this->BindTexture(texture, 0xFFFFFFFF);
+            this->BindTexture(texture, kNullTmu);
 
             GLenum target = s_glTexTarget[texture->m_target];
             glTexImage2D(target, 0, s_glInternalFormat[texture->m_format], texture->m_width, texture->m_height, 0, s_glFormat[texture->m_format], s_glType[texture->m_format], nullptr);
@@ -1706,7 +1709,7 @@ static HWND CreateGameWindow(CGxFormat& format, void* param) {
         height += CGxDevice::s_clientAdjust.y;
     }
 
-    return CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassOpenGl", "World of Warcraft", style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, param);
+    return CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassOpenGl", CLIENT_NAME, style, format.m_pos.x, format.m_pos.y, width, height, nullptr, nullptr, instance, param);
 }
 
 // VERIFY: 23cf22a4 auto
@@ -2143,12 +2146,12 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
             rect.maxX = LOWORD(lparam);
 
             if (wparam == SIZE_MINIMIZED) {
-                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
             } else {
                 uint32_t resizeType = 0;
 
                 if (wparam == SIZE_MAXHIDE) {
-                    resizeType = 2;
+                    resizeType = Gx_SizeMaxHide;
                 }
 
                 device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), resizeType);
@@ -2174,7 +2177,7 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
                 rect.minX = 0.0f;
                 rect.maxY = 0.0f;
                 rect.maxX = 0.0f;
-                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), 1);
+                device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), Gx_SizeMinimized);
             }
 
             break;
@@ -2306,7 +2309,7 @@ LRESULT CALLBACK CGxDeviceOpenGl::WindowProcGl(HWND hwnd, UINT message, WPARAM w
 int32_t CGxDeviceOpenGl::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
     switch (wm) {
         case GxWM_Size:
-            if (param2 == 1 || param2 == 2) {
+            if (param2 == Gx_SizeMinimized || param2 == Gx_SizeMaxHide) {
                 this->m_windowVisible = 0;
             } else {
                 this->m_windowVisible = 1;
@@ -2458,7 +2461,7 @@ void CGxDeviceOpenGl::IDeviceSetRenderTargetCopy(EGxBuffer buffer, CGxTex* textu
             glGenTextures(1, reinterpret_cast<GLuint*>(&previous->m_apiSpecificData));
         }
 
-        this->BindTexture(previous, 0xFFFFFFFF);
+        this->BindTexture(previous, kNullTmu);
 
         if (previous->m_needsFlagUpdate) {
             this->ITexSetFlags(previous);
@@ -2844,10 +2847,10 @@ void CGxDeviceOpenGl::CapsWindowSize(CRect& rect) {
 // VERIFY: 37050252 auto
 // OFFSET: 0x00691870
 static void ColorToFloats(GLfloat* out, const CImVector& color) {
-    out[0] = color.r * (1.0f / 255.0f);
-    out[1] = color.g * (1.0f / 255.0f);
-    out[2] = color.b * (1.0f / 255.0f);
-    out[3] = color.a * (1.0f / 255.0f);
+    out[0] = color.r * oo255;
+    out[1] = color.g * oo255;
+    out[2] = color.b * oo255;
+    out[3] = color.a * oo255;
 }
 
 // VERIFY: 8cbcfafc manual
@@ -2933,7 +2936,7 @@ void CGxDeviceOpenGl::IStateSyncEnables() {
 
     int32_t enable = 0;
 
-    if (this->NeedsUpdate(this->m_appMasterEnables, this->m_hwMasterEnables, 0, 0, 8, enable)) {
+    if (this->NeedsUpdate(this->m_appMasterEnables, this->m_hwMasterEnables, 0, 0, GxMasterEnable_PolygonFill, enable)) {
         if (enable) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         } else {
@@ -3507,8 +3510,8 @@ void CGxDeviceOpenGl::ISetTexGen(uint32_t tmu, int32_t texGen) {
             this->DsSet(static_cast<EDeviceState>(Ds_TexGenQ0 + tmu), 0, 0);
             break;
 
-        case GxTexGen_EyeLinear:
-        case GxTexGen_Unk3:
+        case GxTexGen_World:
+        case GxTexGen_View:
             this->DsSet(static_cast<EDeviceState>(Ds_TexGenS0 + tmu), GL_EYE_LINEAR, 0);
             this->DsSet(static_cast<EDeviceState>(Ds_TexGenT0 + tmu), GL_EYE_LINEAR, 0);
             this->DsSet(static_cast<EDeviceState>(Ds_TexGenR0 + tmu), GL_EYE_LINEAR, 0);
@@ -3540,7 +3543,7 @@ void CGxDeviceOpenGl::ISetTexGen(uint32_t tmu, int32_t texGen) {
             break;
     }
 
-    if (texGen == GxTexGen_EyeLinear) {
+    if (texGen == GxTexGen_World) {
         CGxMatrixStack& stack = this->m_texGen[tmu];
         stack.m_dirty = 1;
         stack.m_flags[stack.m_level] &= ~CGxMatrixStack::F_Identity;
@@ -3612,7 +3615,7 @@ void CGxDeviceOpenGl::IRsSendToHw(EGxRenderState which) {
             if (value.m_data.i[0] <= 0) {
                 this->DsSet(Ds_AlphaTest, 0, 0);
             } else {
-                glAlphaFunc(GL_GEQUAL, value.m_data.i[0] * (1.0f / 255.0f));
+                glAlphaFunc(GL_GEQUAL, value.m_data.i[0] * oo255);
                 this->DsSet(Ds_AlphaTest, 1, 0);
             }
 
@@ -3828,7 +3831,7 @@ void CGxDeviceOpenGl::IRsSendToHw(EGxRenderState which) {
 
             break;
 
-        case Unk84:
+        case GxRs_BlendFactor:
             if (glExtBlendColor) {
                 glBlendColorEXT(value.m_data.f[0], value.m_data.f[0], value.m_data.f[0], value.m_data.f[0]);
             }
@@ -3866,7 +3869,7 @@ void CGxDeviceOpenGl::IStateSync() {
 // VERIFY: b88c4866 manual
 // OFFSET: 0x0069E150
 void CGxDeviceOpenGl::SceneClear(uint32_t mask, CImVector color) {
-    glClearColor(color.r * (1.0f / 255.0f), color.g * (1.0f / 255.0f), color.b * (1.0f / 255.0f), color.a * (1.0f / 255.0f));
+    glClearColor(color.r * oo255, color.g * oo255, color.b * oo255, color.a * oo255);
 
     uint32_t depthMask = this->m_deviceStates[Ds_DepthMask];
     this->DsSet(Ds_DepthMask, 1, 0);
@@ -3875,11 +3878,11 @@ void CGxDeviceOpenGl::SceneClear(uint32_t mask, CImVector color) {
 
     GLbitfield bits = 0;
 
-    if (mask & 0x1) {
+    if (mask & GxBufferBit_Color) {
         bits = GL_COLOR_BUFFER_BIT;
     }
 
-    if (mask & 0x2) {
+    if (mask & GxBufferBit_Depth) {
         bits |= GL_DEPTH_BUFFER_BIT;
     }
 
@@ -3916,7 +3919,7 @@ void CGxDeviceOpenGl::ScenePresent() {
 void CGxDeviceOpenGl::IXformSetProjection(const C44Matrix& matrix) {
     C44Matrix projection(matrix.a0, matrix.a1, matrix.a2, matrix.a3, matrix.b0, matrix.b1, matrix.b2, matrix.b3, -matrix.c0, -matrix.c1, -matrix.c2, -matrix.c3, matrix.d0, matrix.d1, matrix.d2, matrix.d3);
 
-    if (static_cast<int32_t>(this->m_appMasterEnables) >= 0 && 1.0f != matrix.d3) {
+    if (!(this->m_appMasterEnables & (1 << GxMasterEnable_NormalProjection)) && 1.0f != matrix.d3) {
         C44Matrix scale(0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 0.2f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
         projection = projection * scale;
     }
@@ -4002,7 +4005,7 @@ void CGxDeviceOpenGl::PrimLineWidth(float width) {
 // VERIFY: 9ddcedf6 manual
 // OFFSET: 0x0069D5D0
 void CGxDeviceOpenGl::BindTexture(CGxTex* texId, uint32_t tmu) {
-    if (tmu == 0xFFFFFFFF) {
+    if (tmu == kNullTmu) {
         this->DsSet(Ds_ActiveTexture, 0, 0);
         this->IRsForceUpdate(GxRs_Texture0);
     }
@@ -4065,7 +4068,7 @@ int32_t CGxDeviceOpenGl::TexCopy(CGxTex* dest, const C2iVector& destPos, const C
         glGenTextures(1, reinterpret_cast<GLuint*>(&dest->m_apiSpecificData));
     }
 
-    this->BindTexture(dest, 0xFFFFFFFF);
+    this->BindTexture(dest, kNullTmu);
 
     if (dest->m_needsFlagUpdate) {
         this->ITexSetFlags(dest);
@@ -4353,7 +4356,7 @@ void CGxDeviceOpenGl::ITexMarkAsUpdated(CGxTex* texId, uint32_t tmu) {
             this->BindTexture(texId, tmu);
         }
 
-        uint32_t faceCount = texId->m_target == GxTex_CubeMap ? 6 : 1;
+        uint32_t faceCount = texId->m_target == GxTex_CubeMap ? GxTexCubeFaces_Last : 1;
 
         for (uint32_t face = 0; face < faceCount; face++) {
             uint32_t mipWidth = width;
@@ -4401,7 +4404,7 @@ void CGxDeviceOpenGl::ITexMarkAsUpdated(CGxTex* texId, uint32_t tmu) {
 // VERIFY: 8215407b manual
 // OFFSET: 0x0069E120
 void CGxDeviceOpenGl::ITexMarkAsUpdated(CGxTex* texId) {
-    this->ITexMarkAsUpdated(texId, 0xFFFFFFFF);
+    this->ITexMarkAsUpdated(texId, kNullTmu);
 }
 
 // VERIFY: 468f21f9 auto
@@ -5118,7 +5121,7 @@ void CGxDeviceOpenGl::IBindVertexShader(CGxShader* shader) {
             case 8:
             case 9:
                 glBindProgramNV(GL_VERTEX_PROGRAM_ARB, static_cast<GLuint>(reinterpret_cast<uintptr_t>(shader->m_apiSpecific)));
-                this->DsSet(Ds_Unk83, 1, 0);
+                this->DsSet(Ds_VertexProgramNV, 1, 0);
                 break;
 
             default:
@@ -5133,7 +5136,7 @@ void CGxDeviceOpenGl::IBindVertexShader(CGxShader* shader) {
 
             case 8:
             case 9:
-                this->DsSet(Ds_Unk83, 0, 0);
+                this->DsSet(Ds_VertexProgramNV, 0, 0);
                 break;
 
             default:

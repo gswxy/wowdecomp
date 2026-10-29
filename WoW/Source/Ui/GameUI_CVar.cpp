@@ -1,4 +1,5 @@
 #include "GameUI.h"
+#include "WoW/Source/Ui/WorldLighting.h"   // LIGHTING
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/ConsoleBase/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
@@ -92,6 +93,15 @@ CVar* g_buffDurationsCVar;
 
 // STATIC: 0x00BD093C
 CVar* g_rotateMinimapCVar;
+
+// CUSTOM: minimap blip refresh interval (ms), see CGMinimapFrame::Render
+CVar* g_minimapBlipIntervalCVar;
+CVar* g_minimapIndoorResolutionCVar;
+CVar* g_portraitLiveCVar;
+CVar* g_portraitResolutionCVar;
+
+// CUSTOM: damp the mount gallop on mounted names, see CGUnit_C::GetNamePosition
+CVar* g_nameMountSmoothingCVar;
 
 // STATIC: 0x00BD0940
 CVar* g_minimapZoomCVar;
@@ -454,6 +464,7 @@ bool CVarHandler_threatWarning(CVar* var, const char* oldValue, const char* valu
 // VERIFY: 24146977 auto
 // OFFSET: 0x0051D9B0
 void CGGameUI::RegisterGameCVars() {
+    WorldLightingRegisterCVars();   // LIGHTING: not in 12340 (hdr, bloom, ssao, fogScattering; all off)
     g_deselectOnClickCVar = CVar::Register("deselectOnClick", "Clear the target when clicking on terrain", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_cvAutoInteract = CVar::Register("autoInteract", "Toggles auto-move to interact target", 0x10, s_locale == 1 ? "1" : "0", AutoInteractStateChangedCallback, CATEGORY_GAME, false, nullptr, false);
     g_autoStandCVar = CVar::Register("autoStand", "Automatically stand when needed", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
@@ -475,6 +486,21 @@ void CGGameUI::RegisterGameCVars() {
     g_showTargetCastbarCVar = CVar::Register("showTargetCastbar", "Show the spell your current target is casting", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_showVKeyCastbarCVar = CVar::Register("showVKeyCastbar", "If the V key display is up for your current target, show the enemy cast bar with the target's health bar in the game field", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_rotateMinimapCVar = CVar::Register("rotateMinimap", "Whether to rotate the entire minimap instead of the player arrow", 0x10, "0", nullptr, CATEGORY_GAME, false, nullptr, false);
+    // CUSTOM: the exe rebuilds minimap blips once per second; 0 = every frame
+    // CUSTOM (Badgermilk0 port): the indoor minimap's render target size (stock 256; Wow32 keeps stock)
+    // CUSTOM (Badgermilk0 port): animated 3D unit portraits, and the render-target portraits' size (stock 64)
+#if defined(_WIN64)
+    g_minimapIndoorResolutionCVar = CVar::Register("minimapIndoorResolution", "Indoor minimap render target size, 256 to 2048 (stock 256)", 0x10, "1024", nullptr, CATEGORY_GAME, false, nullptr, false);
+    g_portraitLiveCVar = CVar::Register("portraitLive", "Unit portraits are animated 3D models (0 = stock snapshot)", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
+    g_portraitResolutionCVar = CVar::Register("portraitResolution", "Unit portrait render target size, 64 to 2048 (stock 64)", 0x10, "256", nullptr, CATEGORY_GAME, false, nullptr, false);
+#else
+    g_minimapIndoorResolutionCVar = CVar::Register("minimapIndoorResolution", "Indoor minimap render target size, 256 to 2048 (stock 256)", 0x10, "256", nullptr, CATEGORY_GAME, false, nullptr, false);
+    g_portraitLiveCVar = CVar::Register("portraitLive", "Unit portraits are animated 3D models (0 = stock snapshot)", 0x10, "0", nullptr, CATEGORY_GAME, false, nullptr, false);
+    g_portraitResolutionCVar = CVar::Register("portraitResolution", "Unit portrait render target size, 64 to 2048 (stock 64)", 0x10, "64", nullptr, CATEGORY_GAME, false, nullptr, false);
+#endif
+    g_minimapBlipIntervalCVar = CVar::Register("minimapBlipInterval", "Milliseconds between minimap blip position updates (0 = every frame)", 0x10, "0", nullptr, CATEGORY_GAME, false, nullptr, false);
+    // CUSTOM: benilla-style anti-jitter for mounted name positions
+    g_nameMountSmoothingCVar = CVar::Register("nameMountSmoothing", "Damp the mount's gallop on mounted unit names and nameplates", 0x10, "1", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_minimapZoomCVar = CVar::Register("minimapZoom", "The current outdoor minimap zoom level", 0x20, "3", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_minimapInsideZoomCVar = CVar::Register("minimapInsideZoom", "The current indoor minimap zoom level", 0x20, "3", nullptr, CATEGORY_GAME, false, nullptr, false);
     g_minimapPortalMaxCVar = CVar::Register("minimapPortalMax", "Max Number of Portals to traverse for minimap", 0x20, "99", nullptr, CATEGORY_GAME, false, nullptr, false);
@@ -617,9 +643,9 @@ void CGGameUI::RegisterGameCVars() {
     const char* militaryTime = "1";
 
     switch (LocaleNameToIndex(s_localeCode)) {
-        case 2:
-        case 5:
-        case 10: {
+        case DB_LOCALE_enUS:
+        case DB_LOCALE_koKR:
+        case DB_LOCALE_esMX: {
             militaryTime = "0";
             break;
         }

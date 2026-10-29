@@ -1892,8 +1892,10 @@ FMOD_RESULT DSPI::disconnectFromInternal(DSPI *target)
         int count;
         DSPConnectionI *connection = 0;
 
-        FMOD_OS_CriticalSection_Enter(dspconnectioncrit);
+        // Not stock: DSP crit first, then connection crit, the order addInputInternal and the mixer use; stock took
+        // them the other way round (lock-order inversion, deadlock between the mixer and a disconnect).
         FMOD_OS_CriticalSection_Enter(dspcrit);
+        FMOD_OS_CriticalSection_Enter(dspconnectioncrit);
 
         for (count = 0; count < mNumInputs; count++)
         {

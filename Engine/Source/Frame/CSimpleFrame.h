@@ -41,6 +41,12 @@ class FrameScriptFunctionRef : public XMLNodeData {
 
 class CSimpleFrame : public CScriptRegion {
     public:
+    enum INITIALIZED_STATE : uint32_t {
+        // STATE_UNKNOWN = 0,
+        STATE_INITIALIZED = 1,
+        STATE_DELETED = 3,
+    };
+
     static CDataAllocator s_allocator;
     static int32_t s_frameCount;
     static int32_t s_metatable;
@@ -56,7 +62,7 @@ class CSimpleFrame : public CScriptRegion {
     /* 00A0 */ CSimpleTop* m_simpleTop;
     /* 00A4 */ CSimpleFrame* m_hoverFrame;
     /* 00A8 */ CScriptRegion* m_titleRegion;
-    /* 00AC */ uint32_t m_lifecycleState;
+    /* 00AC */ INITIALIZED_STATE m_initialized_state;
     /* 00B0 */ int32_t m_id;
     /* 00B4 */ uint32_t m_frameFlags;
     /* 00B8 */ float m_frameScale;
@@ -104,12 +110,12 @@ class CSimpleFrame : public CScriptRegion {
     /* 01BC */ FrameScript_Object::ScriptIx m_onEnable;
     /* 01C4 */ FrameScript_Object::ScriptIx m_onDisable;
     /* 01CC */ TSHashTable<FRAMEATTR, HASHKEY_STRI> m_attributes;
-    /* 01F4 */ uint32_t m_drawLayerEnabled [5];
+    /* 01F4 */ uint32_t m_drawLayerEnabled [NUM_SIMPLEFRAME_DRAWLAYERS];
     /* 0208 */ CBackdropGenerator* m_backdropGenerator;
     /* 020C */ TSExplicitList<CSimpleRegion, offsetof(CSimpleRegion, m_regionLink)> m_regions;
-    /* 0218 */ TSExplicitList<CSimpleRegion, offsetof(CSimpleRegion, m_layerLink)> m_drawLayers [5];
+    /* 0218 */ TSExplicitList<CSimpleRegion, offsetof(CSimpleRegion, m_layerLink)> m_drawLayers [NUM_SIMPLEFRAME_DRAWLAYERS];
     /* 0254 */ uint32_t m_batchDirty;
-    /* 0258 */ CRenderBatch* m_renderBatch [5];
+    /* 0258 */ CRenderBatch* m_renderBatch [NUM_SIMPLEFRAME_DRAWLAYERS];
     /* 026C */ TSExplicitList<CRenderBatch, offsetof(CRenderBatch, m_renderLink)> m_renderList;
     /* 0278 */ TSList<SIMPLEFRAMENODE> m_children;
     /* 0284 */ TSLink<CSimpleFrame> m_framesLink;

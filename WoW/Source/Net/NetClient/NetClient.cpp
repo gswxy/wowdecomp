@@ -18,7 +18,8 @@ static TSList<NETCLIENTNODE> s_clientList;
 static HPROPCONTEXT s_propContext;
 
 // STATIC: 0x00C5D628
-static uint32_t s_stats[6];
+// Not stock: atomic, bumped from the main thread and the net thread (auth/ping replies).
+static std::atomic<uint32_t> s_stats[6];
 
 // STATIC: 0x00C5D640
 static uint32_t s_initializeTime;
@@ -80,7 +81,7 @@ void NetClient::WCMessageReady(WowConnection* connection, uint32_t timeStamp, CD
     uint32_t size = msg->m_size;
     void* data;
     msg->GetDataInSitu(data, size);
-    InterlockedExchangeAdd(reinterpret_cast<volatile LONG*>(&this->m_bytesReceived), msg->m_size);
+    this->m_bytesReceived += msg->m_size; // Not stock: std::atomic, was InterlockedExchangeAdd
     msg->m_read = 0;
 
     uint16_t msgId;
@@ -710,7 +711,7 @@ void NetClient::Destroy() {
     this->m_netState = NS_UNINITIALIZED;
 
     if (!NetClient::s_clientCount) {
-        ConsolePrintf("Client net stats: %Lu bytes sent, %Lu bytes received, %Lu msec elapsed", s_stats[0], s_stats[3], OsGetAsyncTimeMs() - s_initializeTime);
+        ConsolePrintf("Client net stats: %Lu bytes sent, %Lu bytes received, %Lu msec elapsed", s_stats[0].load(), s_stats[3].load(), OsGetAsyncTimeMs() - s_initializeTime);
     }
 }
 
@@ -863,6 +864,12 @@ void NetClient::HandleRedirectClient(WowConnection* connection, CDataStore* msg)
     msg->GetData(proof, sizeof(proof));
 
     if (memcmp(&digest, proof, sizeof(proof)) || !msg->IsRead() || msg->m_read > msg->m_size) {
+        // FORK FIX (RosemyneH 25b44e3d): the exe leaves the connection allocated above set, so the next
+        // redirect is refused as already in progress; release it
+        this->m_redirectConnection->SetResponse(nullptr, false);
+        this->m_redirectConnection->Disconnect();
+        this->m_redirectConnection->Release();
+        this->m_redirectConnection = nullptr;
         connection->Disconnect();
     } else {
         this->m_redirectConnection->Connect(address, port, -1);

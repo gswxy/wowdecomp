@@ -1,4 +1,5 @@
 #include <cstddef>
+#include "WoW/Common/Types.h"
 #include <cstdint>
 #include <cstring>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -8,7 +9,7 @@
 #include "WoW/Source/SoundInterface/SoundInterface2.h"
 
 // STATIC: 0x00DCEAF8
-static int32_t s_vocalErrorSounds[68];
+static int32_t s_vocalErrorSounds[NUM_VOCALUISOUNDS];
 
 // STATIC: 0x00DCEC08
 static SE2SoundKitObject s_vocalErrorObject;
@@ -25,7 +26,7 @@ void SI2::InitVocalErrorSounds(int32_t race, uint32_t sex) {
     for (int32_t i = 0; i < g_vocalUISoundsDB.m_numRecords; i++) {
         VocalUISoundsRec* rec = (i < 0 || i >= g_vocalUISoundsDB.m_numRecords) ? nullptr : &g_vocalUISoundsDB.m_records[i];
 
-        if (rec && rec->m_vocalUienum < 68 && rec->m_raceID == race) {
+        if (rec && rec->m_vocalUienum < NUM_VOCALUISOUNDS && rec->m_raceID == race) {
             s_vocalErrorSounds[rec->m_vocalUienum] = rec->m_normalSoundID[sex];
         }
     }
@@ -51,7 +52,7 @@ void SI2::PlayVocalErrorSound(int32_t error) {
 
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
-    if (player && player->m_unit->m_unitFieldBytes0[1] == 6) {
+    if (player && player->m_unit->m_unitFieldBytes0[1] == CLASS_DEATH_KNIGHT) {
         properties.m_useDspChain = 1;
         SI2::DK_GetPlayerFilterName(player, properties.m_dspChainName, sizeof(properties.m_dspChainName));
     }

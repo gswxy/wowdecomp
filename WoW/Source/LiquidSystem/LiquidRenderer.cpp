@@ -3,6 +3,8 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxLight.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "WoW/Source/WorldClient/CataWater.h"
+#include "WoW/Source/WorldClient/VolumetricFogWater.h"
 
 // STATIC: 0x00B23F6C
 Liquid::CRenderer::DrawListSorter Liquid::CRenderer::s_drawListSorter[2] = {
@@ -119,11 +121,27 @@ void Liquid::CRenderer::Flush(const C3Vector& cameraPos, uint32_t pass) {
     qsort(instances.m_data, instances.Count(), sizeof(Liquid::CInstance*), Liquid::CRenderer::s_drawListSorter[pass]);
 
     uint32_t count = instances.Count();
+    // VFOG: not in 12340. Modern water (docs/VFOG_PORT.md "Water"): the transparent pass draws the water last, grouped
+    // by class, and shades each class after its draws.
+    // Not in 12340: waterStyle 1 (CataWater.h) shades the water inside its own draws instead.
+    const bool cata = pass == 1 && CataWater::Arm(instances.m_data, count);
+    const bool water = pass == 1 && !cata && VolumetricFog::WaterArm(instances.m_data, count);
 
     for (uint32_t i = 0; i < count; i++) {
         Liquid::CInstance* instance = instances.m_data[i];
+        if (water) {
+            VolumetricFog::WaterBeforeDraw(instance);
+        }
         instance->m_material->Render(instance->m_environment, instance->m_geomFactory, instance->m_waveManager, cameraPos, &instance->m_transform, &instance->m_bounds, instance->m_settings);
         instance->m_queued = 0;
+    }
+
+    if (water) {
+        VolumetricFog::WaterFlushDone();
+    }
+
+    if (cata) {
+        CataWater::Done();
     }
 
     instances.Clear();

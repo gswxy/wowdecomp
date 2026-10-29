@@ -1,4 +1,5 @@
 #include "CharacterSelection.h"
+#include "WoW/Common/Types.h"
 #include <cstring>
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Event/Event.h"
@@ -8,6 +9,7 @@
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
 #include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Frame/CSimpleModel.h"
 #include "Engine/Source/Os/OsFile.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
@@ -36,7 +38,7 @@
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 
 // STATIC: 0x009F3CD0
-const int32_t g_scriptSexIndex[3] = { 2, 3, 1 };
+const int32_t g_scriptSexIndex[3] = { GENDER_MALE, GENDER_FEMALE, GENDER_NONE };
 
 // STATIC: 0x00AC441C
 static float s_characterGlow = 0.4f;
@@ -57,7 +59,7 @@ int32_t CCharacterSelection::s_characterCount;
 float CCharacterSelection::s_charFacing;
 
 // STATIC: 0x00B6B208
-uint32_t CCharacterSelection::s_raceRestrictions[10];
+uint32_t CCharacterSelection::s_raceRestrictions[NUM_RACE_RESTRICTIONS];
 
 // STATIC: 0x00B6B238
 TSGrowableArray<CharacterSelectionDisplay> CCharacterSelection::s_characterList;
@@ -88,7 +90,7 @@ void CCharacterSelection::Shutdown() {
             continue;
         }
 
-        if (CCharacterSelection::s_characterList[i].m_characterInfo.m_classID == 3) {
+        if (CCharacterSelection::s_characterList[i].m_characterInfo.m_classID == CLASS_HUNTER) {
             CCharacterComponent::RemoveHandItem(model, INVSLOT_RANGED, SHEATHE_NONE, false);
             CCharacterSelection::s_characterList[i].m_component->RemoveItem(ITEMSLOT_11);
         }
@@ -372,7 +374,7 @@ void CCharacterSelection::GenericLightingCallback(CM2Model* model, CM2Lighting* 
     if (lights->unk_01B5) {
         CSimpleModelFFX* frame = lights->m_modelFrame;
 
-        if (frame->m_flags & 0x1) {
+        if (frame->m_flags & CSimpleModel::MODEL_FOGGED) {
             lighting->SetFog(C3Vector(frame->m_fogColor), frame->m_fogNear, frame->m_fogFar);
         }
     }
@@ -470,7 +472,7 @@ void CCharacterSelection::ShowCharacter() {
                 continue;
             }
 
-            bool hunter = CCharacterSelection::s_characterList[CCharacterSelection::s_selectionIndex].m_characterInfo.m_classID == 3;
+            bool hunter = CCharacterSelection::s_characterList[CCharacterSelection::s_selectionIndex].m_characterInfo.m_classID == CLASS_HUNTER;
 
             if (hunter) {
                 if (slot == INVSLOT_MAINHAND || slot == INVSLOT_OFFHAND) {
@@ -618,16 +620,16 @@ void CCharacterSelection::UpdateCharacterList() {
     ClearAddOnEnableState(nullptr);
     CCharacterSelection::s_characterList.SetCount(0);
 
-    CCharacterSelection::s_raceRestrictions[0] = 0;
-    CCharacterSelection::s_raceRestrictions[1] = 0;
-    CCharacterSelection::s_raceRestrictions[2] = 0;
-    CCharacterSelection::s_raceRestrictions[3] = 0;
-    CCharacterSelection::s_raceRestrictions[4] = 0;
-    CCharacterSelection::s_raceRestrictions[5] = 0;
-    CCharacterSelection::s_raceRestrictions[6] = 0;
-    CCharacterSelection::s_raceRestrictions[7] = 0;
-    CCharacterSelection::s_raceRestrictions[8] = 0;
-    CCharacterSelection::s_raceRestrictions[9] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_HUMAN] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DWARF] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_GNOME] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_NIGHT_ELF] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DRAENEI] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_ORC] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TROLL] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TAUREN] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_UNDEAD] = 0;
+    CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_BLOOD_ELF] = 0;
 
     ClientServices::Connection()->EnumerateCharacters(&CCharacterSelection::EnumerateCharactersCallback, nullptr);
 
@@ -644,16 +646,16 @@ void CCharacterSelection::UpdateCharacterList() {
             CCharacterSelection::m_modelFrame->m_model->DetachAllChildrenById(1);
         }
     } else {
-        CCharacterSelection::s_raceRestrictions[0] = ClientServices::Connection()->m_restrictHuman;
-        CCharacterSelection::s_raceRestrictions[1] = ClientServices::Connection()->m_restrictDwarf;
-        CCharacterSelection::s_raceRestrictions[2] = ClientServices::Connection()->m_restrictGnome;
-        CCharacterSelection::s_raceRestrictions[3] = ClientServices::Connection()->m_restrictNightElf;
-        CCharacterSelection::s_raceRestrictions[4] = ClientServices::Connection()->m_restrictDraenei;
-        CCharacterSelection::s_raceRestrictions[5] = ClientServices::Connection()->m_restrictOrc;
-        CCharacterSelection::s_raceRestrictions[6] = ClientServices::Connection()->m_restrictTroll;
-        CCharacterSelection::s_raceRestrictions[7] = ClientServices::Connection()->m_restrictTauren;
-        CCharacterSelection::s_raceRestrictions[8] = ClientServices::Connection()->m_restrictUndead;
-        CCharacterSelection::s_raceRestrictions[9] = ClientServices::Connection()->m_restrictBloodElf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_HUMAN] = ClientServices::Connection()->m_restrictHuman;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DWARF] = ClientServices::Connection()->m_restrictDwarf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_GNOME] = ClientServices::Connection()->m_restrictGnome;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_NIGHT_ELF] = ClientServices::Connection()->m_restrictNightElf;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_DRAENEI] = ClientServices::Connection()->m_restrictDraenei;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_ORC] = ClientServices::Connection()->m_restrictOrc;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TROLL] = ClientServices::Connection()->m_restrictTroll;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_TAUREN] = ClientServices::Connection()->m_restrictTauren;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_UNDEAD] = ClientServices::Connection()->m_restrictUndead;
+        CCharacterSelection::s_raceRestrictions[CCharacterSelection::RACE_RESTRICTION_BLOOD_ELF] = ClientServices::Connection()->m_restrictBloodElf;
 
         CRealmList::m_preferredCategory = 0;
 

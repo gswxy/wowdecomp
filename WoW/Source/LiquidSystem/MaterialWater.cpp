@@ -3,6 +3,9 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Model2/M2Light.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "WoW/Source/WorldClient/CataWater.h"
+#include "WoW/Source/WorldClient/VolumetricFog.h"
+#include "Engine/Source/ShaderEffect/Types.h"
 
 // STATIC: 0x00D45098
 CDataAllocator Liquid::s_waterFFPAllocator(sizeof(Liquid::CMaterialWaterFFP), 8);
@@ -146,7 +149,7 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0 || VolumetricFog::LiquidDepthWrite());   // VFOG: not in 12340
     g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
 
     Liquid::s_vsConstants.m_projection = g_theGxDevicePtr->m_projNative;
@@ -184,8 +187,10 @@ void Liquid::CMaterialWater::Render(Liquid::IEnvironment* environment, Liquid::I
         lightCount = 3;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWater::s_vertexShaders[lightCount]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWater::s_pixelShader);
+    if (!CataWater::Bind(settings, true, cameraPos)) {   // CATA WATER: not in 12340 (waterStyle 1)
+        g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWater::s_vertexShaders[lightCount]);
+        g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWater::s_pixelShader);
+    }
 
     CGxBuf* vertexBuf = nullptr;
     CGxBuf* indexBuf = nullptr;
@@ -225,7 +230,7 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0 || VolumetricFog::LiquidDepthWrite());   // VFOG: not in 12340
     g_theGxDevicePtr->RsSet(GxRs_Fog, 1);
 
     Liquid::s_vsConstants.m_projection = g_theGxDevicePtr->m_projNative;
@@ -263,8 +268,10 @@ void Liquid::CMaterialWaterNoSpec::Render(Liquid::IEnvironment* environment, Liq
         lightCount = 3;
     }
 
-    g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWaterNoSpec::s_vertexShaders[lightCount]);
-    g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWaterNoSpec::s_pixelShader);
+    if (!CataWater::Bind(settings, false, cameraPos)) {   // CATA WATER: not in 12340 (waterStyle 1)
+        g_theGxDevicePtr->RsSet(GxRs_VertexShader, Liquid::CMaterialWaterNoSpec::s_vertexShaders[lightCount]);
+        g_theGxDevicePtr->RsSet(GxRs_PixelShader, Liquid::CMaterialWaterNoSpec::s_pixelShader);
+    }
 
     CGxBuf* vertexBuf = nullptr;
     CGxBuf* indexBuf = nullptr;
@@ -305,7 +312,7 @@ void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid
     g_theGxDevicePtr->RsSet(GxRs_Culling, 0);
     g_theGxDevicePtr->RsSet(GxRs_BlendingMode, 2);
     GxUpdateAlphaRef(GxRs_AlphaRef);
-    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0);
+    GxRsSet(GxRs_DepthWrite, g_theGxDevicePtr->Caps().m_maxClipPlanes == 0 || VolumetricFog::LiquidDepthWrite());   // VFOG: not in 12340
 
     C44Matrix world = *transform;
 
@@ -332,8 +339,8 @@ void Liquid::CMaterialWaterFFP::Render(Liquid::IEnvironment* environment, Liquid
     g_theGxDevicePtr->RsSet(GxRs_Texture1, texture1);
     g_theGxDevicePtr->RsSet(GxRs_TextureCoord1, 0);
     g_theGxDevicePtr->RsSet(GxRs_TextureShader1, 1);
-    g_theGxDevicePtr->RsSet(GxRs_ColorOp1, 2);
-    g_theGxDevicePtr->RsSet(GxRs_AlphaOp1, 3);
+    g_theGxDevicePtr->RsSet(GxRs_ColorOp1, GxTexOp_Add);
+    g_theGxDevicePtr->RsSet(GxRs_AlphaOp1, GxTexOp_PassThru);
 
     C44Matrix texMatrix1 = C44Matrix::RotationAroundZ(angle1);
     texMatrix1.Scale(scale1);

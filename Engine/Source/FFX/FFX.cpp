@@ -136,6 +136,27 @@ void FFX::Destroy() {
     DestroyTex(FFX::s_screen);
 }
 
+// Not in 12340: the half-texel offset is D3D9's pixel-centre convention. D3D11 centres pixels on +0.5 already, so
+// the offset there lands every tap on a texel corner (half-texel shift, extra 2x2 blur of the whole world under the
+// UI); 4.3.4 drops it the same way. Vulkan keeps it: its backend moves every viewport half a pixel to emulate D3D9's
+// centres (kD3d9CentreShift), so without it the taps land on corners there. d3d11Debug 5 puts the D3D9 offset back on
+// D3D11 (bisect switch for the glue screens).
+static float FfxTexelOffset() {
+    EGxApi api = g_theGxDevicePtr->DeviceApi();
+
+    if (api != GxApi_D3d11) {
+        return 0.5f;
+    }
+
+    static CVar* s_debug;
+
+    if (!s_debug) {
+        s_debug = CVar::Lookup("d3d11Debug");
+    }
+
+    return s_debug && s_debug->m_intValue == 5 ? 0.5f : 0.0f;
+}
+
 // VERIFY: a8690e52 manual
 // OFFSET: 0x008C0590
 void FFX::SetupGeo_Quad(const C2iVector& dstSize, const C2iVector& srcSize, const C2iVector& srcTexSize, C3Vector* pos, C2Vector* tex, bool flip) {
@@ -182,12 +203,13 @@ void FFX::SetupGeo_Quad(const C2iVector& dstSize, const C2iVector& srcSize, cons
     pos[3].y = minY;
     pos[3].z = 0.0f;
 
+    float texelOffset = FfxTexelOffset();
     float invWidth = 1.0f / srcTexSize.x;
     float invHeight = 1.0f / srcTexSize.y;
-    float maxU = (srcSize.x + 0.5f) * invWidth;
-    float maxV = (srcSize.y + 0.5f) * invHeight;
-    float minU = invWidth * 0.5f;
-    float minV = 0.5f * invHeight;
+    float maxU = (srcSize.x + texelOffset) * invWidth;
+    float maxV = (srcSize.y + texelOffset) * invHeight;
+    float minU = invWidth * texelOffset;
+    float minV = texelOffset * invHeight;
 
     tex[0].x = minU;
     tex[0].y = maxV;
@@ -238,10 +260,11 @@ void FFX::SetupGeo_Grid(const C2iVector& dstSize, const C2iVector& srcSize, cons
 
     float invTexWidth = 1.0f / srcTexSize.x;
     float invTexHeight = 1.0f / srcTexSize.y;
-    float minU = invTexWidth * 0.5f;
-    float maxU = (srcSize.x + 0.5f) * invTexWidth;
-    float maxV = invTexHeight * (srcSize.y + 0.5f);
-    float minV = 0.5f * invTexHeight;
+    float texelOffset = FfxTexelOffset();
+    float minU = invTexWidth * texelOffset;
+    float maxU = (srcSize.x + texelOffset) * invTexWidth;
+    float maxV = invTexHeight * (srcSize.y + texelOffset);
+    float minV = texelOffset * invTexHeight;
     float step = 1.0f / (count - 1);
     float stepX = (maxX - minX) * step;
     float stepY = (maxY - minY) * step;
@@ -372,9 +395,11 @@ void FFX::Finish() {
 
     C2iVector sourcePos = { 0, 0 };
     C2iVector destPos = { 0, 0 };
-    GxTexCopy(TextureGetGxTex(FFX::s_full[0].m_texture, 1, nullptr), destPos, sourcePos, FFX::s_full[0].m_size, 0, 0);
-
-    FFX::s_effect->Execute();
+    // Not in 12340: the effect redraws the screen from s_full[0], so a refused copy (Vulkan) would show the last
+    // frame that copied. D3D9's StretchRect does not fail here.
+    if (GxTexCopy(TextureGetGxTex(FFX::s_full[0].m_texture, 1, nullptr), destPos, sourcePos, FFX::s_full[0].m_size, 0, 0)) {
+        FFX::s_effect->Execute();
+    }
 
     GxXformSetViewport(0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
 }

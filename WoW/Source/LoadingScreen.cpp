@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <malloc.h>
 #include "Engine/Source/Base/Handle.h"
@@ -12,6 +13,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Os/TimeManager.h"
+#include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/Scrn/Scrn.h"
 #include "Engine/Source/Services/TextBlock.h"
 #include "Engine/Source/SoundEngine/SoundEngine.h"
@@ -35,6 +37,7 @@
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/Services/Types.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Storm/H/storm.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
@@ -66,6 +69,7 @@ static float s_wideAspect = 1.6f;
 
 // STATIC: 0x00AB63BC
 static int32_t s_simpleMapID = -1;
+int32_t s_fastLoad = 1;   // BACKLOG F5: CVar fastLoad
 
 // STATIC: 0x00AB63C0
 static uint16_t s_indices[4] = { 0, 1, 2, 3 };
@@ -458,6 +462,49 @@ static void PaintLoadingBar(const BackgroundImage* images, int32_t count, CTextu
     }
 }
 
+// BACKLOG F5 (wxl-loading map_<id> lines): CVar loadingScreens = "<mapID>:<screenID>,<screenID>;<mapID>:...".
+// A map listed there gets a random one of its LoadingScreens.dbc ids each load; others keep their own.
+static int32_t PickLoadingScreen(int32_t mapID, int32_t screenID) {
+    CVar* cvar = CVar::Lookup("loadingScreens");
+    const char* p = cvar ? cvar->m_stringValue.m_str : nullptr;
+
+    while (p && *p) {
+        char* end;
+        long map = strtol(p, &end, 10);
+        const char* stop = strchr(p, ';');
+
+        if (!stop) {
+            stop = p + strlen(p);
+        }
+
+        if (end != p && *end == ':' && map == mapID) {
+            int32_t ids[64];
+            int32_t count = 0;
+
+            for (const char* q = end + 1; q < stop && count < 64;) {
+                long id = strtol(q, &end, 10);
+
+                if (end == q) {
+                    q++;
+                    continue;
+                }
+
+                if (id > 0) {
+                    ids[count++] = static_cast<int32_t>(id);
+                }
+
+                q = end;
+            }
+
+            return count ? ids[OsGetAsyncTimeMs() % count] : screenID;
+        }
+
+        p = *stop ? stop + 1 : stop;
+    }
+
+    return screenID;
+}
+
 // VERIFY: e5620ae9 manual
 // OFFSET: 0x00409ED0
 static bool LoadSimpleBackgroundTexture() {
@@ -465,7 +512,11 @@ static bool LoadSimpleBackgroundTexture() {
     MapRec* mapRec = g_mapDB.GetRecord(s_simpleMapID);
 
     if (mapRec) {
-        LoadingScreensRec* screenRec = g_loadingScreensDB.GetRecord(mapRec->m_loadingScreenID);
+        LoadingScreensRec* screenRec = g_loadingScreensDB.GetRecord(PickLoadingScreen(s_simpleMapID, mapRec->m_loadingScreenID));
+
+        if (!screenRec) {
+            screenRec = g_loadingScreensDB.GetRecord(mapRec->m_loadingScreenID);
+        }
 
         if (screenRec) {
             s_usingWideScreen = false;
@@ -522,13 +573,13 @@ static bool LoadSimpleBackgroundTexture() {
 // VERIFY: 91dabb04 manual
 // OFFSET: 0x00409800
 int32_t IsStillLoading() {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player || !player->GetTransportGUID()) {
         return 1;
     }
 
-    CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPEMASK_GAMEOBJECT, __FILE__, __LINE__));
+    CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPE_GAMEOBJECT, __FILE__, __LINE__));
 
     if (transport) {
         CMapBaseObj* object = transport->m_typeData->GetMapObjectTransportID();
@@ -565,7 +616,7 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
 
     CImVector black;
     *reinterpret_cast<uint32_t*>(&black) = 0xFF000000;
-    GxSceneClear(1, black);
+    GxSceneClear(GxBufferBit_Color, black);
 
     float aspect = CoordinateGetAspectCompensation();
     float ratio = s_usingWideScreen ? s_wideAspect / s_normalAspect : 1.0f;
@@ -603,6 +654,30 @@ static void LoadingScreenPaint(void* param, const RECTF* rect, const RECTF* visi
         GxShaderConstantsSet(GxSh_Vertex, 0, &transform.a0, 4);
     } else {
         GxRsSet(GxRs_Lighting, 0);
+    }
+
+    // Diagnostic (not stock): once per run, which path the loading screen takes and, for fixed function, the TMU0
+    // texture transform/texgen it inherits (a world-left matrix would scale the background UVs).
+    static bool s_pathLogged;
+
+    if (!s_pathLogged) {
+        s_pathLogged = true;
+        CGxDevice* device = g_theGxDevicePtr;
+        bool vsValid = s_vertexShader[0]->Valid();
+        bool psValid = s_pixelShader[0]->Valid();
+        CGxDevice::Log("LoadingScreenPaint: UI vertex shader valid %d, pixel shader valid %d -> %s path", vsValid, psValid, vsValid && psValid ? "shader" : "fixed-function");
+
+        if (!(vsValid && psValid)) {
+            const CGxMatrixStack& tex0 = device->m_xforms[GxXform_Tex0];
+            const C44Matrix& m = tex0.m_mtx[tex0.m_level];
+            CGxDevice::Log("LoadingScreenPaint: TMU0 xform level %u flags 0x%X dirty %d diag %.3f %.3f %.3f %.3f trans %.3f %.3f, TexGen0 %d TextureCoord0 %d",
+                tex0.m_level, tex0.m_flags[tex0.m_level], tex0.m_dirty, m.a0, m.b1, m.c2, m.d3, m.d0, m.d1,
+                device->m_appRenderStates[GxRs_TexGen0].m_value.m_data.i[0], device->m_appRenderStates[GxRs_TextureCoord0].m_value.m_data.i[0]);
+        }
+
+        if (CGxDevice::m_log) {
+            SLogFlush(CGxDevice::m_log);
+        }
     }
 
     GxRsSet(GxRs_Fog, 0);
@@ -742,6 +817,9 @@ void LoadingScreenEnable(int32_t mapID, bool loadingWorld) {
 
     s_simpleMapID = mapID;
     InitializeProgressBar(loadingWorld);
+
+    // BACKLOG F5: fast load while the screen is up.
+    OsSetFastSleep(s_fastLoad != 0);
 }
 
 // VERIFY: a0b9f60d auto
@@ -816,6 +894,8 @@ static void ClearDynamicData() {
 // VERIFY: 2116833b manual
 // OFFSET: 0x00409550
 void LoadingScreenDisable() {
+    OsSetFastSleep(false);   // BACKLOG F5
+
     if (s_loadingScreenLayer) {
         HandleClose(reinterpret_cast<HOBJECT>(s_loadingScreenLayer));
     }
@@ -1234,7 +1314,7 @@ static bool InitializeSpline(uint32_t path, int32_t leg) {
     C3Spline_CatmullRom spline;
     spline.SetPoints(points.m_data, count + 4);
 
-    int32_t segments = FloatToInt64(spline.m_length * 66.666672f);
+    int32_t segments = FloatToInt64(spline.cachedLength * 66.666672f);
 
     if (segments < 1) {
         segments = 1;
@@ -1254,7 +1334,7 @@ void LoadingScreenEnableShip(uint32_t transportEntry, int32_t transportMap, int3
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
     if (player) {
-        CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPEMASK_GAMEOBJECT, __FILE__, __LINE__));
+        CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPE_GAMEOBJECT, __FILE__, __LINE__));
 
         if (transport && transport->m_obj->m_entryID == transportEntry) {
             uint32_t path = transport->GetPropertyValue(CGameObjectDef::GetPropNum(transport->m_gameObject->m_typeID, 35));
@@ -1279,7 +1359,7 @@ void LoadingScreenEnableShipLeg(int32_t entryId, uint32_t leg) {
     CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
 
     if (player) {
-        CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPEMASK_GAMEOBJECT, __FILE__, __LINE__));
+        CGGameObject_C* transport = static_cast<CGGameObject_C*>(ClntObjMgrObjectPtr(WOWGUID{ player->GetTransportGUID() }, TYPE_GAMEOBJECT, __FILE__, __LINE__));
 
         if (transport && transport->m_obj->m_entryID == entryId) {
             uint32_t path = transport->GetPropertyValue(CGameObjectDef::GetPropNum(transport->m_gameObject->m_typeID, 35));

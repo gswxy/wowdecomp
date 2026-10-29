@@ -12,7 +12,20 @@ struct CVar;
 struct lua_State;
 
 struct ComSatEvent {
-    /* 0000 */ uint32_t m_type;
+    enum COMMAND : uint32_t {
+        SET_SESSION_VOLUME = 1,
+        ENABLE_LOCAL_TALKER = 2,
+        SET_TALKER_THRESHOLD = 3,
+        MUTE_TALKER = 4,
+        SELECT_SESSION = 5,
+        SET_SESSION_PRIORITY = 6,
+        MUTE_SESSION = 7,
+        SET_SEQUENCE_DELAY = 8,
+        SET_SOUND_OUTPUT_DELAY = 9,
+        UPDATE_PUSH_TO_TALK_KEY = 10,
+    };
+
+    /* 0000 */ COMMAND m_type;
     /* 0004 */ uint32_t unused_0004;
     /* 0008 */ uint64_t m_guid;
     /* 0010 */ union {
@@ -23,7 +36,14 @@ struct ComSatEvent {
 };
 
 struct ComSatCallback {
-    /* 0000 */ uint32_t m_type;
+    enum TYPE : uint32_t {
+        LOCAL_TALKER_START = 0,
+        LOCAL_TALKER_STOP = 1,
+        TALKER_START = 2,
+        TALKER_STOP = 3,
+    };
+
+    /* 0000 */ TYPE m_type;
     /* 0004 */ uint32_t unused_0004;
     /* 0008 */ uint64_t m_sessionId;
     /* 0010 */ uint64_t m_guid;
@@ -79,8 +99,16 @@ struct COMSATMEMBER {
 };
 
 struct COMSATDATA {
+    enum SESSION_TYPE : int32_t {
+        CHANNEL = 0,
+        BATTLEGROUND = 1,
+        PARTY = 2,
+        RAID = 3,
+        NONE = 4,
+    };
+
     /* 0000 */ uint64_t m_sessionID;
-    /* 0008 */ int32_t m_type;
+    /* 0008 */ SESSION_TYPE m_type;
     /* 000C */ char m_name[128];
     /* 008C */ uint32_t m_numMembers;
     /* 0090 */ COMSATMEMBER m_members[40];

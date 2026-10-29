@@ -10,6 +10,14 @@ struct CONSOLECOMMAND;
 
 typedef int32_t (*COMMANDHANDLER)(const char* command, const char* arguments);
 
+enum EXECMODE : int32_t {
+    EM_PROMPTOVERWRITE = 0,
+    EM_RECORDING = 1,
+    EM_APPEND = 2,
+    EM_WRITEFILE = 3,
+    EM_NOTACTIVE = 4,
+};
+
 struct CATEGORYINFO {
     /* 0000 */ CATEGORY m_category;
     /* 0004 */ char m_name[20];
@@ -22,7 +30,7 @@ struct CONSOLECOMMAND : public TSHashObject<CONSOLECOMMAND, HASHKEY_CONSTSTRI> {
 };
 
 extern char g_commandHistory[32][1024];
-extern int32_t s_execState;
+extern EXECMODE s_execState;
 extern uint32_t g_commandHistoryIndex;
 extern COMMANDHANDLER g_defaultCommand;
 extern TSHashTable<CONSOLECOMMAND, HASHKEY_CONSTSTRI> g_consoleCommandHash;

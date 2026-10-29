@@ -443,13 +443,13 @@ void CGAchievementInfo::LoadTrackedAchievements() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("trackedAchievements");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
 
     for (uint32_t id = list.GetNextValue(); id; id = list.GetNextValue()) {
         AddTrackedAchievement(id);
     }
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         char value[256];
         value[0] = 'v';
         value[1] = 1;
@@ -505,13 +505,13 @@ void CGAchievementInfo::SaveTrackedAchievements() {
     CVarIntListWrapper list;
     list.m_cvar = CVar::Lookup("trackedAchievements");
     list.m_pos = 2;
-    list.m_state = 0;
+    list.m_state = CVarIntListWrapper::STATE::INITIAL;
 
     for (CLIENT_ACHIEVEMENTS* node = s_trackedAchievements.Head(); node; node = s_trackedAchievements.Next(node)) {
         list.AddNextValue(node->m_id);
     }
 
-    if (list.m_state != 1) {
+    if (list.m_state != CVarIntListWrapper::STATE::READ) {
         list.m_buffer[0] = 'v';
         list.m_buffer[1] = 1;
         list.m_buffer[list.m_pos] = 0;
@@ -680,7 +680,7 @@ int32_t Packet_SMSG_ACHIEVEMENT_EARNED(void* param, NETMESSAGE msgId, uint32_t t
         void* memory = SMemAlloc(sizeof(CEffect), __FILE__, __LINE__, 0);
         CEffect* effect = memory ? new (memory) CEffect() : nullptr;
         WOWGUID guid = player;
-        effect->AddSpecialEffect(11, guid, CGObject_C::EffectOnceHandler);
+        effect->AddSpecialEffect(SPECIALEFFECT_ACHIEVEMENTBASE, guid, CGObject_C::EffectOnceHandler);
         effect->m_flags |= 0x20;
         effect->Release();
     }

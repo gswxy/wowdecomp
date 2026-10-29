@@ -26,13 +26,41 @@ elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
     set(WOWDECOMP_ARCH_32 1)
     add_compile_definitions(WOWDECOMP_ARCH_32=1)
     # x87 floating point like the VS2005 original; keeps Win32 code comparable with the binary (re/tools/verify.py).
-    if (MSVC)
+    # clang-cl: /arch:IA32 (and clang-cl's i686 default) has no SSE, which the SSE intrinsics in SPIRIT/M2/CharacterComponent need.
+    if (MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         add_compile_options(/arch:IA32 /fp:fast)
+    elseif (MSVC)
+        add_compile_options(-msse2 /fp:fast)
     endif ()
     # 32-bit time_t like the original build: time/localtime/mktime resolve to _time32/_localtime32/_mktime32.
     add_compile_definitions(_USE_32BIT_TIME_T)
 else ()
     message(FATAL_ERROR "Unsupported pointer size.")
+endif ()
+
+# CUSTOM (Badgermilk0 port): Release x64 builds with whole-program optimisation (/GL + /LTCG with MSVC, ThinLTO with
+# clang-cl and lld-link: cross-module inlining over the many small engine accessors), function-level linking with
+# unreferenced code removed (/Gy /OPT:REF /OPT:ICF) and intrinsics. Opt-in: AVX2 code generation (needs a 2013 or later
+# CPU) and /fp:fast (the original was built with it, but the decomp's float edge cases have not been checked against it).
+if (MSVC AND WOWDECOMP_ARCH_64)
+    option(WOWDECOMP_LTCG "Whole-program optimisation (/GL, /LTCG) for Release" ON)
+    option(WOWDECOMP_AVX2 "Generate AVX2 code (/arch:AVX2)" OFF)
+    option(WOWDECOMP_FAST_FLOAT "Relaxed floating point (/fp:fast)" OFF)
+
+    if (WOWDECOMP_LTCG)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    endif ()
+
+    add_compile_options($<$<CONFIG:Release>:/Oi> $<$<CONFIG:Release>:/Gy>)
+    add_link_options($<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+
+    if (WOWDECOMP_AVX2)
+        add_compile_options(/arch:AVX2)
+    endif ()
+
+    if (WOWDECOMP_FAST_FLOAT)
+        add_compile_options(/fp:fast)
+    endif ()
 endif ()
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -53,6 +81,16 @@ option(WOWDECOMP_DISABLE_SIGNATURE_CHECKS "Skip MPQ file signature and .toc sign
 if (WOWDECOMP_DISABLE_SIGNATURE_CHECKS)
     add_compile_definitions(DISABLE_SIGNATURE_CHECKS=1)
 endif ()
+
+# Game identity (build 12340, version 3.3.5, client name) lives in GameVersion.h at the repository root.
+# WaystoneVersion.h is regenerated from git on every build; the login screen shows its build number.
+set(WAYSTONE_VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/WaystoneVersion.h)
+add_custom_target(WaystoneVersion
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DOUTPUT=${WAYSTONE_VERSION_HEADER} -P ${CMAKE_SOURCE_DIR}/cmake/GenerateWaystoneVersion.cmake
+    BYPRODUCTS ${WAYSTONE_VERSION_HEADER}
+    VERBATIM
+)
+include_directories(${CMAKE_BINARY_DIR}/generated)
 
 # Third-party code is linked, not decompiled, for now.
 if (EXISTS ${CMAKE_SOURCE_DIR}/ThirdParty/CMakeLists.txt)
@@ -111,6 +149,9 @@ endif ()
 if (WOWDECOMP_ARCH_64)
     add_subdirectory(Tools/XvidDecoder)
 endif ()
+
+add_dependencies(Glue WaystoneVersion)
+add_dependencies(Ui WaystoneVersion)
 
 foreach (target Wow WowClient MapViewer M2Viewer GxTest MpqTest BlpTest DbcTest AssetCheck)
     if (TARGET ${target})

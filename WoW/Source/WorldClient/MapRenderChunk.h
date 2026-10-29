@@ -56,6 +56,7 @@ class CMapRenderChunkLayer {
     /* 0008 */ int32_t m_textureId;
     /* 000C */ CTexture* m_layerTexture;
     /* 0010 */ CMapRenderChunk* m_owner;
+    CTexture* m_heightTexture;   // TERRAINPOM: the tileset's _h.blp, nullptr when it has none (not in 12340)
 
     CMapRenderChunkLayer();
 };
@@ -67,6 +68,9 @@ class CMapRenderChunk {
     typedef void (*RenderLayersFunc)(CMapRenderChunk* renderChunk);
 
     static int32_t s_bPoolsDirty;
+    static uint32_t s_poolMaxMB;   // BACKLOG F3: CVar terrainPoolMaxMB, 0 = uncapped
+    // TERRAINPOM (not in 12340): CVar terrainHeightBlend (D3D11/Vulkan)
+    static float s_heightBlend;
     static EGxVertexBufferFormat s_gxBufVertexFormat;
     static uint32_t s_pnEstimateVertex;
     static uint32_t s_pnEstimateIndex;
@@ -140,6 +144,9 @@ class CMapRenderChunk {
     /* 0088 */ CTexture* m_shadowTexture;
     /* 008C */ CMapChunkBuf* m_chunkBuf;
     /* 0090 */ CGxBatch m_batch;
+    int8_t m_bakedShadows = -1;   // LIVESHADOW (not in 12340): BakedShadows() its textures were made with, -1 = not yet
+
+    static bool BakedShadows();
 
     ~CMapRenderChunk();
     CMapRenderChunk();

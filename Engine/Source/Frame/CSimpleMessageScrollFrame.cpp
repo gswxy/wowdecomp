@@ -1,3 +1,4 @@
+#include "Engine/Source/Frame/MessageFrameConstants.h"
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -502,7 +503,7 @@ void CSimpleMessageScrollFrame::ScrollMessages(int32_t scroll) {
                     string->SetFontObject(this->m_font);
                     string->SetWidth((this->m_messageFrameArea.maxX - this->m_messageFrameArea.minX) / this->m_layoutScale);
 
-                    if (this->m_insertMode == 1) {
+                    if (this->m_insertMode == INSERT_AT_BOTTOM) {
                         if (i == 0) {
                             string->SetPoint(FRAMEPOINT_BOTTOMLEFT, this, FRAMEPOINT_BOTTOMLEFT, this->m_messageFrameInset.minX, this->m_messageFrameInset.minY, 1);
                         } else {
@@ -582,15 +583,15 @@ CSimpleMessageScrollFrame::CSimpleMessageScrollFrame(CSimpleFrame* parent, int32
     this->m_atTop = 0;
     this->m_textMaxSize = 0;
     this->m_font = new (SMemAlloc(sizeof(CSimpleFontedFrameFont), __FILE__, __LINE__, 0)) CSimpleFontedFrameFont(this);
-    this->m_timeVisible = 10.0f;
-    this->m_fadeDuration = 3.0f;
+    this->m_timeVisible = DEFAULT_TIME_VISIBLE;
+    this->m_fadeDuration = DEFAULT_FADE_DURATION;
     this->m_fading = 1;
     this->m_lines.SetCount(this->m_maxMessages);
     this->m_currentScroll = 0;
     this->m_hyperlinksDirty = 0;
     this->m_currentLine = -1;
     this->m_hyperlinksEnabled = true;
-    this->m_insertMode = 1;
+    this->m_insertMode = INSERT_AT_BOTTOM;
 }
 
 // VERIFY: 5b3fe8fd auto
@@ -820,7 +821,7 @@ void CSimpleMessageScrollFrame::SetScrollOffset(int32_t offset) {
 
 // VERIFY: 14e2d433 auto
 // OFFSET: 0x0096A9D0
-void CSimpleMessageScrollFrame::SetInsertMode(int32_t mode) {
+void CSimpleMessageScrollFrame::SetInsertMode(SimpleMessageFrameInsertMode mode) {
     this->m_insertMode = mode;
     this->UpdateRect();
 }
@@ -978,9 +979,9 @@ void CSimpleMessageScrollFrame::LoadXML(XMLNode* node, CStatus* status) {
 
     if (insertMode && *insertMode) {
         if (!SStrCmpI(insertMode, "TOP", STORM_MAX_STR)) {
-            this->m_insertMode = 0;
+            this->m_insertMode = INSERT_AT_TOP;
         } else {
-            this->m_insertMode = 1;
+            this->m_insertMode = INSERT_AT_BOTTOM;
         }
 
         this->UpdateRect();

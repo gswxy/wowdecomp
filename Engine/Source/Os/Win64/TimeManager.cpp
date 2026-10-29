@@ -18,6 +18,12 @@ OsTimeManager::TimingMethod OsTimeManager::Calibrate() {
         return SystemMethod1;
     }
 
+    // CUSTOM (Badgermilk0 port): the stock calibration ran at time-critical priority, hopped the thread over every core
+    // 512 times and busy-waited a quarter second to catch QueryPerformanceCounter disagreeing between processors.
+    // 64-bit Windows guarantees one consistent counter across processors, so it is used straight away.
+    this->m_timingTestError = 0;
+    return SystemMethod2;
+
     if (!this->m_performanceFrequency) {
         this->m_timingTestError = 2;
         return SystemMethod1;
@@ -223,19 +229,45 @@ OsTimeManager::OsTimeManager(OsTimeManager::TimingMethod method) {
 // OFFSET: 0x0086AF20
 void OsTimeManagerCreate(OsTimeManager::TimingMethod method) {
     s_OsTimeMgr = new (SMemAlloc(sizeof(OsTimeManager), __FILE__, __LINE__, SMEM_FLAG_ZEROMEMORY)) OsTimeManager(method);
+
+    // CUSTOM (Badgermilk0 port): a 1 ms timer period, so Sleep() and the frame cap wake on time
+    OsTimerResolutionBegin();
 }
 
 // OFFSET: 0x0086AF60
 void OsTimeManagerDestroy() {
+    // CUSTOM (Badgermilk0 port)
+    OsTimerResolutionEnd();
+
     if (s_OsTimeMgr) {
         delete s_OsTimeMgr;
         s_OsTimeMgr = nullptr;
     }
 }
 
+// BACKLOG F5: not in 12340.
+static volatile bool g_osFastSleep;
+static volatile DWORD g_osFastSleepSince;
+
 // OFFSET: 0x0086B280
 void OsSleep(uint32_t milliseconds) {
+    // BACKLOG F5 (wxl-loading fast_load): spin through the loading screen's waits; a screen up 60 s is not a
+    // normal load, so stop spinning then.
+    if (g_osFastSleep && GetTickCount() - g_osFastSleepSince < 60000) {
+        return;
+    }
+
     Sleep(milliseconds);
+}
+
+void OsSetFastSleep(bool on) {
+    g_osFastSleepSince = GetTickCount();
+    g_osFastSleep = on;
+}
+
+// CUSTOM: OsWaitUntilClocks (the precise frame cap) skips its wait under fast load, as OsSleep does
+bool OsFastSleepActive() {
+    return g_osFastSleep && GetTickCount() - g_osFastSleepSince < 60000;
 }
 
 #endif

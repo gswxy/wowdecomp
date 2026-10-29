@@ -105,6 +105,13 @@ struct KEYDOWNSTATE {
 
 class CGWorldFrame : public CSimpleFrame {
     public:
+    enum HIT_TYPE : int32_t {
+        HIT_NONE = 0,
+        HIT_GROUND = 1,
+        HIT_OBJECT = 2,
+        HIT_WORLD_OBJECT = 3, // World intersection with a collision GUID; object lookup may fail.
+    };
+
     int32_t SetupDefaultAction();
     static CDataAllocator s_worldFrameHeap;
     static FFX::Effect* ffxEffectSwirlingFog;
@@ -196,6 +203,7 @@ class CGWorldFrame : public CSimpleFrame {
     void SetPlayerFadeCameraValue(uint8_t value);
     void UnitClear();
     void SetCameraTarget(CGObject_C* target, int32_t freeLook);
+    C3Vector GetScreenToWorldCoordinates();
 };
 
 class CWorldClickEvent {

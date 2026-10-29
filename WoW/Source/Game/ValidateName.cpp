@@ -400,21 +400,21 @@ bool IsAlphaRussian(uint16_t c) {
 
 // VERIFY: 86ca75b3 auto
 // OFFSET: 0x007E1080
-bool IsAlphaInCharSet(uint16_t c, int32_t charset) {
+bool IsAlphaInCharSet(uint16_t c, CHARSET charset) {
     switch (charset) {
-        case 0:
+        case CHARSET_LATIN1:
             return IsAlphaLatin1(c);
 
-        case 1:
+        case CHARSET_ENGLISH:
             return IsAlphaEnglish(c);
 
-        case 2:
+        case CHARSET_RUSSIAN:
             return IsAlphaRussian(c);
 
-        case 3:
+        case CHARSET_KOREAN:
             return IsAlphaKorean(c);
 
-        case 4:
+        case CHARSET_CHINESE:
             return IsAlphaChinese(c);
 
         default:
@@ -424,15 +424,15 @@ bool IsAlphaInCharSet(uint16_t c, int32_t charset) {
 
 // VERIFY: 4635c34b manual
 // OFFSET: 0x007E18C0
-int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* name, uint32_t* length, int32_t* charset, bool profanity, bool chatProfanity, bool reserved, bool relaxed, bool english, int32_t charsetMask) {
+VALIDATE_NAME_RESULT ValidateName(uint32_t language, const uint16_t* allowed, const char* name, uint32_t* length, CHARSET* charset, bool profanity, bool chatProfanity, bool reserved, bool relaxed, bool english, int32_t charsetMask) {
     if (!name) {
-        return 2;
+        return NAME_NO_NAME;
     }
 
     uint16_t buffer[1024];
 
     if (SUniConvertUTF8to16(buffer, 1024, name, STORM_MAX_STR, nullptr, nullptr) || language > 8) {
-        return 1;
+        return NAME_FAILURE;
     }
 
     if (charsetMask == -1) {
@@ -445,7 +445,7 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
         }
     }
 
-    *charset = -1;
+    *charset = CHARSET_UNKNOWN;
     *length = 0;
 
     int32_t apostrophe = -1;
@@ -456,13 +456,13 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
     while (c) {
         ++*length;
 
-        int32_t current = *charset;
+        CHARSET current = *charset;
         bool alpha = false;
 
-        if (current == -1) {
-            for (int32_t i = 0; i < 5; i++) {
-                if ((!charsetMask || ((1 << i) & charsetMask)) && IsAlphaInCharSet(c, i)) {
-                    *charset = i;
+        if (current == CHARSET_UNKNOWN) {
+            for (int32_t i = 0; i < NUM_CHARSETS; i++) {
+                if ((!charsetMask || ((1 << i) & charsetMask)) && IsAlphaInCharSet(c, static_cast<CHARSET>(i))) {
+                    *charset = static_cast<CHARSET>(i);
                     alpha = true;
                     break;
                 }
@@ -471,7 +471,7 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
 
         if (!alpha && !IsAlphaInCharSet(c, current)) {
             if (!allowed || !*allowed) {
-                return 5;
+                return NAME_INVALID_CHARACTER;
             }
 
             const uint16_t* allowedChar = allowed;
@@ -480,18 +480,18 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
                 allowedChar++;
 
                 if (!*allowedChar) {
-                    return 5;
+                    return NAME_INVALID_CHARACTER;
                 }
             }
 
             if (!relaxed) {
                 if (c == '\'') {
                     if (*length == 1) {
-                        return 9;
+                        return NAME_INVALID_APOSTROPHE;
                     }
 
                     if (apostrophe >= 0) {
-                        return 10;
+                        return NAME_MULTIPLE_APOSTROPHES;
                     }
 
                     apostrophe = *length - 1;
@@ -499,11 +499,11 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
                     uint32_t count = *length;
 
                     if (count == 1) {
-                        return 12;
+                        return NAME_INVALID_SPACE;
                     }
 
                     if (count > 1 && space == count - 2) {
-                        return 13;
+                        return NAME_CONSECUTIVE_SPACES;
                     }
 
                     space = count - 1;
@@ -516,23 +516,23 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
                 uint16_t third = LowerNameChar(buffer[*length - 1]);
 
                 if (first == second && first == third) {
-                    return 11;
+                    return NAME_THREE_CONSECUTIVE;
                 }
             }
 
-            if (*charset == 2) {
+            if (*charset == CHARSET_RUSSIAN) {
                 uint32_t count = *length;
                 uint16_t lower = LowerNameChar(buffer[count - 1]);
 
                 if ((count == 1 && (lower == 0x44A || lower == 0x44C)) || ((!*next || *next == ' ') && lower == 0x44A)) {
-                    return 15;
+                    return NAME_RUSSIAN_SILENT_CHARACTER_AT_BEGINNING_OR_END;
                 }
 
                 if (count >= 2 && (lower == 0x44A || lower == 0x44C)) {
                     uint16_t previous = LowerNameChar(buffer[count - 2]);
 
                     if (previous == 0x44A || previous == 0x44C) {
-                        return 14;
+                        return NAME_RUSSIAN_CONSECUTIVE_SILENT_CHARACTERS;
                     }
                 }
             }
@@ -546,53 +546,53 @@ int32_t ValidateName(uint32_t language, const uint16_t* allowed, const char* nam
         uint32_t count = *length;
 
         if (count < 2) {
-            return (count != 0) + 2;
+            return static_cast<VALIDATE_NAME_RESULT>((count != 0) + NAME_NO_NAME);
         }
 
         if (apostrophe == static_cast<int32_t>(count - 1)) {
-            return 9;
+            return NAME_INVALID_APOSTROPHE;
         }
 
         if (space == count - 1) {
-            return 12;
+            return NAME_INVALID_SPACE;
         }
     }
 
     if (profanity && MatchesToken(g_profanityTokens[language], name)) {
-        return 8;
+        return NAME_RESERVED;
     }
 
     if (chatProfanity && MatchesToken(g_chatProfanityTokens[language], name)) {
-        return 8;
+        return NAME_RESERVED;
     }
 
     if (reserved && MatchesToken(g_reservedNameTokens[language], name)) {
-        return 8;
+        return NAME_RESERVED;
     }
 
-    return 0;
+    return NAME_SUCCESS;
 }
 
 // VERIFY: 5e4d5b88 auto
 // OFFSET: 0x007E1E90
-int32_t ValidateCharacterNameConst(uint32_t language, const char* name, bool profanity, bool chatProfanity, bool reserved, bool english, int32_t extraLength) {
+VALIDATE_NAME_RESULT ValidateCharacterNameConst(uint32_t language, const char* name, bool profanity, bool chatProfanity, bool reserved, bool english, int32_t extraLength) {
     uint32_t length;
-    int32_t charset;
-    int32_t result = ValidateName(language, nullptr, name, &length, &charset, profanity, chatProfanity, reserved, false, english, -1);
+    CHARSET charset;
+    VALIDATE_NAME_RESULT result = ValidateName(language, nullptr, name, &length, &charset, profanity, chatProfanity, reserved, false, english, -1);
 
     if (!result) {
         int32_t maxLength = 12;
 
-        if (charset == 3 || charset == 4) {
+        if (charset == CHARSET_KOREAN || charset == CHARSET_CHINESE) {
             maxLength = 8;
 
-            if (charset == 4) {
+            if (charset == CHARSET_CHINESE) {
                 maxLength = 6;
             }
         }
 
         if (length > static_cast<uint32_t>(extraLength + maxLength)) {
-            return 4;
+            return NAME_TOO_LONG;
         }
     }
 
@@ -601,16 +601,16 @@ int32_t ValidateCharacterNameConst(uint32_t language, const char* name, bool pro
 
 // VERIFY: 53aaaa1d auto
 // OFFSET: 0x007E1F00
-int32_t ValidatePetName(uint32_t language, const char* name, bool profanity, bool chatProfanity, bool reserved, bool english, uint32_t extraLength) {
+VALIDATE_NAME_RESULT ValidatePetName(uint32_t language, const char* name, bool profanity, bool chatProfanity, bool reserved, bool english, uint32_t extraLength) {
     uint32_t length;
-    int32_t charset;
-    int32_t result = ValidateName(language, nullptr, name, &length, &charset, profanity, chatProfanity, reserved, false, english, -1);
+    CHARSET charset;
+    VALIDATE_NAME_RESULT result = ValidateName(language, nullptr, name, &length, &charset, profanity, chatProfanity, reserved, false, english, -1);
 
     if (!result) {
-        uint32_t maxLength = charset == 3 || charset == 4 ? 8 : 12;
+        uint32_t maxLength = charset == CHARSET_KOREAN || charset == CHARSET_CHINESE ? 8 : 12;
 
         if (length > extraLength + maxLength) {
-            return 4;
+            return NAME_TOO_LONG;
         }
     }
 
@@ -619,14 +619,14 @@ int32_t ValidatePetName(uint32_t language, const char* name, bool profanity, boo
 
 // VERIFY: d212548d auto
 // OFFSET: 0x007E1F60
-int32_t ValidateGuildName(uint32_t language, const char* name) {
+VALIDATE_NAME_RESULT ValidateGuildName(uint32_t language, const char* name) {
     uint16_t allowed[2] = { 32, 0 };
     uint32_t length;
-    int32_t charset;
-    int32_t result = ValidateName(language, allowed, name, &length, &charset, true, true, false, false, false, -1);
+    CHARSET charset;
+    VALIDATE_NAME_RESULT result = ValidateName(language, allowed, name, &length, &charset, true, true, false, false, false, -1);
 
     if (!result && length > 24) {
-        return 4;
+        return NAME_TOO_LONG;
     }
 
     return result;
@@ -634,14 +634,14 @@ int32_t ValidateGuildName(uint32_t language, const char* name) {
 
 // VERIFY: 6eb0d307 manual
 // OFFSET: 0x007E1FB0
-int32_t ValidateGuildBankTabName(uint32_t language, const char* name) {
+VALIDATE_NAME_RESULT ValidateGuildBankTabName(uint32_t language, const char* name) {
     uint16_t allowed[12] = { 32, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 0 };
     uint32_t length;
-    int32_t charset;
-    int32_t result = ValidateName(language, allowed, name, &length, &charset, true, true, false, true, false, -1);
+    CHARSET charset;
+    VALIDATE_NAME_RESULT result = ValidateName(language, allowed, name, &length, &charset, true, true, false, true, false, -1);
 
     if (!result && length > 16) {
-        return 4;
+        return NAME_TOO_LONG;
     }
 
     return result;
@@ -1124,15 +1124,15 @@ int32_t GetNameDeclensions(int32_t locale, char* declensions, const char* name, 
 
 // VERIFY: e5fa55cb manual
 // OFFSET: 0x0076DD90
-int32_t ValidateCharacterNameDeclension(int32_t locale, const char* name, const char* declension) {
+VALIDATE_NAME_RESULT ValidateCharacterNameDeclension(int32_t locale, const char* name, const char* declension) {
     if (locale != 8) {
-        return 1;
+        return NAME_FAILURE;
     }
 
-    int32_t result = ValidateCharacterNameConst(8, declension, true, true, false, false, 5);
+    VALIDATE_NAME_RESULT result = ValidateCharacterNameConst(8, declension, true, true, false, false, 5);
 
     if (!result) {
-        return IsRussianDeclensionValid(name, declension) ? 0 : 16;
+        return IsRussianDeclensionValid(name, declension) ? NAME_SUCCESS : NAME_DECLENSION_DOESNT_MATCH_BASE_NAME;
     }
 
     return result;

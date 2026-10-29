@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "WoW/Source/Game/Types.h"
 #include <windows.h>
 #include "Engine/Source/Event/Types.h"
 #include "Engine/Source/Os/OsFile.h"
@@ -85,6 +86,11 @@ extern CVar* g_guildMemberNotifyCVar;
 extern CVar* g_uiScaleCVar;
 extern CVar* g_useUiScaleCVar;
 extern CVar* g_rotateMinimapCVar;
+extern CVar* g_minimapBlipIntervalCVar; // CUSTOM
+extern CVar* g_minimapIndoorResolutionCVar; // CUSTOM
+extern CVar* g_portraitLiveCVar; // CUSTOM
+extern CVar* g_portraitResolutionCVar; // CUSTOM
+extern CVar* g_nameMountSmoothingCVar; // CUSTOM
 extern CVar* g_cvAutoInteract;
 extern CVar* g_autoStandCVar;
 
@@ -113,9 +119,9 @@ extern const char* g_macroTaint;
 
 struct UIErrorInfo {
     /* 0000 */ const char* m_token;
-    /* 0004 */ int32_t m_type;
+    /* 0004 */ ERROR_TEXT_PLACEMENT m_type;
     /* 0008 */ const char* m_sound;
-    /* 000C */ int32_t m_vocalError;
+    /* 000C */ VOCALUISOUNDS m_vocalError;
     /* 0010 */ int32_t m_chatType;
 };
 
@@ -174,7 +180,7 @@ class CGGameUI {
     static int32_t OnTerrainClick(const CTerrainClickEvent& evt);
     static void Target(WOWGUID guid);
     static void DeleteCursorItem();
-    static int32_t m_cursorItemType;
+    static UICURSORTYPE m_cursorItemType;
     static int32_t m_threatWarningEnabled;
     static char m_lastErrorMessage[3000];
     static int32_t m_cursorEquipmentSet;
@@ -200,7 +206,7 @@ class CGGameUI {
     static void StartCinematic(int32_t cinematic);
     static void SetInstanceLockTime(uint32_t time, uint32_t completedMask, uint32_t extending);
     static void SetInstanceBootTime(uint32_t time);
-    static void DisplayNameError(uint32_t error);
+    static void DisplayNameError(VALIDATE_NAME_RESULT error);
     static void UpdateActivePlayer();
     static void ClearClientControls();
     static void OpenPlayerSkinned(bool a1);
@@ -243,7 +249,7 @@ class CGGameUI {
     static WOWGUID m_comboTarget;
     static uint16_t m_accountDataGeneration;
     static TotemInfo m_totems[4];
-    static MirrorTimerInfo m_mirrorTimerInfo[3];
+    static MirrorTimerInfo m_mirrorTimerInfo[NUM_UNIT_MIRROR_TIMERS];
     static MirrorTimerInfo* MirrorTimerGetInfo(uint32_t index);
     static uint32_t GetInstanceDifficulty();
 
@@ -312,7 +318,7 @@ class CGGameUI {
     static WOWGUID ClosestObjectMatch(const char* name, uint32_t typeMask, int32_t targetType, int32_t exact, float maxDistance, int32_t ignoreHostileTotems);
     static bool CanInspect(CGUnit_C* unit);
     static void SetCursorMoney(uint32_t amount);
-    static void SetCursorMoney(uint32_t amount, int32_t type, int32_t event);
+    static void SetCursorMoney(uint32_t amount, UICURSORTYPE type, int32_t event);
     static int32_t VirtualItemIsLocked(int32_t id, uint32_t virtualSlot, int32_t a3);
     static void LockVirtualItem(int32_t id, uint32_t virtualSlot, int32_t a3);
     static void TargetTradeItem();
@@ -376,7 +382,7 @@ class CGGameUI {
     static int32_t IsRaidMemberOrPet(const WOWGUID& guid);
     static void ClearInteractTarget(const WOWGUID& guid, int32_t a2);
     static void CloseLoot(bool a1, bool a2, bool a3);
-    static void OpenLoot(CGObject_C* object, int32_t coins, uint32_t lootType);
+    static void OpenLoot(CGObject_C* object, int32_t coins, LOOT_ACQUIRE lootAcquire);
     static void ClearLootSlot(uint8_t slot);
     static void LootSlotChanged(uint8_t slot);
     static void LockItem(WOWGUID guid);
@@ -400,13 +406,13 @@ class CGGameUI {
     static void GetCursorVirtualItem(int32_t& id, int32_t& slot);
     static int32_t GetVirtualItemCount(int32_t id, uint32_t virtualSlot, int32_t a3);
     static void UnlockVirtualItem(int32_t id, uint32_t virtualSlot, int32_t a3);
-    static int32_t GetCursorVirtualItemOfType(int32_t type);
+    static int32_t GetCursorVirtualItemOfType(UICURSORTYPE type);
     static void DropCursorSpell();
     static void SetCursorSpell(int32_t spellId);
     static void SetCursorPetAction(const PetAction* action);
     static void SetCursorPet(int32_t index);
     static void SetCursorMacro(int32_t macroId);
-    static void SetCursorVirtualItem(int32_t id, int32_t displayId, int32_t slot, int32_t type, int32_t stackSplit);
+    static void SetCursorVirtualItem(int32_t id, int32_t displayId, int32_t slot, UICURSORTYPE type, int32_t stackSplit);
     static void SetCursorEquipmentSet(int32_t setId);
     static uint8_t s_inWorld;
     static const char* m_minimapZoneText;
@@ -458,7 +464,7 @@ class CTerrainClickEvent {
 };
 
 struct MirrorTimerInfo {
-    /* 0000 */ int32_t m_type;
+    /* 0000 */ UNIT_MIRROR_TIMER m_type;
     /* 0004 */ int32_t m_value;
     /* 0008 */ int32_t m_maxValue;
     /* 000C */ int32_t m_scale;
@@ -563,8 +569,8 @@ extern CVar* s_cvLfgSelectedRoles;
 extern CVar* s_cvLfdCollapsedHeaders;
 extern CVar* s_cvLfdSelectedDungeons;
 
-const char* MirrorTimerTypeToken(int32_t type);
-const char* GetMirrorTimerLabel(int32_t type, int32_t spellId);
+const char* MirrorTimerTypeToken(UNIT_MIRROR_TIMER type);
+const char* GetMirrorTimerLabel(UNIT_MIRROR_TIMER type, int32_t spellId);
 
 void BroadcastUIError(int32_t error, const char* name);
 

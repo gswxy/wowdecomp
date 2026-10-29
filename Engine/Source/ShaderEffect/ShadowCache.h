@@ -53,12 +53,28 @@ struct CShadowCacheQueryData {
     CShadowCacheQueryData();
 };
 
+// Not stock (SHADOW_PORT_PLAN S3): the cascade bands as the receivers saw them this frame, for consumers outside the
+// receiver shaders (vfog's shadowed sun). rows[i]: the texgen of band i, dp4 of a view-space position (w = 1) under
+// `view` gives (u', v', ref) with uv = u'v' * 0.5 + 0.5; lit where ref <= the stored depth (Terrain2[_pcf]).
+struct ShadowView {
+    CGxTex* map[3];          // the front map of each band (D24X8 with pcf, else R32F); borrowed
+    C4Vector rows[3][3];
+    C44Matrix view;          // the Gx view rows[] are relative to (PostUpdate's); a consumer composes its own view
+    uint32_t size;           // texels per side
+    int32_t pcf;             // 1 = hardware compare (depth maps), 0 = R32F compared in the shader
+    uint32_t stamp;          // PostUpdate count: unchanged since the consumer's last frame = not updated
+    CGxTex* unitMap;         // the unit (dynamic, 20 yd) map the receivers also take the min with, or nullptr; borrowed
+    C4Vector unitRows[3];
+};
+
 class CShadowCache {
     public:
     static const float s_bandRadius[3];
     static const float s_bandUpdateDistance[3];
     static C4Vector s_cutoffPlane;
     static C4Vector s_cutoffPlaneDefault;
+    static float s_shadowFade;   // not stock: gfxShadowFade, 0..1 of the sun/moon shadow shown (DayNight sets it)
+    static void SetShadowFade(float fade) { s_shadowFade = fade; }
     static float s_debugAspect;
     static int32_t s_debugLevel;
     static CShadowBand s_extDynShadow;
@@ -69,7 +85,29 @@ class CShadowCache {
     static CTexture* s_intDynShadow;
     static ShadowMatrixCallback s_matrixCallback;
     static int32_t s_needsRebuild;
+    // Not stock (CShadowQuery sets these each frame; see ShadowCache.cpp):
+    static uint32_t s_bandRedraw;     // gfxSunShadows: bit i = redraw cached band i once, wherever the camera is
+    static int32_t s_texelSnap;       // gfxShadowSnap: map centres snapped to whole texels in light space
+    static int32_t s_drawingUnitMap;  // set while Update draws the unit maps (render callback band 0), so band-0 casters can tell
+    static int32_t s_haveBandCentre;  // gfxShadowAnchor: the bands follow s_bandCentre instead of the viewer
+    static C3Vector s_bandCentre;
+    // Not stock (Badgermilk0 port; CShadowQuery sets these from shadowMapSize / shadowSoftness / shadowCascadeReuse):
+    static uint32_t s_sizeOverride;   // texels per map side, 0 = stock (1024, 2048 from MEDIUM and HIGH up); PCF or Vulkan only
+    static float s_pcfScale;          // scales the PCF tap offsets, 1 = stock (a kernel of about two texels)
+    static int32_t s_cascadeReuse;    // VERY_HIGH: band 1 redrawn every 2nd frame, band 2 every 4th, sooner on a move
+    static int32_t s_bandDoodads;     // not stock (shadowBandDoodads): extShadowQuality 3-4 bands take query flag 4 too
+    static int32_t s_alphaMatch;      // not stock (shadowAlphaMatch): casters alpha-test as their receivers draw (224/255)
+    static int32_t s_wmoInterior;
+    // not stock (shadowUnified, docs/shadow-research/05): exterior receivers (shadow value >= 2) take the value 0
+    // permutations while set (terrain to the shadow mask), the mask applying their cascade term; s_unifiedNext is
+    // what the mask could do last frame (it ran with a G-buffer), latched before the terrain.
+    static int32_t s_receiversUnified;
+    static int32_t s_unifiedNext;
+    static uint32_t ReceiverValue(uint32_t value) { return s_receiversUnified && value >= 2 ? 0 : value; }     // not stock (shadowWmoInterior): interior WMO groups and unloaded WMO textures cast
     static C4Vector s_pcfOffsets[8];
+    static int32_t s_publishedRead;    // set by GetPublished, consumed by GatherBands (band 1 keeps band 0's casters)
+    static C44Matrix s_publishedView;  // S3: PostUpdate's Gx view, for GetPublished
+    static uint32_t s_publishStamp;
     static ShadowQueryCallback s_queryCallback;
     static int32_t s_recreateTextures;
     static ShadowRenderCallback s_renderCallback;
@@ -87,6 +125,8 @@ class CShadowCache {
     static void Destroy();
     static void GatherBands(CShadowCacheQueryData& data, const C3Vector& pos, CFrustum& frustum, int32_t useCullFrustum);
     static uint32_t GetMaxShadowMode();
+    static int32_t GetPublished(ShadowView& out);
+    static int32_t GetPublishedUnit(ShadowView& out);   // not stock: unitMap/unitRows/view/size/pcf only, every quality
     static EShadowMode GetShadowMode();
     static const char* GetShadowModeDesc(uint32_t mode);
     static uint32_t GetShadowValue();

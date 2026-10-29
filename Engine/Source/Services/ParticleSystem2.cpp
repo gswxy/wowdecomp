@@ -26,20 +26,27 @@
 #include "Engine/Source/Tempest/CMath.h"
 #include "Engine/Source/Tempest/CRange.h"
 
+const float CParticleEmitter2::VEL_UPDATE_TIME = 0.033333335f;
+const float CParticleEmitter2::MIN_ZSOURCE = 0.001f;
+
+static const float s_maxTimeStep = 0.1f;
+
 // STATIC: 0x00B2D530
 static int32_t s_particleRenderEnable = 1;
 
 // STATIC: 0x00B2D534
 static float s_stepRound = 0.5f;
 
+// Not stock: thread_local (with s_particleXform, s_billboardXform), since CM2SceneRender::Draw builds particle
+// vertices on the Model2 workers
 // STATIC: 0x00B2D540
-static C3Vector s_particleNormal(0.0f, 0.0f, 1.0f);
+static thread_local C3Vector s_particleNormal(0.0f, 0.0f, 1.0f);
 
 // STATIC: 0x00B2D550
-static C44Matrix s_particleXform(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+static thread_local C44Matrix s_particleXform(1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
 
 // STATIC: 0x00B2D590
-static C33Matrix s_billboardXform(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+static thread_local C33Matrix s_billboardXform(1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
 
 // STATIC: 0x00B2D5B4
 static const float s_cornerOffsets[4][2] = { { -1.0f, 1.0f }, { -1.0f, -1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f } };
@@ -57,10 +64,10 @@ CGxBuf* CParticleEmitter2::s_indexBuf;
 CGxPool* CParticleEmitter2::s_indexPool;
 
 // STATIC: 0x00DCE68C
-float CParticleEmitter2::s_viewDist;
+thread_local float CParticleEmitter2::s_viewDist;
 
 // STATIC: 0x00DCE690
-float CParticleEmitter2::s_rndTable[128];
+float CParticleEmitter2::s_rndTable[CParticleEmitter2::RND_TABLE_SIZE];
 
 // STATIC: 0x00DCE890
 uint8_t CParticleEmitter2::s_noIndexBuffer;
@@ -68,7 +75,13 @@ uint8_t CParticleEmitter2::s_noIndexBuffer;
 static const uint32_t s_pqParams[2] = { 32, 32 };
 
 // STATIC: 0x00DCE894
-CSortableParticleQueue CParticleEmitter2::s_pq(s_pqParams);
+thread_local CSortableParticleQueue CParticleEmitter2::s_pq(s_pqParams);
+
+const CParticleEmitter2::Prebuilt* CParticleEmitter2::s_prebuilt;
+C44Matrix CParticleEmitter2::s_prebuiltView;
+uint8_t CParticleEmitter2::s_quads;
+uint8_t CParticleEmitter2::s_soft;
+void (*g_softParticleDraw)(bool before) = nullptr;
 
 // STATIC: 0x00DCE8C4
 void* ParticleSystemManager::sm_projectParam;
@@ -238,7 +251,7 @@ void CParticleEmitter2::SetModel(CM2Scene* scene, const char* name) {
         this->m_model = scene->CreateModel(name, 0);
 
         if (this->m_model) {
-            this->m_params.m_hasModel = 1;
+            this->m_params.m_particleType = CParticleEmitter2::PARTICLE_TYPE::PT_MODEL;
         }
     }
 }
@@ -332,7 +345,7 @@ void CParticleEmitter2::SetParticleStyle(int32_t head, int32_t tail, float tailL
 void CParticleEmitter2::SetZsource(float zsource) {
     this->m_params.m_zsource = zsource;
 
-    if (fabs(zsource) < 0.001f) {
+    if (fabs(zsource) < MIN_ZSOURCE) {
         this->m_params.m_zsource = 0.0f;
     }
 }
@@ -859,7 +872,27 @@ void __stdcall CParticleEmitter2::RenderParticleVertices(CGxBuf* buf, EGxVertexB
     batch.m_count = indexCount;
     batch.m_minIndex = 0;
     batch.m_maxIndex = vertexCount - 1;
+
+    // GPUPARTICLES: buf holds quad records; the Vulkan backend expands them for this draw
+    if (CParticleEmitter2::s_quads) {
+        GxVkParticleQuadsBind(buf, &s_particleNormal.x);
+    }
+
+    void (*soft)(bool) = CParticleEmitter2::s_soft ? g_softParticleDraw : nullptr;   // SOFTPARTICLES
+
+    if (soft) {
+        soft(true);
+    }
+
     g_theGxDevicePtr->Draw(&batch, 1);
+
+    if (soft) {
+        soft(false);
+    }
+
+    if (CParticleEmitter2::s_quads) {
+        GxVkParticleQuadsBind(nullptr, nullptr);
+    }
 }
 
 // VERIFY: a9b4f93f manual
@@ -868,7 +901,7 @@ int32_t CParticleEmitter2::RenderParticle(CParticle2_Model& particle, const C44M
     uint32_t twinkle = 0;
 
     if (this->m_twinkleOnOff < 1.0f || 0.0f != this->m_twinkleScaleSpan) {
-        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
+        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
     if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
@@ -1037,14 +1070,14 @@ void CParticleEmitter2::UpdateXform(const C44Matrix& transform, const C3Vector& 
 void CParticleEmitter2::InternalUpdate(float deltaTime, int32_t child) {
     float time = 0.0f;
 
-    if (deltaTime < 0.0f || (time = deltaTime, deltaTime <= 0.1f)) {
+    if (deltaTime < 0.0f || (time = deltaTime, deltaTime <= s_maxTimeStep)) {
         this->m_burstOffset = this->m_followOffset;
         this->StepUpdate(time, child);
         return;
     }
 
     float steps = floor(time * 10.0f);
-    float remainder = deltaTime - steps * 0.1f;
+    float remainder = deltaTime - steps * s_maxTimeStep;
     float maxSteps = floor(this->m_params.m_life * 10.0f);
 
     if (maxSteps < steps) {
@@ -1057,7 +1090,7 @@ void CParticleEmitter2::InternalUpdate(float deltaTime, int32_t child) {
     this->m_burstOffset = C3Vector(this->m_followOffset.x * scale, this->m_followOffset.y * scale, scale * this->m_followOffset.z);
 
     for (; count; count--) {
-        this->StepUpdate(0.1f, child);
+        this->StepUpdate(s_maxTimeStep, child);
     }
 
     this->StepUpdate(remainder, child);
@@ -1076,9 +1109,9 @@ static void RecursiveEmitterModelLoaded(CM2Model* model, void* arg) {
         model->WaitForLoad(nullptr);
     }
 
-    uint32_t count = 4;
+    uint32_t count = CParticleEmitter2::MAX_CHILD_EMITTERS;
 
-    if (model->m_shared->m_data->m_particles.m_count < 4) {
+    if (model->m_shared->m_data->m_particles.m_count < CParticleEmitter2::MAX_CHILD_EMITTERS) {
         if (!(model->m_fFlags & 1)) {
             model->WaitForLoad(nullptr);
         }
@@ -1119,7 +1152,7 @@ void CParticleEmitter2::ChangeFrameOfReference(const C44Matrix* matrix) {
 
         for (uint32_t i = 0; i < count; i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
 
             particle->m_position *= *matrix;
 
@@ -1406,7 +1439,7 @@ int32_t CParticleEmitter2::HasLiveParticles() {
 uint32_t CParticleEmitter2::GetNumParticleModels() {
     uint32_t count = 0;
 
-    if (this->m_params.m_hasModel == 1) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         count = this->m_liveList.Count();
     }
 
@@ -1420,7 +1453,7 @@ uint32_t CParticleEmitter2::GetNumParticleModels() {
 // VERIFY: 8d3bef82 auto
 // OFFSET: 0x0097BA70
 CM2Model* CParticleEmitter2::GetParticleModelInternal(uint32_t& index) {
-    if (this->m_params.m_hasModel == 1) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         uint32_t count = this->m_liveList.Count();
 
         if (index < count) {
@@ -1535,7 +1568,7 @@ int32_t CParticleEmitter2::BuildVertex(const CParticle2& particle, ParticleVerte
     uint32_t twinkle = 0;
 
     if (this->m_twinkleOnOff < 1.0f || 0.0f != this->m_twinkleScaleSpan) {
-        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
+        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & CParticleEmitter2::RND_TABLE_MASK;
     }
 
     if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
@@ -1744,6 +1777,243 @@ int32_t CParticleEmitter2::BuildVertex(const CParticle2& particle, ParticleVerte
     return 1;
 }
 
+// GPUPARTICLES: one quad record (corners as center + cx * axisX + cy * axisY, see GxParticleQuads.h)
+static inline void SetQuad(CAaBox& bounds, GxParticleQuad* quad, const C3Vector& center, const C3Vector& axisX, const C3Vector& axisY, uint32_t color, float u0, float v0, float u1, float v1) {
+    quad->center[0] = center.x;
+    quad->center[1] = center.y;
+    quad->center[2] = center.z;
+    quad->color = color;
+    quad->axisX[0] = axisX.x;
+    quad->axisX[1] = axisX.y;
+    quad->axisX[2] = axisX.z;
+    quad->u0 = u0;
+    quad->axisY[0] = axisY.x;
+    quad->axisY[1] = axisY.y;
+    quad->axisY[2] = axisY.z;
+    quad->v0 = v0;
+    quad->u1 = u1;
+    quad->v1 = v1;
+
+    // The corners' extent along each axis (to rounding): what AddVertex's min / max would find
+    float extent[3] = { fabsf(axisX.x) + fabsf(axisY.x), fabsf(axisX.y) + fabsf(axisY.y), fabsf(axisX.z) + fabsf(axisY.z) };
+    C3Vector lo(center.x - extent[0], center.y - extent[1], center.z - extent[2]);
+    C3Vector hi(center.x + extent[0], center.y + extent[1], center.z + extent[2]);
+
+    if (bounds.b.x > lo.x) bounds.b.x = lo.x;
+    if (bounds.b.y > lo.y) bounds.b.y = lo.y;
+    if (bounds.b.z > lo.z) bounds.b.z = lo.z;
+    if (bounds.t.x < hi.x) bounds.t.x = hi.x;
+    if (bounds.t.y < hi.y) bounds.t.y = hi.y;
+    if (bounds.t.z < hi.z) bounds.t.z = hi.z;
+}
+
+// GPUPARTICLES: BuildVertex as quad records instead of vertices: the same twinkle, tracks, spin, colour, scale,
+// texture cells and billboard modes, each quad as its center and the two axes the corner offsets scale (the
+// corners and texcoords are expanded on the GPU by the Vulkan backend). Returns the quads written (0 to 2). Keep in
+// step with BuildVertex.
+uint32_t CParticleEmitter2::BuildQuads(const CParticle2& particle, GxParticleQuad* quad) {
+    uint32_t twinkle = 0;
+
+    if (this->m_twinkleOnOff < 1.0f || 0.0f != this->m_twinkleScaleSpan) {
+        twinkle = (static_cast<uint8_t>(CMath::fint_(this->m_twinkleFPS * particle.m_age)) + (reinterpret_cast<uintptr_t>(&particle) >> 5)) & 0x7F;
+    }
+
+    if (this->m_twinkleOnOff < 1.0f && this->m_twinkleOnOff < CParticleEmitter2::s_rndTable[twinkle]) {
+        return 0;
+    }
+
+    CImVector color;
+    C2Vector scale;
+    int32_t headCell;
+    int32_t tailCell;
+
+    if (this->m_flags & 0x1000000) {
+        this->InterpolateAllTracksSimple(particle, &color, &scale, &headCell, &tailCell);
+    } else {
+        this->InterpolateAllTracks(particle, &color, &scale, &headCell, &tailCell);
+    }
+
+    float spin;
+    float spinRate;
+    this->RandomizeSpin(particle, &spin, &spinRate);
+
+    if (g_theGxDevicePtr->Caps().m_colorFormat == GxCF_rgba) {
+        uint8_t red = color.r;
+        color.r = color.b;
+        color.b = red;
+    }
+
+    uint32_t packed;
+    memcpy(&packed, &color, sizeof(packed));
+
+    float twinkleScale = CParticleEmitter2::s_rndTable[twinkle] * this->m_twinkleScaleSpan + this->m_twinkleScaleBase;
+    scale.x = scale.x * twinkleScale;
+    scale.y = twinkleScale * scale.y;
+
+    if (this->m_flags & 0x400) {
+        scale.x = scale.x * this->m_xformScale;
+        scale.y = this->m_xformScale * scale.y;
+    }
+
+    C3Vector center = particle.m_position * s_particleXform;
+    uint32_t flags = this->m_flags;
+    uint32_t written = 0;
+
+    // The texcoords as BuildVertex adds them: corner * cell + origin, the corner 0 or 1
+    const float cellWidth = this->m_textureCellWidth;
+    const float cellHeight = this->m_textureCellHeight;
+
+    if (flags & 0x4) {
+        uint32_t column = headCell & (this->m_textureCols - 1);
+        float u = column * cellWidth;
+        int32_t row = headCell >> this->m_textureCellShift;
+        float v = row * cellHeight;
+        float u0 = s_cornerTexCoords[0][0] * cellWidth + u;
+        float v0 = s_cornerTexCoords[0][1] * cellHeight + v;
+        float u1 = s_cornerTexCoords[3][0] * cellWidth + u;
+        float v1 = s_cornerTexCoords[3][1] * cellHeight + v;
+
+        if ((flags & 0x200000) && particle.m_velocity.z * particle.m_velocity.z + particle.m_velocity.y * particle.m_velocity.y + particle.m_velocity.x * particle.m_velocity.x > 0.00000023841858f) {
+            C3Vector reverse(-particle.m_velocity.x, -particle.m_velocity.y, -particle.m_velocity.z);
+            C3Vector direction = TransformDirection(reverse, s_particleXform);
+            C2Vector flat(direction);
+
+            float flatSq = flat.y * flat.y + flat.x * flat.x;
+            float directionSq = direction.y * direction.y + direction.z * direction.z + direction.x * direction.x;
+            float inv = 0.0f;
+
+            if (flatSq > 0.00000023841858f) {
+                inv = 1.0f / sqrt(flatSq);
+            }
+
+            float axisX = flat.x * inv;
+            float axisY = flat.y * inv;
+            C2Vector size = scale;
+
+            if (0.00000023841858f < inv) {
+                size.x = 1.0f / sqrt(directionSq) / inv * scale.x;
+            }
+
+            SetQuad(this->m_worldBounds, &quad[written++], center, C3Vector(size.x * axisX, size.x * axisY, 0.0f), C3Vector(size.y * -axisY, size.y * axisX, 0.0f), packed, u0, v0, u1, v1);
+        } else if (0.0f == this->m_params.m_spin && 0.0f == this->m_params.m_spinVariation) {
+            if (flags & 0x4000) {
+                SetQuad(this->m_worldBounds, &quad[written++], center, C3Vector(scale.x * s_billboardXform.a0, scale.x * s_billboardXform.a1, scale.x * s_billboardXform.a2), C3Vector(scale.y * s_billboardXform.b0, scale.y * s_billboardXform.b1, scale.y * s_billboardXform.b2), packed, u0, v0, u1, v1);
+            } else {
+                SetQuad(this->m_worldBounds, &quad[written++], center, C3Vector(scale.x, 0.0f, 0.0f), C3Vector(0.0f, scale.y, 0.0f), packed, u0, v0, u1, v1);
+            }
+        } else {
+            float angle = particle.m_age * spinRate + spin;
+
+            if ((flags & 0x10000) && (reinterpret_cast<uintptr_t>(&particle) & 0x20)) {
+                angle = -angle;
+            }
+
+            if (flags & 0x4000) {
+                C33Matrix rotation = C33Matrix::Rotation(angle, this->m_billboardAxis, true);
+                C3Vector axes[2];
+
+                for (uint32_t i = 0; i < 2; i++) {
+                    float size = i ? scale.y : scale.x;
+                    float billboardX = size * (i ? s_billboardXform.b0 : s_billboardXform.a0);
+                    float billboardY = size * (i ? s_billboardXform.b1 : s_billboardXform.a1);
+                    float billboardZ = size * (i ? s_billboardXform.b2 : s_billboardXform.a2);
+                    axes[i] = C3Vector(rotation.a2 * billboardZ + rotation.a1 * billboardY + billboardX * rotation.a0, rotation.b2 * billboardZ + rotation.b1 * billboardY + rotation.b0 * billboardX, billboardX * rotation.c0 + billboardY * rotation.c1 + billboardZ * rotation.c2);
+                }
+
+                SetQuad(this->m_worldBounds, &quad[written++], center, axes[0], axes[1], packed, u0, v0, u1, v1);
+            } else {
+                float sinAngle = sin(angle);
+                float cosAngle = cos(angle);
+                SetQuad(this->m_worldBounds, &quad[written++], center, C3Vector(cosAngle * scale.x, scale.x * sinAngle, 0.0f), C3Vector(-(scale.y * sinAngle), cosAngle * scale.y, 0.0f), packed, u, v, cellWidth + u, v + cellHeight);
+            }
+        }
+    }
+
+    if (!(this->m_flags & 0x8)) {
+        return written;
+    }
+
+    uint32_t column = tailCell & (this->m_textureCols - 1);
+    float u = column * cellWidth;
+    int32_t row = tailCell >> this->m_textureCellShift;
+    float v = row * cellHeight;
+    float u0 = cellWidth * s_cornerTexCoords[0][0] + u;
+    float v0 = cellHeight * s_cornerTexCoords[0][1] + v;
+    float u1 = cellWidth * s_cornerTexCoords[3][0] + u;
+    float v1 = cellHeight * s_cornerTexCoords[3][1] + v;
+
+    float tailLength = this->m_params.m_tailLength;
+
+    if ((this->m_flags & 0x20000) && tailLength > particle.m_age) {
+        tailLength = particle.m_age;
+    }
+
+    float reverseX = -particle.m_velocity.x;
+    float reverseY = -particle.m_velocity.y;
+    float reverseZ = -particle.m_velocity.z;
+
+    C3Vector tail;
+    tail.x = (reverseY * s_particleXform.b0 + reverseZ * s_particleXform.c0 + reverseX * s_particleXform.a0) * tailLength;
+    tail.y = (reverseY * s_particleXform.b1 + reverseZ * s_particleXform.c1 + reverseX * s_particleXform.a1) * tailLength;
+    tail.z = tailLength * (reverseY * s_particleXform.b2 + reverseZ * s_particleXform.c2 + reverseX * s_particleXform.a2);
+
+    C2Vector flat(tail);
+    float flatSq = flat.y * flat.y + flat.x * flat.x;
+
+    if (flatSq < 0.00077160494f) {
+        SetQuad(this->m_worldBounds, &quad[written++], center, C3Vector(scale.x, 0.0f, 0.0f), C3Vector(0.0f, scale.y, 0.0f), packed, u0, v0, u1, v1);
+        return written;
+    }
+
+    // From the head (cx -1) to the head + tail (cx 1), the width across (cy)
+    float inv = 1.0f / sqrt(flatSq);
+    float perpX = flat.x * (scale.x * inv);
+    float perpY = flat.y * (inv * scale.y);
+    C3Vector half(tail.x * 0.5f, tail.y * 0.5f, tail.z * 0.5f);
+    SetQuad(this->m_worldBounds, &quad[written++], C3Vector(center.x + half.x, center.y + half.y, center.z + half.z), half, C3Vector(-perpY, perpX, 0.0f), packed, u0, v0, u1, v1);
+
+    return written;
+}
+
+// GPUPARTICLES: BuildParticleVertices as quad records (BuildQuads); the same order, count, sort and bounds
+void CParticleEmitter2::BuildParticleQuads(GxParticleQuad* quads, uint32_t& quadCount, uint32_t count, const C44Matrix& transform) {
+    GxParticleQuad* quad = quads;
+    uint32_t i = 0;
+
+    if (this->m_flags & 0x20) {
+        for (; i < this->m_liveList.Count(); i++) {
+            uint32_t index = this->m_liveList[i];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            float depth = s_particleXform.c2 * particle->m_position.z + s_particleXform.b2 * particle->m_position.y + s_particleXform.a2 * particle->m_position.x + s_particleXform.d2;
+            CParticleEmitter2::s_pq.Push(depth, particle);
+        }
+
+        for (uint32_t j = count; j; j--) {
+            CSortableParticleRecord record = CParticleEmitter2::s_pq.Pop();
+            quad += this->BuildQuads(*record.m_particle, quad);
+        }
+    } else {
+        for (; i < count; i++) {
+            uint32_t index = this->m_liveList[i];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            quad += this->BuildQuads(*particle, quad);
+        }
+    }
+
+    if (count) {
+        this->m_worldBounds = CAaBox::Transform(this->m_worldBounds, transform);
+        this->m_worldBounds.b.x = this->m_worldBounds.b.x + this->m_viewPos.x;
+        this->m_worldBounds.b.y = this->m_worldBounds.b.y + this->m_viewPos.y;
+        this->m_worldBounds.b.z = this->m_viewPos.z + this->m_worldBounds.b.z;
+        this->m_worldBounds.t.x = this->m_worldBounds.t.x + this->m_viewPos.x;
+        this->m_worldBounds.t.y = this->m_worldBounds.t.y + this->m_viewPos.y;
+        this->m_worldBounds.t.z = this->m_viewPos.z + this->m_worldBounds.t.z;
+    }
+
+    quadCount = static_cast<uint32_t>(quad - quads);
+    this->m_renderedParticles = quadCount * 4 / this->m_vertsPerParticle;
+}
+
 // VERIFY: fe641edb manual
 // OFFSET: 0x0097D370
 void CParticleEmitter2::DetermineIfSimple() {
@@ -1822,7 +2092,7 @@ void CParticleEmitter2::DetermineIfSimple() {
         return;
     }
 
-    this->m_params.m_simpleKeys = new (__FILE__, __LINE__) SimpleKey[2];
+    this->m_params.m_simpleKeys = new (__FILE__, __LINE__) SimpleKey[CParticleEmitter2::NUM_PARTICLE_KEYS];
 
     if (!this->m_params.m_simpleKeys) {
         return;
@@ -1875,7 +2145,7 @@ void CParticleEmitter2::EmitParticle(float time, const C44Matrix& transform) {
     uint32_t index = PopIndex(this->m_freeList);
     this->m_liveList.New(index);
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         this->CreateParticle(this->m_particleModels[index], time, transform);
     } else {
         this->CreateParticle(this->m_particles[index], time, transform);
@@ -1966,7 +2236,7 @@ int32_t CParticleEmitter2::UpdateLiveParticle(float deltaTime, CParticle2* parti
     C3Vector position = particle->m_position;
     int32_t alive;
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         alive = this->MoveParticle(*static_cast<CParticle2_Model*>(particle), deltaTime);
     } else {
         alive = this->MoveParticle(*particle, deltaTime);
@@ -2034,7 +2304,7 @@ void CParticleEmitter2::StepUpdate(float deltaTime, int32_t child) {
 
         while (i < this->m_liveList.Count()) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             particle->m_age = particle->m_age + deltaTime;
 
             if (particle->m_age < life) {
@@ -2052,7 +2322,7 @@ void CParticleEmitter2::StepUpdate(float deltaTime, int32_t child) {
         while (i < this->m_liveList.Count()) {
             float life = 0.001f;
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             particle->m_age = particle->m_age + deltaTime;
 
             float particleLife = particle->m_lifeSeed.m_value * this->m_params.m_lifeVariation * 0.000030518509f + this->m_params.m_life;
@@ -2128,7 +2398,7 @@ CSortableParticleRecord CSortableParticleQueue::Pop() {
 // VERIFY: eeea2b31 manual
 // OFFSET: 0x00979250
 CParticleEmitter2::Params::Params() {
-    this->m_hasModel = 0;
+    this->m_particleType = CParticleEmitter2::PARTICLE_TYPE::PT_QUAD;
     this->m_emissionRate = 0.0f;
     this->m_emissionRateVariation = 0.0f;
     this->m_life = 0.0f;
@@ -2164,8 +2434,8 @@ CParticleEmitter2::CParticleEmitter2() : m_random(0) {
     this->m_textureCellWidth = 1.0f;
     this->m_textureCellHeight = 1.0f;
     this->m_renderedParticles = 0;
-    this->m_emitterType = 0;
-    this->m_childEmitterCount = 4;
+    this->m_emitterType = PET_BASE_EMITTER;
+    this->m_childEmitterCount = CParticleEmitter2::MAX_CHILD_EMITTERS;
     this->m_model = nullptr;
     this->m_childModel = nullptr;
     this->m_vertsPerParticle = 0;
@@ -2226,7 +2496,7 @@ void CParticleEmitter2::SyncReserve(uint32_t count, uint32_t used, uint32_t spar
 
     uint32_t shortfall = target - (used + spare);
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         if (shortfall + this->m_particleModels.Count() > this->m_particleModels.m_alloc) {
             this->m_particleModels.ReallocData(shortfall + this->m_particleModels.Count());
         }
@@ -2246,7 +2516,7 @@ void CParticleEmitter2::SyncReserve(uint32_t count, uint32_t used, uint32_t spar
 // VERIFY: e29c25ff manual
 // OFFSET: 0x0097E480
 void CParticleEmitter2::SyncAllocation(uint32_t count) {
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         uint32_t oldCount = this->m_particleModels.Count();
 
         if (oldCount >= count) {
@@ -2301,7 +2571,7 @@ void CParticleEmitter2::BuildParticleVertices(ParticleVertex& vertex, uint32_t c
     if (this->m_flags & 0x20) {
         for (; i < this->m_liveList.Count(); i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             float depth = s_particleXform.c2 * particle->m_position.z + s_particleXform.b2 * particle->m_position.y + s_particleXform.a2 * particle->m_position.x + s_particleXform.d2;
             CParticleEmitter2::s_pq.Push(depth, particle);
         }
@@ -2313,7 +2583,7 @@ void CParticleEmitter2::BuildParticleVertices(ParticleVertex& vertex, uint32_t c
     } else {
         for (; i < count; i++) {
             uint32_t index = this->m_liveList[i];
-            CParticle2* particle = this->m_params.m_hasModel ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
+            CParticle2* particle = this->m_params.m_particleType ? static_cast<CParticle2*>(&this->m_particleModels[index]) : &this->m_particles[index];
             this->BuildVertex(*particle, vertex);
         }
     }
@@ -2362,15 +2632,35 @@ void CParticleEmitter2::RenderParticles(const C44Matrix* frameOfReference, void*
 
     EGxVertexBufferFormat format = (this->m_params.m_materialFlags & 0x1) ? GxVBF_PNCT : GxVBF_PCT;
 
+    // GPUPARTICLES: with s_quads the buffer gets one GxParticleQuad per quad (4 vertices' worth), not the vertices
+    const uint8_t quads = CParticleEmitter2::s_quads;
+    const uint32_t itemSize = quads ? sizeof(GxParticleQuad) : GxVertexSize(format);
+    const uint32_t verticesPerItem = quads ? 4 : 1;
+
     if (!buffer) {
-        buf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, GxVertexSize(format), count * this->m_vertsPerParticle);
+        buf = g_theGxDevicePtr->BufStream(GxPoolTarget_Vertex, itemSize, count * this->m_vertsPerParticle / verticesPerItem);
         buffer = g_theGxDevicePtr->BufLock(buf);
     }
 
     ParticleVertex vertex;
     vertex.m_count = 0;
-    this->FillOutParticleVertex(buffer, format, &vertex);
-    this->BuildParticleVertices(vertex, count, view.AffineInverse());
+
+    // Not stock: copy the vertices a Model2 worker built for this emitter with the same inputs
+    const Prebuilt* prebuilt = s_prebuilt;
+
+    if (prebuilt && prebuilt->m_emitter == this && prebuilt->m_frameOfReference == frameOfReference && prebuilt->m_capacity == count * this->m_vertsPerParticle && prebuilt->m_quads == quads && !memcmp(&view, &s_prebuiltView, sizeof(view))) {
+        memcpy(buffer, prebuilt->m_data, prebuilt->m_vertexCount / verticesPerItem * itemSize);
+        vertex.m_count = prebuilt->m_vertexCount;
+        this->m_worldBounds = prebuilt->m_worldBounds;
+        this->m_renderedParticles = vertex.m_count / this->m_vertsPerParticle;
+    } else if (quads) {
+        uint32_t quadCount;
+        this->BuildParticleQuads(static_cast<GxParticleQuad*>(buffer), quadCount, count, view.AffineInverse());
+        vertex.m_count = quadCount * 4;
+    } else {
+        this->FillOutParticleVertex(buffer, format, &vertex);
+        this->BuildParticleVertices(vertex, count, view.AffineInverse());
+    }
 
     if (buf) {
         g_theGxDevicePtr->BufUnlock(buf, 0);
@@ -2381,6 +2671,43 @@ void CParticleEmitter2::RenderParticles(const C44Matrix* frameOfReference, void*
             g_theGxDevicePtr->XformSetView(view);
         }
     }
+}
+
+// Not stock: the vertex half of Render/RenderParticles for one emitter on a Model2 worker, into prebuilt.m_data
+// (prebuilt.m_capacity vertices, every live particle, so the sort queue drains). The emitter state it touches is put
+// back, so the main thread sees stock state until RenderParticles copies the result.
+void CParticleEmitter2::Prebuild(Prebuilt& prebuilt) {
+    CAaBox worldBounds = this->m_worldBounds;
+    C3Vector billboardAxis = this->m_billboardAxis;
+    uint32_t renderedParticles = this->m_renderedParticles;
+
+    this->m_worldBounds.b.x = 3.4028235e38f;
+    this->m_worldBounds.b.y = 3.4028235e38f;
+    this->m_worldBounds.t.x = -3.4028235e38f;
+    this->m_worldBounds.b.z = 3.4028235e38f;
+    this->m_worldBounds.t.y = -3.4028235e38f;
+    this->m_worldBounds.t.z = -3.4028235e38f;
+
+    this->RenderParticlesPrep(prebuilt.m_frameOfReference, s_prebuiltView);
+
+    if (prebuilt.m_quads) {
+        // GPUPARTICLES: quad records
+        uint32_t quadCount;
+        this->BuildParticleQuads(reinterpret_cast<GxParticleQuad*>(prebuilt.m_data), quadCount, prebuilt.m_capacity / this->m_vertsPerParticle, s_prebuiltView.AffineInverse());
+        prebuilt.m_vertexCount = quadCount * 4;
+    } else {
+        ParticleVertex vertex;
+        vertex.m_count = 0;
+        this->FillOutParticleVertex(prebuilt.m_data, (this->m_params.m_materialFlags & 0x1) ? GxVBF_PNCT : GxVBF_PCT, &vertex);
+        this->BuildParticleVertices(vertex, prebuilt.m_capacity / this->m_vertsPerParticle, s_prebuiltView.AffineInverse());
+        prebuilt.m_vertexCount = vertex.m_count;
+    }
+
+    prebuilt.m_worldBounds = this->m_worldBounds;
+
+    this->m_worldBounds = worldBounds;
+    this->m_billboardAxis = billboardAxis;
+    this->m_renderedParticles = renderedParticles;
 }
 
 // VERIFY: 3d799495 manual
@@ -2448,7 +2775,7 @@ void CParticleEmitter2::Render(const C44Matrix* frameOfReference, void* buffer, 
 
     this->m_batchFlags ^= (first ^ this->m_batchFlags) & 0x1;
 
-    if (!this->m_params.m_hasModel) {
+    if (!this->m_params.m_particleType) {
         this->RenderParticles(frameOfReference, buffer);
     }
 }
@@ -2508,7 +2835,7 @@ void CParticleEmitter2::Update(float deltaTime, const C44Matrix& transform, cons
     if (this->m_flags & 0x800) {
         this->m_ivelTimer = this->m_ivelTimer + deltaTime;
 
-        if (this->m_ivelTimer > 0.033333335f) {
+        if (this->m_ivelTimer > VEL_UPDATE_TIME) {
             float rate = this->m_ivelTimer * 29.999998f;
             this->m_ivelTimer = zero;
 
@@ -2530,7 +2857,7 @@ void CParticleEmitter2::Update(float deltaTime, const C44Matrix& transform, cons
     this->InternalUpdate(deltaTime, 0);
     this->m_flags |= 0x80;
 
-    if (this->m_params.m_hasModel == 1) {
+    if (this->m_params.m_particleType == CParticleEmitter2::PARTICLE_TYPE::PT_MODEL) {
         this->PlaceParticleModels(frameOfReference);
     }
 }
@@ -2545,8 +2872,8 @@ void CParticleEmitter2::Sync() {
         CParticleEmitter2* child = this->m_childEmitters[i];
         uint32_t childCount = static_cast<uint32_t>(count * ((child->m_params.m_lifeVariation + child->m_params.m_life) * (child->m_params.m_emissionRateVariation + child->m_params.m_emissionRate) * 1.15f));
 
-        if (childCount > 0x1000) {
-            childCount = 0x1000;
+        if (childCount > CParticleEmitter2::MAX_RECURSIVE_PARTICLES) {
+            childCount = CParticleEmitter2::MAX_RECURSIVE_PARTICLES;
         }
 
         child->SyncAllocation(childCount);
@@ -2563,7 +2890,7 @@ CParticleEmitter2::CParticleEmitter2(const CParticleEmitter2& source, int32_t co
     this->m_textureCellHeight = source.m_textureCellHeight;
     this->m_priorityPlane = source.m_priorityPlane;
     this->m_emitterType = source.m_emitterType;
-    this->m_childEmitterCount = 4;
+    this->m_childEmitterCount = CParticleEmitter2::MAX_CHILD_EMITTERS;
     this->m_vertsPerParticle = source.m_vertsPerParticle;
     this->m_indicesPerParticle = source.m_indicesPerParticle;
     this->m_textureRows = source.m_textureRows;
@@ -2634,7 +2961,7 @@ CParticleEmitter2::CParticleEmitter2(const CParticleEmitter2& source, int32_t co
 
     uint32_t liveCount = source.m_liveList.m_count;
 
-    if (this->m_params.m_hasModel) {
+    if (this->m_params.m_particleType) {
         for (uint32_t i = 0; i < liveCount; i++) {
             uint32_t index = source.m_liveList.m_data[i];
             *this->m_liveList.New() = index;
@@ -2765,7 +3092,7 @@ void CSortableParticleQueue::Push(float depth, CParticle2* particle) {
 CPlaneParticleEmitter::CPlaneParticleEmitter() {
     this->m_width = 0.0f;
     this->m_height = 0.0f;
-    this->m_emitterType = 1;
+    this->m_emitterType = PET_PLANE_EMITTER;
     this->m_latitude = 0.0f;
     this->m_longitude = 0.0f;
 }
@@ -2808,7 +3135,7 @@ void CPlaneParticleEmitter::SetLongitude(float longitude) {
 CSphereParticleEmitter::CSphereParticleEmitter() {
     this->m_minRadius = 0.0f;
     this->m_maxRadius = 0.0f;
-    this->m_emitterType = 2;
+    this->m_emitterType = PET_SPHERE_EMITTER;
     this->m_latitude = 0.0f;
     this->m_longitude = 0.0f;
 }
@@ -3134,7 +3461,7 @@ CSplineParticleEmitter::CSplineParticleEmitter() {
     this->m_start = 0.0f;
     this->m_end = 0.0f;
     this->m_latitude = 0.0f;
-    this->m_emitterType = 3;
+    this->m_emitterType = PET_SPLINE_EMITTER;
     this->m_longitude = 0.0f;
     this->m_emitAtEnd = 0;
     this->m_ratePerUnit = 0.0f;

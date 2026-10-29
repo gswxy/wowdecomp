@@ -25,11 +25,15 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Os/OsMemory.h"
 
+int32_t CM2Shared::s_doodadInstancing = 0;   // DOODADINST: CVar doodadInstancing, not in 12340
+
 // STATIC: 0x00A45644
 static const uint32_t s_skinProfileBoneCounts[4] = { 256, 64, 53, 21 };
 
 // STATIC: 0x00AF59D8
-static uint32_t s_sequenceIndex = 0xFFFFFFFF;
+// MODIFIED: performance; thread_local, as M2Init now also runs on the async reader threads (CM2Shared::PrepareLoad)
+// while the main thread may be relocating a low-priority sequence with these set
+static thread_local uint32_t s_sequenceIndex = 0xFFFFFFFF;
 
 // STATIC: 0x00AF59E8
 static const EGxTexOp s_alphaOps[8] = { static_cast<EGxTexOp>(3), static_cast<EGxTexOp>(0), static_cast<EGxTexOp>(3), static_cast<EGxTexOp>(2), static_cast<EGxTexOp>(1), static_cast<EGxTexOp>(3), static_cast<EGxTexOp>(3), static_cast<EGxTexOp>(3) };
@@ -38,10 +42,10 @@ static const EGxTexOp s_alphaOps[8] = { static_cast<EGxTexOp>(3), static_cast<EG
 static const EGxTexOp s_colorOps[8] = { static_cast<EGxTexOp>(0), static_cast<EGxTexOp>(0), static_cast<EGxTexOp>(4), static_cast<EGxTexOp>(2), static_cast<EGxTexOp>(1), static_cast<EGxTexOp>(5), static_cast<EGxTexOp>(1), static_cast<EGxTexOp>(2) };
 
 // STATIC: 0x00D41258
-static uint8_t* s_sequenceData;
+static thread_local uint8_t* s_sequenceData;
 
 // STATIC: 0x00D4125C
-static uint32_t s_sequenceSize;
+static thread_local uint32_t s_sequenceSize;
 
 // VERIFY: eb5cb8e9 auto
 // OFFSET: 0x00835950
@@ -65,6 +69,10 @@ uint32_t CM2Shared::AddRef() {
     if (!this->m_refCount && this->m_cache) {
         if (this->m_freePrev) {
             *this->m_freePrev = this->m_freeNext;
+#if defined(WOWDECOMP_ARCH_64)
+            // MODIFIED: performance; leaves the free list (CM2Cache::GarbageCollect)
+            g_m2CacheFreeBytes -= g_m2CacheFreeBytes < this->m_fileSize ? g_m2CacheFreeBytes : this->m_fileSize;
+#endif
         }
 
         if (this->m_freeNext) {
@@ -463,14 +471,14 @@ int32_t CM2Shared::SetVertices(uint32_t texCoordIndex) {
 // OFFSET: 0x00836600
 CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint16_t textureCoordComboIndex) {
     uint32_t ops[2];
-    ops[0] = (shader >> 4) & 7;
-    ops[1] = shader & 7;
+    ops[0] = (shader >> 4) & M2COMBINER_OP_MASK;
+    ops[1] = shader & M2COMBINER_OP_MASK;
 
     const char* vertexShader;
     const char* pixelShader;
 
     if (textureCount == 1) {
-        if (shader & 0x80) {
+        if (shader & (M2COMBINER_ENVMAP << 4)) {
             vertexShader = "Diffuse_Env";
         } else {
             vertexShader = "Diffuse_T2";
@@ -481,19 +489,19 @@ CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint
         }
 
         switch (ops[0]) {
-            case 0:
+            case M2COMBINER_OPAQUE:
                 pixelShader = "Combiners_Opaque";
                 break;
-            case 2:
+            case M2COMBINER_DECAL:
                 pixelShader = "Combiners_Decal";
                 break;
-            case 3:
+            case M2COMBINER_ADD:
                 pixelShader = "Combiners_Add";
                 break;
-            case 4:
+            case M2COMBINER_MOD2X:
                 pixelShader = "Combiners_Mod2x";
                 break;
-            case 5:
+            case M2COMBINER_FADE:
                 pixelShader = "Combiners_Fade";
                 break;
             default:
@@ -501,28 +509,28 @@ CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint
                 break;
         }
     } else {
-        if (shader & 0x80) {
-            vertexShader = (shader & 8) ? "Diffuse_Env_Env" : "Diffuse_Env_T2";
+        if (shader & (M2COMBINER_ENVMAP << 4)) {
+            vertexShader = (shader & M2COMBINER_ENVMAP) ? "Diffuse_Env_Env" : "Diffuse_Env_T2";
         } else {
-            vertexShader = (shader & 8) ? "Diffuse_T1_Env" : "Diffuse_T1_T2";
+            vertexShader = (shader & M2COMBINER_ENVMAP) ? "Diffuse_T1_Env" : "Diffuse_T1_T2";
         }
 
         switch (ops[0]) {
-            case 0:
+            case M2COMBINER_OPAQUE:
                 switch (ops[1]) {
-                    case 0:
+                    case M2COMBINER_OPAQUE:
                         pixelShader = "Combiners_Opaque_Opaque";
                         break;
-                    case 3:
+                    case M2COMBINER_ADD:
                         pixelShader = "Combiners_Opaque_Add";
                         break;
-                    case 4:
+                    case M2COMBINER_MOD2X:
                         pixelShader = "Combiners_Opaque_Mod2x";
                         break;
-                    case 6:
+                    case M2COMBINER_MOD2X_NA:
                         pixelShader = "Combiners_Opaque_Mod2xNA";
                         break;
-                    case 7:
+                    case M2COMBINER_ADD_NA:
                         pixelShader = "Combiners_Opaque_AddNA";
                         break;
                     default:
@@ -530,21 +538,21 @@ CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint
                         break;
                 }
                 break;
-            case 1:
+            case M2COMBINER_MOD:
                 switch (ops[1]) {
-                    case 0:
+                    case M2COMBINER_OPAQUE:
                         pixelShader = "Combiners_Mod_Opaque";
                         break;
-                    case 3:
+                    case M2COMBINER_ADD:
                         pixelShader = "Combiners_Mod_Add";
                         break;
-                    case 4:
+                    case M2COMBINER_MOD2X:
                         pixelShader = "Combiners_Mod_Mod2x";
                         break;
-                    case 6:
+                    case M2COMBINER_MOD2X_NA:
                         pixelShader = "Combiners_Mod_Mod2xNA";
                         break;
-                    case 7:
+                    case M2COMBINER_ADD_NA:
                         pixelShader = "Combiners_Mod_AddNA";
                         break;
                     default:
@@ -552,17 +560,17 @@ CShaderEffect* CM2Shared::GetEffect(uint32_t textureCount, uint16_t shader, uint
                         break;
                 }
                 break;
-            case 3:
-                if (ops[1] != 1) {
+            case M2COMBINER_ADD:
+                if (ops[1] != M2COMBINER_MOD) {
                     return nullptr;
                 }
 
                 pixelShader = "Combiners_Add_Mod";
                 break;
-            case 4:
-                if (ops[1] == 1) {
+            case M2COMBINER_MOD2X:
+                if (ops[1] == M2COMBINER_MOD) {
                     pixelShader = "Combiners_Mod_Mod2x";
-                } else if (ops[1] == 4) {
+                } else if (ops[1] == M2COMBINER_MOD2X) {
                     pixelShader = "Combiners_Mod2x_Mod2x";
                 } else {
                     return nullptr;
@@ -645,10 +653,10 @@ void CM2Shared::SubstituteSimpleShaders() {
 
         if (!(this->m_data->m_flags & 8)) {
             uint16_t coord = this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex];
-            uint16_t op = material->m_blendMode != 0;
+            uint16_t op = material->m_blendMode != M2BLEND_OPAQUE;
 
             if (coord > 2) {
-                op |= 8;
+                op |= M2COMBINER_ENVMAP;
             }
 
             batch->m_shader = op << 4;
@@ -658,21 +666,21 @@ void CM2Shared::SubstituteSimpleShaders() {
             }
         } else {
             uint16_t combiner = batch->m_shader;
-            uint32_t ops[2] = { 0, 0 };
+            uint32_t ops[2] = { M2COMBINER_OPAQUE, M2COMBINER_OPAQUE };
             batch->m_shader = 0;
 
             for (uint32_t j = 0; j < batch->m_textureCount; j++) {
                 uint32_t op = this->m_data->m_textureCombinerCombos[combiner + j];
 
-                if (j == 0 && !material->m_blendMode) {
-                    op = 0;
+                if (j == 0 && material->m_blendMode == M2BLEND_OPAQUE) {
+                    op = M2COMBINER_OPAQUE;
                 }
 
                 uint16_t coord = this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex + j];
                 ops[j] = op;
 
                 if (coord > 2) {
-                    ops[j] = op | 8;
+                    ops[j] = op | M2COMBINER_ENVMAP;
                 }
 
                 if (coord == 1 && j + 1 == batch->m_textureCount) {
@@ -1029,7 +1037,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
             continue;
         }
 
-        uint32_t op = batch->m_shader & 7;
+        uint32_t op = batch->m_shader & M2COMBINER_OP_MASK;
         M2Material* material = &this->m_data->m_materials[batch->m_materialIndex];
         materialIndex = batch->m_materialIndex;
 
@@ -1037,7 +1045,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
             state0 = 0;
             state1 = 0;
 
-            if (batch->m_textureCount && !material->m_blendMode) {
+            if (batch->m_textureCount && material->m_blendMode == M2BLEND_OPAQUE) {
                 batch->m_shader &= 0xFF8F;
             }
 
@@ -1046,7 +1054,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
 
         switch (state0) {
             case 1:
-                if ((material->m_blendMode == 2 || material->m_blendMode == 1) && batch->m_textureCount == 1 && !((material->m_flags ^ this->m_data->m_materials[base->m_materialIndex].m_flags) & 1) && batch->m_textureComboIndex == (base->m_textureComboIndex & 0xFF) && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
+                if ((material->m_blendMode == M2BLEND_ALPHA || material->m_blendMode == M2BLEND_ALPHA_KEY) && batch->m_textureCount == 1 && !((material->m_flags ^ this->m_data->m_materials[base->m_materialIndex].m_flags) & 1) && batch->m_textureComboIndex == (base->m_textureComboIndex & 0xFF) && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
                     batch->m_shader = 0x8000;
                     base->m_shader = 0x8001;
                     state0 = 3;
@@ -1056,7 +1064,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
                 state0 = 0;
                 [[fallthrough]];
             case 0:
-                if (!material->m_blendMode && batch->m_textureCount == 2 && (op == 4 || op == 6)) {
+                if (material->m_blendMode == M2BLEND_OPAQUE && batch->m_textureCount == 2 && (op == M2COMBINER_MOD2X || op == M2COMBINER_MOD2X_NA)) {
                     uint16_t* coords = &this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex];
 
                     if (!coords[0] && coords[1] > 2) {
@@ -1072,10 +1080,10 @@ void CM2Shared::SubstituteSpecializedShaders() {
             case 0:
                 break;
             case 1:
-                if ((material->m_blendMode == 4 || material->m_blendMode == 6) && batch->m_textureCount == 1 && this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex] > 2 && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
+                if ((material->m_blendMode == M2BLEND_ADD || material->m_blendMode == M2BLEND_MOD2X) && batch->m_textureCount == 1 && this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex] > 2 && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
                     batch->m_shader = 0x8000;
                     combined = true;
-                    base->m_shader = material->m_blendMode != 4 ? 0xE : 0x8002;
+                    base->m_shader = material->m_blendMode != M2BLEND_ADD ? 0xE : 0x8002;
                     base->m_textureCount = 2;
                     state1 = 2;
                     base->m_textureComboIndex = static_cast<uint16_t>((base->m_textureComboIndex & 0xFF) | (batch->m_textureComboIndex << 8));
@@ -1086,7 +1094,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
                 state1 = 0;
                 break;
             case 2:
-                if ((material->m_blendMode == 2 || material->m_blendMode == 1) && batch->m_textureCount == 1 && !((material->m_flags ^ this->m_data->m_materials[base->m_materialIndex].m_flags) & 1) && (base->m_textureComboIndex & 0xFF) == (batch->m_textureComboIndex & 0xFF) && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
+                if ((material->m_blendMode == M2BLEND_ALPHA || material->m_blendMode == M2BLEND_ALPHA_KEY) && batch->m_textureCount == 1 && !((material->m_flags ^ this->m_data->m_materials[base->m_materialIndex].m_flags) & 1) && (base->m_textureComboIndex & 0xFF) == (batch->m_textureComboIndex & 0xFF) && this->m_data->m_textureWeightCombos[base->m_textureWeightComboIndex] == this->m_data->m_textureWeightCombos[batch->m_textureWeightComboIndex]) {
                     batch->m_shader = 0x8000;
                     state1 = 3;
                     base->m_shader = base->m_shader == 0x8002 ? 0x8003 : 0x8001;
@@ -1099,7 +1107,7 @@ void CM2Shared::SubstituteSpecializedShaders() {
                 continue;
         }
 
-        if (!material->m_blendMode && batch->m_textureCount == 1 && !this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex]) {
+        if (material->m_blendMode == M2BLEND_OPAQUE && batch->m_textureCount == 1 && !this->m_data->m_textureCoordCombos[batch->m_textureCoordComboIndex]) {
             state1 = 1;
         }
     }
@@ -1135,8 +1143,19 @@ int32_t CM2Shared::InitializeSkinProfile() {
 
     this->m_maxInstances = skinData->m_indices.m_count ? 0x10000 / skinData->m_indices.m_count : 1;
 
+    // DOODADINST: not in 12340 (CVar doodadInstancing). Stock caps a doodad group draw at the skin's bone budget
+    // (21 in ~95% of the stock world skins, 0 in converted retail ones, which then never group); the shader
+    // register file holds 75 bones (c31..c255, the clamp in DrawBatchDoodad / RenderBatchShadowMap), so on
+    // D3D11/Vulkan up to 75 one-bone copies share a draw. Read when the skin loads.
+    uint32_t boneBudget = skinData->m_boneCountMax;
+    EGxApi api = g_theGxDevicePtr ? g_theGxDevicePtr->DeviceApi() : GxApi_D3d9;
+
+    if (CM2Shared::s_doodadInstancing && (api == GxApi_D3d11 || api == GxApi_Vulkan)) {
+        boneBudget = 75;
+    }
+
     for (uint32_t i = 0; i < skinData->m_skinSections.m_count; i++) {
-        uint32_t instances = skinData->m_boneCountMax / skinData->m_skinSections[i].m_boneCount;
+        uint32_t instances = skinData->m_skinSections[i].m_boneCount ? boneBudget / skinData->m_skinSections[i].m_boneCount : 1;
 
         if (this->m_maxInstances > instances) {
             this->m_maxInstances = instances;
@@ -1635,6 +1654,7 @@ int32_t CM2Shared::LoadSkinProfile(uint32_t profile) {
     this->m_asyncObject->m_isRead = 0;
     this->m_asyncObject->m_isProcessed = 0;
     this->m_asyncObject->m_priority = 125;
+    ASYNC_SET_KIND(this->m_asyncObject, ASYNC_KIND_SKIN);
     AsyncFileReadObject(this->m_asyncObject, 1);
 
     return 1;
@@ -1642,8 +1662,11 @@ int32_t CM2Shared::LoadSkinProfile(uint32_t profile) {
 
 // INLINED
 uint32_t CM2Shared::GetSkinProfileIndex(uint32_t maxBones) {
+    // The original indexes before the table with more than 4 profiles; on x86 that reads four floats too big
+    // to pass, on x64 the unsigned index lands 16 GB away. Skip those slots: same choice, no wild read.
     for (uint32_t i = 0; i < this->m_data->m_numSkinProfiles; i++) {
-        if (s_skinProfileBoneCounts[4 - this->m_data->m_numSkinProfiles + i] <= maxBones) {
+        int32_t slot = 4 - int32_t(this->m_data->m_numSkinProfiles) + int32_t(i);
+        if (slot >= 0 && s_skinProfileBoneCounts[slot] <= maxBones) {
             return i;
         }
     }
@@ -1689,7 +1712,7 @@ int32_t CM2Shared::Initialize() {
     for (uint32_t i = 0; i < this->m_data->m_materials.m_count; i++) {
         M2Material* material = &this->m_data->m_materials[i];
 
-        if (material->m_blendMode >= 5) {
+        if (material->m_blendMode >= M2BLEND_MOD) {
             material->m_flags |= 1;
         }
     }
@@ -1726,12 +1749,13 @@ int32_t CM2Shared::Initialize() {
 }
 
 // INLINED
-int32_t CM2Shared::FinishLoading() {
+int32_t CM2Shared::FinishLoading(int32_t prepared) {
     if (this->m_flags & 1) {
         return 1;
     }
 
-    if (!M2Init(reinterpret_cast<uint8_t*>(this->m_data), this->m_fileSize, *this->m_data)) {
+    // MODIFIED: performance; prepared > 0: the reader thread already relocated the data (PrepareLoad), < 0: and failed
+    if (prepared < 0 || (!prepared && !M2Init(reinterpret_cast<uint8_t*>(this->m_data), this->m_fileSize, *this->m_data))) {
         DebugLog("Corrupt model data: %s", this->m_fileName);
         return 0;
     }
@@ -1763,10 +1787,26 @@ int32_t CM2Shared::FinishLoading() {
 // OFFSET: 0x0083D340
 void CM2Shared::LoadSucceededCallback(void* param) {
     CM2Shared* shared = static_cast<CM2Shared*>(param);
+#if defined(WOWDECOMP_ARCH_64)
+    int32_t prepared = shared->m_asyncObject->m_prepared;
+#else
+    int32_t prepared = 0;
+#endif
     AsyncFileReadDestroyObject(shared->m_asyncObject);
     shared->m_asyncObject = nullptr;
-    shared->FinishLoading();
+    shared->FinishLoading(prepared);
 }
+
+#if defined(WOWDECOMP_ARCH_64)
+// MODIFIED: performance. The model file's prepare callback, on the reader thread that read it: M2Init validates every
+// array against the file size and turns the file offsets into pointers, a walk over every track of every bone, texture
+// transform, particle and ribbon, which the main thread did in LoadSucceededCallback. It only touches the buffer (the
+// owner may be destroyed meanwhile; a Cancel keeps the buffer until the cleanup callback)
+void CM2Shared::PrepareLoad(CAsyncObject* object) {
+    uint8_t* base = static_cast<uint8_t*>(object->m_buffer);
+    object->m_prepared = M2Init(base, object->m_size, *reinterpret_cast<M2Data*>(base)) ? 1 : -1;
+}
+#endif
 
 // INLINED
 CM2SequenceLoad::CM2SequenceLoad() {
@@ -1815,6 +1855,10 @@ int32_t CM2Shared::Load(SFileImpl* file, int32_t flags, CAaBox* boundingBox) {
     this->m_asyncObject->m_userPostUnloadCallback = reinterpret_cast<void*>(&CM2Shared::LoadFailedCallback);
     this->m_asyncObject->m_isRead = 0;
     this->m_asyncObject->m_isProcessed = 0;
+    ASYNC_SET_KIND(this->m_asyncObject, ASYNC_KIND_MODEL);
+#if defined(WOWDECOMP_ARCH_64)
+    this->m_asyncObject->m_prepareCallback = &CM2Shared::PrepareLoad;
+#endif
     AsyncFileReadObject(this->m_asyncObject, 0);
 
     return 1;
@@ -2064,6 +2108,7 @@ CM2SequenceLoad* CM2Shared::LoadLowPrioritySequence(uint16_t sequenceIndex) {
     load->m_asyncObject->m_userArg = load;
     load->m_asyncObject->m_userPostloadCallback = reinterpret_cast<void*>(&CM2Shared::LowPrioritySequenceLoadedCallback);
     load->m_asyncObject->m_userPostUnloadCallback = reinterpret_cast<void*>(&CM2Shared::LowPrioritySequenceFailedCallback);
+    ASYNC_SET_KIND(load->m_asyncObject, ASYNC_KIND_ANIM);
     load->m_asyncObject->m_isRead = 0;
     load->m_asyncObject->m_isProcessed = 0;
     load->m_asyncObject->m_priority = 125;
@@ -2080,6 +2125,10 @@ void CM2Shared::Release() {
     }
 
     if (this->m_cache && this->m_previous) {
+#if defined(WOWDECOMP_ARCH_64)
+        // MODIFIED: performance; joins the free list (CM2Cache::GarbageCollect)
+        g_m2CacheFreeBytes += this->m_fileSize;
+#endif
         this->m_freeTime = OsGetAsyncTimeMs();
         this->m_freePrev = this->m_cache->m_freeListTail;
         this->m_freeNext = nullptr;

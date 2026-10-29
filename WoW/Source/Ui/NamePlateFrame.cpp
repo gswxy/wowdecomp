@@ -1,4 +1,5 @@
 #include "NamePlateFrame.h"
+#include "WoW/Common/Types.h"
 #include <new>
 #include <typeinfo>
 #include "Engine/Source/Frame/CSimpleRender.h"
@@ -40,7 +41,7 @@ static CImVector s_hostileColor = CImVector(0x00, 0x00, 0xFF, 0xFF);
 static CImVector s_levelTextColor = CImVector(0xFF, 0xFF, 0xFF, 0xFF);
 
 // STATIC: 0x00B2DA20
-static CImVector s_classColors[12] = {
+static CImVector s_classColors[NUM_CLASSES + 1] = {
     CImVector(0x00, 0x00, 0x00, 0xFF),
     CImVector(0x6D, 0x9B, 0xC6, 0xFF),
     CImVector(0xBA, 0x8C, 0xF4, 0xFF),
@@ -258,7 +259,7 @@ void CGNamePlateFrame::OnLayerUpdate(float elapsedSec) {
         }
     }
 
-    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(this->m_guid, TYPEMASK_UNIT, __FILE__, __LINE__));
+    CGUnit_C* unit = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(this->m_guid, TYPE_UNIT, __FILE__, __LINE__));
 
     if (unit && (!CGGameUI::m_lockedTarget || CGGameUI::m_lockedTarget == unit->m_obj->m_guid)) {
         this->SetFrameAlpha(0xFF);
@@ -356,13 +357,13 @@ void CGNamePlateFrame::OnLayerUpdate(float elapsedSec) {
 // VERIFY: e2baa795 manual
 // OFFSET: 0x0098EE30
 void CGNamePlateFrame::UpdateColorDisplay(CGUnit_C* unit) {
-    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGUnit_C* player = static_cast<CGUnit_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
-    if (g_ShowClassColorInNameplateCVar->m_intValue && (unit->m_obj->m_type & TYPEMASK_PLAYER) && unit->UnitReaction(player) <= 1) {
+    if (g_ShowClassColorInNameplateCVar->m_intValue && (unit->m_obj->m_type & TYPE_PLAYER) && unit->UnitReaction(player) <= UNIT_REACTION_HOSTILE) {
         this->m_healthBarColor = s_classColors[unit->m_unit->m_unitFieldBytes0[1]];
-    } else if (unit->UnitReaction(player) <= 1) {
+    } else if (unit->UnitReaction(player) <= UNIT_REACTION_HOSTILE) {
         this->m_healthBarColor = s_hostileColor;
-    } else if (unit->m_obj->m_type & TYPEMASK_PLAYER) {
+    } else if (unit->m_obj->m_type & TYPE_PLAYER) {
         this->m_healthBarColor = s_friendlyPlayerColor;
     } else if (player && unit->IsFriendly(player)) {
         this->m_healthBarColor = s_friendlyColor;
@@ -376,7 +377,7 @@ void CGNamePlateFrame::UpdateColorDisplay(CGUnit_C* unit) {
 // VERIFY: 127be400 manual
 // OFFSET: 0x0098EF10
 void CGNamePlateFrame::UpdateLevelDisplay(CGUnit_C* unit) {
-    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPEMASK_PLAYER, __FILE__, __LINE__));
+    CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player) {
         return;
@@ -384,7 +385,7 @@ void CGNamePlateFrame::UpdateLevelDisplay(CGUnit_C* unit) {
 
     int32_t level = GetAdjustedLevel(player, unit);
 
-    if (unit->IsBossMob() || ((unit->UnitReaction(player) > 1 || !CGPlayer_C::UnitIsTrivial(unit)) && unit->UnitReaction(player) <= 1 && static_cast<int32_t>(player->m_unit->m_unitFieldLevel) <= level - 10)) {
+    if (unit->IsBossMob() || ((unit->UnitReaction(player) > UNIT_REACTION_HOSTILE || !CGPlayer_C::UnitIsTrivial(unit)) && unit->UnitReaction(player) <= UNIT_REACTION_HOSTILE && static_cast<int32_t>(player->m_unit->m_unitFieldLevel) <= level - 10)) {
         this->m_levelText->m_shown = 0;
         this->m_levelText->HideThis();
         this->m_targetingFrameSkull->m_shown = 1;

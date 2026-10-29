@@ -1,6 +1,7 @@
 #ifndef WOW_SOURCE_WOWSERVICES_WOWCONNECTION_H
 #define WOW_SOURCE_WOWSERVICES_WOWCONNECTION_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include "Engine/Source/Storm/H/stpl.h"
@@ -44,7 +45,7 @@ class WowConnection {
 
     static WowConnection::IDBITS s_idBits;
     static SCritSect s_idLock;
-    static uint64_t s_sendBytes;
+    static std::atomic<uint64_t> s_sendBytes; // Not stock: atomic, Send/SendPacket run on the main and net threads
     static WowConnectionNet* s_network;
     static int32_t s_lagTestDelayMin;
     static int32_t s_lagTestDelayMax;
@@ -55,7 +56,8 @@ class WowConnection {
     /* 0008 */ int32_t m_oldsock;
     /* 000C */ uint8_t unused_000C;
     /* 000D */ uint8_t unused_000D[3];
-    /* 0010 */ WOW_CONN_STATE m_connState;
+    // Not stock: atomic, set under m_lock but read unlocked by the network thread (same size and alignment).
+    /* 0010 */ std::atomic<WOW_CONN_STATE> m_connState;
     /* 0014 */ WowConnectionResponse* m_response;
     /* 0018 */ int32_t unused_0018;
     /* 001C */ uint8_t* m_readBuffer;
@@ -90,7 +92,8 @@ class WowConnection {
     /* 00F8 */ int32_t m_serviceFlags;
     /* 00FC */ TSList<WowConnection::SENDNODE> m_lagTestRecvList;
     /* 0108 */ SCritSect m_lock;
-    /* 0130 */ int32_t m_serviceCount;
+    // Not stock: atomic, stock used InterlockedExchangeAdd for writes but plain reads in PlatformRun (same size).
+    /* 0130 */ std::atomic<int32_t> m_serviceCount;
     /* 0134 */ int32_t unused_0134;
     /* 0138 */ void* m_event;
     /* 013C */ WOWC_TYPE m_type;
@@ -137,8 +140,8 @@ class WowConnection {
     char* PeerAddrToStr(char* buffer, uint32_t size);
     int32_t Release();
     void ReleaseResponseRef();
-    int32_t Send(uint8_t* data, int32_t size, bool raw);
-    int32_t SendPacket(CDataStore* msg, int32_t headroom);
+    WC_SEND_RESULT Send(uint8_t* data, int32_t size, bool raw);
+    WC_SEND_RESULT SendPacket(CDataStore* msg, int32_t headroom);
     void SetEncryption(bool enabled);
     void SetEncryptionKey(const uint8_t* key, uint8_t keyLength, uint8_t direction, const uint8_t* seed, uint8_t seedLength);
     void SetResponse(WowConnectionResponse* response, bool deferred);

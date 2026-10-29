@@ -6,6 +6,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxTexFlags.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Gxu/Gxu.h"
 #include "Engine/Source/Services/Texture.h"
 #include "Engine/Source/ShaderEffect/ShaderEffect.h"
 #include "Engine/Source/Tempest/CFrustum.h"
@@ -42,6 +43,104 @@ CTexture* CShadowCache::s_intDynShadow;
 
 // STATIC: 0x00D4314C
 int32_t CShadowCache::s_needsRebuild;
+
+// Not stock: set by CShadowQuery::Update (gfxSunShadows, gfxShadowSnap, gfxShadowAnchor).
+uint32_t CShadowCache::s_bandRedraw;
+int32_t CShadowCache::s_texelSnap;
+int32_t CShadowCache::s_drawingUnitMap;
+int32_t CShadowCache::s_haveBandCentre;
+C3Vector CShadowCache::s_bandCentre;
+
+/// Not stock (gfxShadowSnap): moves a map centre to the nearest whole texel across the light, so the texel grid
+/// stays fixed on the world as the centre follows the player and shadow edges do not crawl. The axes are the ones
+/// CShadowQuery::MatrixCallback's look-at gives the map (looking along s_sunDir, `up` the band's m_dir); the
+/// centre's depth along the light is left as it is. The grid is anchored at a local reference (the player rounded
+/// to 256 yd, kept until they are 128 yd from it), not the world origin: a latch step rotates the axes, which slides
+/// an origin-anchored grid by |p| * angle (several texels 9000 yd out), but a local one by under 0.05 texel.
+uint32_t CShadowCache::s_sizeOverride;
+float CShadowCache::s_pcfScale = 1.0f;
+int32_t CShadowCache::s_cascadeReuse;
+int32_t CShadowCache::s_bandDoodads;
+int32_t CShadowCache::s_alphaMatch;
+int32_t CShadowCache::s_wmoInterior;
+int32_t CShadowCache::s_receiversUnified;
+int32_t CShadowCache::s_unifiedNext;
+
+/// Not stock (shadowCascadeReuse, after Badgermilk0's 5c8a872b): what each VERY_HIGH cascade was last drawn for.
+struct CascadeRender {
+    int32_t valid;
+    C3Vector pos;
+    C3Vector forward;
+    C3Vector right;
+    C3Vector sunDir;
+};
+
+static CascadeRender s_cascadeRenders[3];
+static uint32_t s_cascadeTick;
+
+/// Whether cascade i must be redrawn this frame. Band 0 (units move in it) always; band 1 on even frames, band 2 on
+/// every 4th (a frame later); at once when the view turns more than about 2 degrees (FrustumCallback widens a kept
+/// band 5% each side), moves 2% of the band's radius, or the light moves: gfxSunShadows' latch steps s_sunDir, and
+/// any step redraws, so a kept map is never projected along a light it was not drawn for.
+static int32_t CascadeDue(uint32_t i, float radius, const C3Vector& pos, const C3Vector& forward, const C3Vector& right) {
+    const CascadeRender& last = s_cascadeRenders[i];
+
+    if (!CShadowCache::s_cascadeReuse || i == 0 || !last.valid) {
+        return 1;
+    }
+
+    if (s_cascadeTick % (i == 1 ? 2u : 4u) == (i == 1 ? 0u : 1u)) {
+        return 1;
+    }
+
+    const float minDot = 0.99939f;   // cos 2 degrees
+
+    if (forward.x * last.forward.x + forward.y * last.forward.y + forward.z * last.forward.z < minDot
+        || right.x * last.right.x + right.y * last.right.y + right.z * last.right.z < minDot) {
+        return 1;
+    }
+
+    float dx = pos.x - last.pos.x, dy = pos.y - last.pos.y, dz = pos.z - last.pos.z;
+    float limit = radius * 0.02f;
+
+    if (dx * dx + dy * dy + dz * dz > limit * limit) {
+        return 1;
+    }
+
+    const C3Vector& sun = CShadowCache::s_sunDir;
+    return sun.x != last.sunDir.x || sun.y != last.sunDir.y || sun.z != last.sunDir.z;
+}
+
+static C3Vector s_snapRef;
+static int32_t s_haveSnapRef;
+
+static void SnapToTexels(C3Vector& p, float radius, const C3Vector& up) {
+    if (!CShadowCache::s_texelSnap || !(radius > 0.0f) || !CShadowCache::s_shadowSize) {
+        return;
+    }
+
+    const C3Vector& d = CShadowCache::s_sunDir;
+    C44Matrix view;
+    GxuXformCreateLookAtXXX(C3Vector(-d.x, -d.y, -d.z), C3Vector(0.0f, 0.0f, 0.0f), up, view);
+
+    const float texel = 2.0f * radius / CShadowCache::s_shadowSize;
+    const C3Vector axes[2] = { C3Vector(view.a0, view.b0, view.c0), C3Vector(view.a1, view.b1, view.c1) };
+
+    float rx = p.x - s_snapRef.x, ry = p.y - s_snapRef.y, rz = p.z - s_snapRef.z;
+
+    if (!s_haveSnapRef || rx * rx + ry * ry + rz * rz > 128.0f * 128.0f) {
+        s_snapRef = C3Vector(std::floor(p.x / 256.0f + 0.5f) * 256.0f, std::floor(p.y / 256.0f + 0.5f) * 256.0f, std::floor(p.z / 256.0f + 0.5f) * 256.0f);
+        s_haveSnapRef = 1;
+    }
+
+    for (const C3Vector& a : axes) {
+        float c = (p.x - s_snapRef.x) * a.x + (p.y - s_snapRef.y) * a.y + (p.z - s_snapRef.z) * a.z;
+        float move = std::floor(c / texel + 0.5f) * texel - c;
+        p.x += a.x * move;
+        p.y += a.y * move;
+        p.z += a.z * move;
+    }
+}
 
 // STATIC: 0x00D43150
 uint32_t CShadowCache::s_shadowSize;
@@ -82,6 +181,8 @@ C4Vector CShadowCache::s_cutoffPlane;
 // STATIC: 0x00D431AC
 C4Vector CShadowCache::s_cutoffPlaneDefault;
 
+float CShadowCache::s_shadowFade = 1.0f;
+
 // STATIC: 0x00D431BC
 float CShadowCache::s_textureSize[2];
 
@@ -90,6 +191,9 @@ float CShadowCache::s_shadowScale;
 
 // STATIC: 0x00D431D0
 C4Vector CShadowCache::s_pcfOffsets[8];
+C44Matrix CShadowCache::s_publishedView;
+int32_t CShadowCache::s_publishedRead;
+uint32_t CShadowCache::s_publishStamp;
 
 // STATIC: 0x00D43250
 CShadowBand CShadowCache::s_extDynShadow;
@@ -216,6 +320,7 @@ int32_t CShadowCache::ValidateShadowMode(EShadowMode mode) {
 
                 case GxApi_D3d10:
                 case GxApi_D3d11:
+                case GxApi_Vulkan:
                     return depthFormat;
 
                 case GxApi_GLL:
@@ -243,6 +348,7 @@ int32_t CShadowCache::ValidateShadowMode(EShadowMode mode) {
 
                 case GxApi_D3d10:
                 case GxApi_D3d11:
+                case GxApi_Vulkan:
                     return depthFormat;
 
                 default:
@@ -309,7 +415,7 @@ void CShadowCache::InitPcfOffsets() {
     CShadowCache::s_textureSize[0] = size;
     CShadowCache::s_textureSize[1] = size;
 
-    float texel = 1.0 / size;
+    float texel = CShadowCache::s_pcfScale / size;   // not stock (shadowSoftness): s_pcfScale, 1 = stock
 
     CShadowCache::s_pcfOffsets[0].x = 0.8f * texel;
     CShadowCache::s_pcfOffsets[0].y = -1.0f * texel;
@@ -394,13 +500,25 @@ void CShadowCache::SetShadowMapGenericInterior(int32_t interior) {
         }
     }
 
-    GxShaderConstantsSet(GxSh_Pixel, 3, &cutoffPlane->x, 1);
+    // Not stock (gfxShadowFade): the M2/WMO receivers take lerp(shadow, lit, saturate(dot(pos, c3.xyz) + c3.w)), so
+    // outdoors (every shadow quality) w goes to 1 - (1 - w) * fade, 1 - fade on the stock zero planes (fade 1: stock).
+    // The interior map is not the sun's and keeps its plane.
+    C4Vector plane = *cutoffPlane;
+    if (!interior) {
+        plane.w = 1.0f - (1.0f - plane.w) * CShadowCache::s_shadowFade;
+    }
+    GxShaderConstantsSet(GxSh_Pixel, 3, &plane.x, 1);
     g_theGxDevicePtr->RsSet(GxRs_Texture4, texture);
 }
 
 // VERIFY: f70f0371 auto
 // OFFSET: 0x00874660
 void CShadowCache::SetShadowMapTerrain() {
+    // Not stock (gfxShadowFade): Terrain2/3[_pcf] from custom.MPQ (ShaderSrc/terrain_fade.py) take their shadow as
+    // S * c15.x + c15.y; set first, as those shaders draw even while the maps are being recreated. (1, 0): stock.
+    const float fade[4] = { CShadowCache::s_shadowFade, 1.0f - CShadowCache::s_shadowFade, 0.0f, 0.0f };
+    GxShaderConstantsSet(GxSh_Pixel, 15, fade, 1);
+
     if (CShadowCache::s_recreateTextures) {
         return;
     }
@@ -437,7 +555,9 @@ void CShadowCache::SetShadowMapDetailDoodad() {
     }
 
     GxShaderConstantsSet(GxSh_Vertex, 23, &CShadowCache::s_shadowMatrices[0].x, 12);
-    GxShaderConstantsSet(GxSh_Pixel, 3, &CShadowCache::s_cutoffPlaneDefault.x, 1);
+    C4Vector faded = CShadowCache::s_cutoffPlaneDefault;   // gfxShadowFade, as SetShadowMapGenericInterior
+    faded.w = 1.0f - CShadowCache::s_shadowFade;
+    GxShaderConstantsSet(GxSh_Pixel, 3, &faded.x, 1);
     GxShaderConstantsSet(GxSh_Pixel, 4, &CShadowCache::s_sunDirViewSpace.x, 1);
     GxShaderConstantsSet(GxSh_Pixel, 5, &CShadowCache::s_pcfOffsets[0].x, 8);
     g_theGxDevicePtr->RsSet(GxRs_Texture4, TextureGetGxTex(CShadowCache::s_extDynShadow.m_textures[CShaderEffect::s_usePcfFiltering], 1, nullptr));
@@ -454,6 +574,10 @@ void CShadowCache::SetShadowMapDetailDoodad() {
 // OFFSET: 0x00874890
 void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos, CFrustum& frustum, int32_t useCullFrustum) {
     uint32_t frame = 0;
+    // Not stock: band 1 normally leaves out casters wholly inside band 0's box (stock receivers use band 0 there),
+    // but GetPublished's consumer (vfog's shafts) reads band 1 there, so while it read last frame band 1 keeps them.
+    const int32_t keepBand1 = CShadowCache::s_publishedRead;
+    CShadowCache::s_publishedRead = 0;
 
     if (CShadowCache::GetShadowMode() < SHADOW_VERY_HIGH) {
         C44Matrix identity;
@@ -469,15 +593,20 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
                 float dy = band.m_lastPos.y - pos.y;
                 float dz = band.m_lastPos.z - pos.z;
 
-                if (dx * dx + dy * dy + dz * dz <= band.m_updateDistance) {
+                // (or the light has moved since it was drawn: the redraw goes into the back texture and is swapped
+                // in when done, so the map on screen stays whole throughout)
+                if (dx * dx + dy * dy + dz * dz <= band.m_updateDistance && !(CShadowCache::s_bandRedraw & (1u << i))) {
                     continue;
                 }
+
+                CShadowCache::s_bandRedraw &= ~(1u << i);
             }
 
             data.m_radius[i] = band.m_radius;
 
             if (!band.m_updateCount) {
                 band.m_pos = pos;
+                SnapToTexels(band.m_pos, band.m_radius, band.m_dir);
             }
 
             data.m_pos[i] = band.m_pos;
@@ -512,14 +641,16 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
             CShadowCache::s_frustumCallback(data.m_frustums[i], data.m_matrices[i], band.m_dir, data, i);
             data.m_frustums[i].Extents(data.m_extents[i]);
 
-            if (i && data.m_active[i - 1]) {
+            if (i && data.m_active[i - 1] && !(i == 1 && keepBand1)) {
                 data.m_cullFrustums[i] = frustum;
                 data.m_useCullFrustum[i] = 1;
             } else {
                 data.m_useCullFrustum[i] = 0;
             }
 
-            data.m_queryFlags[i] = 8;
+            // (stock 8 only: billboard-bone doodads and "0x400" WMO defs reached only the 20 yd unit map. Units stay
+            // out, a cached band would keep them where they stood.)
+            data.m_queryFlags[i] = CShadowCache::s_bandDoodads ? 12 : 8;
 
             float bounds[4];
             bounds[0] = data.m_bounds[i][0];
@@ -554,12 +685,26 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
     } else {
         frame = CShadowCache::s_frameCounter;
 
+        // Not stock (shadowCascadeReuse): the camera's axes, to tell when a kept map stops covering the view
+        C44Matrix view;
+        GxXformView(view);
+        const C3Vector forward(view.a2, view.b2, view.c2);
+        const C3Vector right(view.a0, view.b0, view.c0);
+        s_cascadeTick++;
+
         for (uint32_t i = 0; i < 3; i++) {
             CShadowBand& band = CShadowCache::s_extShadowBands[i];
 
             data.m_textureIndex[i] = 0;
             data.m_active[i] = 0;
             data.m_radius[i] = band.m_radius;
+
+            // A kept band still gets this frame's query data (the queries are bounded by the last band) but no
+            // casters (query flags 0) and no draw, and keeps the centre it was drawn round.
+            const int32_t render = CascadeDue(i, band.m_radius, pos, forward, right);
+            const C3Vector keptPos = band.m_pos;
+            const C3Vector keptLastPos = band.m_lastPos;
+            data.m_queryFlags[i] = render ? 13 : 0;
             band.m_pos = pos;
 
             float cell;
@@ -572,10 +717,14 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
                 cell = 16.0f;
             }
 
-            float invCell = 1.0f / cell;
-            band.m_pos.x = floor(invCell * band.m_pos.x) * cell;
-            band.m_pos.y = floor(band.m_pos.y * invCell) * cell;
-            band.m_pos.z = floor(band.m_pos.z * invCell) * cell;
+            if (CShadowCache::s_texelSnap) {
+                SnapToTexels(band.m_pos, band.m_radius, band.m_dir);
+            } else {
+                float invCell = 1.0f / cell;
+                band.m_pos.x = floor(invCell * band.m_pos.x) * cell;
+                band.m_pos.y = floor(band.m_pos.y * invCell) * cell;
+                band.m_pos.z = floor(band.m_pos.z * invCell) * cell;
+            }
 
             data.m_pos[i] = band.m_pos;
 
@@ -592,20 +741,34 @@ void CShadowCache::GatherBands(CShadowCacheQueryData& data, const C3Vector& pos,
             CShadowCache::s_frustumCallback(data.m_frustums[i], data.m_matrices[i], band.m_dir, data, i);
             data.m_frustums[i].Extents(data.m_extents[i]);
 
-            data.m_useCullFrustum[i] = useCullFrustum;
+            // (shadowCascadeReuse: bands 1-2 keep band 0's casters, which a kept map needs where band 0 has moved on)
+            data.m_useCullFrustum[i] = (i == 1 && keepBand1) || (i && CShadowCache::s_cascadeReuse) ? 0 : useCullFrustum;
 
             if (useCullFrustum) {
                 data.m_cullFrustums[i] = frustum;
             }
 
-            data.m_queryFlags[i] = 13;
             frustum = data.m_frustums[i];
             frustum.InvertPlanes();
 
-            band.m_lastPos = band.m_pos;
-            data.m_active[i] = 1;
             data.m_lastBand = i;
             useCullFrustum = 1;
+
+            if (!render) {
+                band.m_pos = keptPos;
+                band.m_lastPos = keptLastPos;
+                continue;
+            }
+
+            band.m_lastPos = band.m_pos;
+            data.m_active[i] = 1;
+
+            CascadeRender& drawn = s_cascadeRenders[i];
+            drawn.valid = 1;
+            drawn.pos = pos;
+            drawn.forward = forward;
+            drawn.right = right;
+            drawn.sunDir = CShadowCache::s_sunDir;
         }
     }
 
@@ -698,6 +861,9 @@ void CShadowCache::PostUpdate() {
         CShadowCache::s_shadowMatrices[5 + 3 * i].z = matrix.c2;
         CShadowCache::s_shadowMatrices[5 + 3 * i].w = matrix.d2;
     }
+
+    GxXformView(CShadowCache::s_publishedView);   // not stock (S3): GetPublished
+    CShadowCache::s_publishStamp++;
 }
 
 // VERIFY: 6227ff43 manual
@@ -733,6 +899,10 @@ CShadowCacheQueryData::CShadowCacheQueryData() {
 // VERIFY: e0449636 manual
 // OFFSET: 0x00875760
 void CShadowCache::ClearBandTextures() {
+    for (CascadeRender& drawn : s_cascadeRenders) {   // not stock (shadowCascadeReuse): nothing left to keep
+        drawn.valid = 0;
+    }
+
     if (CShadowCache::s_shadowMode <= SHADOW_MEDIUM) {
         CShadowCache::s_needsRebuild = 0;
         return;
@@ -770,24 +940,24 @@ void CShadowCache::ClearBandTextures() {
 
         if (CShadowCache::s_extDynShadow.m_textures[1]) {
             GxRenderTargetSet(GxBuffers_Depth, TextureGetGxTex(CShadowCache::s_extDynShadow.m_textures[1], 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
 
         if (CShadowCache::s_intDynShadow) {
             GxRenderTargetSet(GxBuffers_Depth, TextureGetGxTex(CShadowCache::s_intDynShadow, 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
     } else {
         GxRenderTargetSet(GxBuffers_Depth, nullptr, 0);
 
         if (CShadowCache::s_extDynShadow.m_textures[0]) {
             GxRenderTargetSet(GxBuffers_Color, TextureGetGxTex(CShadowCache::s_extDynShadow.m_textures[0], 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
 
         if (CShadowCache::s_intDynShadow) {
             GxRenderTargetSet(GxBuffers_Color, TextureGetGxTex(CShadowCache::s_intDynShadow, 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
     }
 
@@ -809,12 +979,12 @@ void CShadowCache::ClearBandTextures() {
 
         if (band.m_textures[0]) {
             GxRenderTargetSet(buffer, TextureGetGxTex(band.m_textures[0], 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
 
         if (band.m_textures[1]) {
             GxRenderTargetSet(buffer, TextureGetGxTex(band.m_textures[1], 1, nullptr), 0);
-            GxSceneClear(3, clearColor);
+            GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
         }
     }
 
@@ -864,6 +1034,15 @@ void CShadowCache::Init() {
 
     if (CShadowCache::s_shadowMode >= SHADOW_HIGH || CShadowCache::s_shadowMode == SHADOW_MEDIUM) {
         CShadowCache::s_shadowSize = 2048;
+    }
+
+    // Not stock (shadowMapSize): PCF, or Vulkan's R32F path. Elsewhere the R32F path draws with the screen's depth
+    // buffer, which a map larger than the window would overrun; Vulkan pairs every colour target with a depth
+    // buffer of its own size (Vulkan/Frame/Targets.cpp FramebufferFor/DepthFor), so the override is safe there.
+    if (CShadowCache::s_sizeOverride
+        && (CShaderEffect::s_usePcfFiltering || g_theGxDevicePtr->DeviceApi() == GxApi_Vulkan)) {
+        uint32_t maxSize = g_theGxDevicePtr->Caps().m_texMaxSize[GxTex_2d];
+        CShadowCache::s_shadowSize = maxSize && CShadowCache::s_sizeOverride > maxSize ? maxSize : CShadowCache::s_sizeOverride;
     }
 
     CShadowCache::InitPcfOffsets();
@@ -976,6 +1155,13 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
     CShadowCache::s_extDynShadow.m_lastPos.x = floor(size * CShadowCache::s_extDynShadow.m_lastPos.x + 0.5) * texel;
     CShadowCache::s_extDynShadow.m_lastPos.y = floor(CShadowCache::s_extDynShadow.m_lastPos.y * size + 0.5) * texel;
 
+    if (CShadowCache::s_texelSnap) {
+        // (drawn round the same centre the receivers project with; stock draws round pos, 1/size yd off at most)
+        CShadowCache::s_extDynShadow.m_lastPos = pos;
+        SnapToTexels(CShadowCache::s_extDynShadow.m_lastPos, radius, CShadowCache::s_extDynShadow.m_dir);
+        data.m_pos[0] = CShadowCache::s_extDynShadow.m_lastPos;
+    }
+
     CGxTex* depthTarget = nullptr;
 
     if (CShaderEffect::s_usePcfFiltering) {
@@ -1010,6 +1196,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
 
     data.m_queryFlags[0] = 3;
     data.m_useFrustum = 0;
+    CShadowCache::s_drawingUnitMap = 1;
     CShadowCache::s_queryCallback(data, frame);
 
     CGxTex* target = TextureGetGxTex(CShadowCache::s_intDynShadow, 1, nullptr);
@@ -1043,6 +1230,8 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
         CShadowCache::s_renderCallback(data, 0, target, colorTarget, CShadowCache::s_extDynShadow.m_dir);
     }
 
+    CShadowCache::s_drawingUnitMap = 0;
+
     if (mode > SHADOW_MEDIUM) {
         if (CShadowCache::s_needsRebuild) {
             CShadowCache::ClearBandTextures();
@@ -1061,7 +1250,7 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
                 data.m_useFrustum = 1;
             }
 
-            CShadowCache::GatherBands(data, pos, frustum, useBandCull);
+            CShadowCache::GatherBands(data, CShadowCache::s_haveBandCentre ? CShadowCache::s_bandCentre : pos, frustum, useBandCull);
             CShadowCache::RenderBands(data);
         }
     }
@@ -1078,4 +1267,52 @@ int32_t CShadowCache::Update(const C3Vector& pos, int32_t useCullFrustum) {
 int32_t CShadowCache::Initialize() {
     CShadowCache::Init();
     return 1;
+}
+
+// Not stock (SHADOW_PORT_PLAN S3): the bands the receivers use, for native consumers (wxl-shadow's WxlShadowApi
+// without the plugin). 0 while the bands do not exist (extShadowQuality <= 2), are being recreated, or the shadow
+// query was never set up; then a consumer leaves its sun unshadowed.
+int32_t CShadowCache::GetPublished(ShadowView& out) {
+    if (CShadowCache::s_recreateTextures || CShadowCache::s_shadowMode <= SHADOW_MEDIUM || !CShadowCache::s_matrixCallback
+        || !CShadowCache::s_publishStamp) {
+        return 0;
+    }
+
+    for (int32_t i = 0; i < 3; i++) {
+        CShadowBand& band = CShadowCache::s_extShadowBands[i];
+        CTexture* texture = band.m_textures[band.m_current];
+        out.map[i] = texture ? TextureGetGxTex(texture, 1, nullptr) : nullptr;
+
+        if (!out.map[i]) {
+            return 0;
+        }
+
+        for (int32_t row = 0; row < 3; row++) {
+            out.rows[i][row] = CShadowCache::s_shadowMatrices[3 + 3 * i + row];
+        }
+    }
+
+    GetPublishedUnit(out);
+    out.stamp = CShadowCache::s_publishStamp;
+    CShadowCache::s_publishedRead = 1;
+    return 1;
+}
+
+// Not stock (vfog38, shadowMask): the unit map the receivers take the min with (terrain s5, models s4), which exists
+// at every shadow quality. 0 (unitMap nullptr) while it is being recreated or before the first PostUpdate.
+int32_t CShadowCache::GetPublishedUnit(ShadowView& out) {
+    out.unitMap = nullptr;
+    out.view = CShadowCache::s_publishedView;
+    out.size = CShadowCache::s_shadowSize;
+    out.pcf = CShaderEffect::s_usePcfFiltering ? 1 : 0;
+    if (CShadowCache::s_recreateTextures || CShadowCache::s_shadowMode <= SHADOW_LOWEST || !CShadowCache::s_matrixCallback
+        || !CShadowCache::s_publishStamp) {
+        return 0;
+    }
+    CTexture* texture = CShadowCache::s_extDynShadow.m_textures[CShaderEffect::s_usePcfFiltering];
+    out.unitMap = texture ? TextureGetGxTex(texture, 1, nullptr) : nullptr;
+    for (int32_t row = 0; row < 3; row++) {
+        out.unitRows[row] = CShadowCache::s_shadowMatrices[row];
+    }
+    return out.unitMap ? 1 : 0;
 }
